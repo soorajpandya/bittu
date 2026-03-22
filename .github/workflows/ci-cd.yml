@@ -1,0 +1,316 @@
+# ══════════════════════════════════════════════════════════════
+# BITTU — CI/CD Pipeline
+# Runs on every push/PR to main. Production deploys require manual approval.
+# ══════════════════════════════════════════════════════════════
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main]
+
+env:
+  DOCKER_IMAGE: bittu/backend
+  PYTHON_VERSION: "3.12"
+
+# Cancel in-progress runs for the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ────────────────────────────────────────────────────────────
+  # 1. Code Quality & Linting
+  # ────────────────────────────────────────────────────────────
+  lint:
+    name: "Lint & Format"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install linters
+        run: pip install ruff black mypy
+
+      - name: Ruff lint
+        run: ruff check . --output-format=github
+
+      - name: Black format check
+        run: black --check --diff .
+
+      - name: Type check (mypy)
+        run: mypy app/ --ignore-missing-imports --no-strict-optional
+        continue-on-error: true  # Advisory until full type coverage
+
+  # ────────────────────────────────────────────────────────────
+  # 2. Security Scanning
+  # ────────────────────────────────────────────────────────────
+  security:
+    name: "Security Scan"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install scanners
+        run: pip install pip-audit bandit safety
+
+      - name: Dependency audit (pip-audit)
+        run: pip-audit -r requirements.txt --strict
+        continue-on-error: true
+
+      - name: SAST scan (Bandit)
+        run: bandit -r app/ -f json -o bandit-report.json --severity-level medium || true
+
+      - name: Upload Bandit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+        if: always()
+
+      - name: Secret scan (Gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ────────────────────────────────────────────────────────────
+  # 3. Tests
+  # ────────────────────────────────────────────────────────────
+  test:
+    name: "Tests"
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov httpx
+
+      - name: Run tests with coverage
+        env:
+          APP_ENV: testing
+          REDIS_URL: redis://localhost:6379/0
+          DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+          DATABASE_DIRECT_URL: ${{ secrets.TEST_DATABASE_DIRECT_URL }}
+          SUPABASE_URL: ${{ secrets.TEST_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.TEST_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.TEST_SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_JWT_SECRET: ${{ secrets.TEST_SUPABASE_JWT_SECRET }}
+        run: |
+          pytest tests/ \
+            --cov=app \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing \
+            --cov-fail-under=50 \
+            -v --tb=short
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+        if: always()
+
+  # ────────────────────────────────────────────────────────────
+  # 4. Build Docker Image
+  # ────────────────────────────────────────────────────────────
+  build:
+    name: "Build & Push Image"
+    runs-on: ubuntu-latest
+    needs: [lint, security, test]
+    if: github.event_name == 'push'
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.DOCKER_REGISTRY }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE }}
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=branch
+            type=semver,pattern=v{{version}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VCS_REF=${{ github.sha }}
+
+  # ────────────────────────────────────────────────────────────
+  # 5. Deploy to Staging
+  # ────────────────────────────────────────────────────────────
+  deploy-staging:
+    name: "Deploy → Staging"
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main'
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to staging
+        env:
+          DEPLOY_HOST: ${{ secrets.STAGING_HOST }}
+          DEPLOY_KEY: ${{ secrets.STAGING_SSH_KEY }}
+        run: |
+          echo "Deploying sha-${GITHUB_SHA::7} to staging..."
+          # SSH deploy (replace with your deployment tool)
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            deploy@$DEPLOY_HOST \
+            "cd /opt/bittu && docker compose pull api && docker compose up -d api --force-recreate"
+
+      - name: Smoke tests
+        run: |
+          sleep 10
+          # Health check
+          curl -f https://${{ secrets.STAGING_DOMAIN }}/api/v1/health || exit 1
+          # Readiness check
+          curl -f https://${{ secrets.STAGING_DOMAIN }}/api/v1/ready || exit 1
+          echo "Staging smoke tests passed"
+
+  # ────────────────────────────────────────────────────────────
+  # 6. Deploy to Production (Manual Approval)
+  # ────────────────────────────────────────────────────────────
+  deploy-production:
+    name: "Deploy → Production"
+    runs-on: ubuntu-latest
+    needs: [deploy-staging]
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://${{ secrets.PRODUCTION_DOMAIN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pre-deploy validation
+        run: |
+          echo "Validating deployment sha-${GITHUB_SHA::7}..."
+          # Verify all required secrets exist
+          for secret in PRODUCTION_HOST PRODUCTION_SSH_KEY PRODUCTION_DOMAIN; do
+            if [ -z "${!secret}" ]; then
+              echo "ERROR: Missing required secret: $secret"
+              exit 1
+            fi
+          done
+        env:
+          PRODUCTION_HOST: ${{ secrets.PRODUCTION_HOST }}
+          PRODUCTION_SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          PRODUCTION_DOMAIN: ${{ secrets.PRODUCTION_DOMAIN }}
+
+      - name: Deploy to production (rolling update)
+        env:
+          DEPLOY_HOST: ${{ secrets.PRODUCTION_HOST }}
+          DEPLOY_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+        run: |
+          echo "Deploying sha-${GITHUB_SHA::7} to PRODUCTION..."
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            deploy@$DEPLOY_HOST \
+            "cd /opt/bittu && \
+             docker compose pull api && \
+             docker compose up -d api --force-recreate --no-deps && \
+             docker image prune -f --filter 'until=168h'"
+
+      - name: Post-deploy verification
+        run: |
+          sleep 15
+          DOMAIN="${{ secrets.PRODUCTION_DOMAIN }}"
+          
+          # Health check
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$DOMAIN/api/v1/health")
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "CRITICAL: Health check failed (HTTP $HTTP_STATUS)"
+            exit 1
+          fi
+          
+          # Readiness check
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$DOMAIN/api/v1/ready")
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "WARNING: Readiness check returned HTTP $HTTP_STATUS"
+          fi
+          
+          echo "Production deployment verified successfully"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "PRODUCTION DEPLOYMENT FAILED for sha-${GITHUB_SHA::7}"
+          echo "Initiating rollback..."
+          # Add Slack/Discord/PagerDuty webhook notification here
+
+  # ────────────────────────────────────────────────────────────
+  # 7. Rollback (Manual Trigger)
+  # ────────────────────────────────────────────────────────────
+  rollback:
+    name: "Rollback Production"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    environment: production
+    steps:
+      - name: Rollback to previous version
+        env:
+          DEPLOY_HOST: ${{ secrets.PRODUCTION_HOST }}
+          DEPLOY_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+        run: |
+          echo "Rolling back production..."
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            deploy@$DEPLOY_HOST \
+            "cd /opt/bittu && docker compose down api && \
+             docker tag \$(docker images --format '{{.Repository}}:{{.Tag}}' | grep bittu | head -2 | tail -1) bittu/backend:rollback && \
+             docker compose up -d api"

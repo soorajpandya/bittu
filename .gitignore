@@ -1,0 +1,47 @@
+# ── Environment ──
+.env
+.env.local
+.env.production
+.env.staging
+!.env.example
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual Environment ──
+venv/
+.venv/
+env/
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Testing ──
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# ── Docker ──
+*.log
+
+# ── SSL Certs (never commit) ──
+nginx/ssl/
+*.pem
+*.key
+*.crt

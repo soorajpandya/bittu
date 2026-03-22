@@ -1,0 +1,217 @@
+"""Items CRUD endpoints."""
+from typing import Optional, List, Any
+from uuid import UUID
+from fastapi import APIRouter, Depends, Query, HTTPException
+from pydantic import BaseModel, ConfigDict
+
+from app.core.auth import UserContext, get_current_user
+from app.core.database import get_connection
+from app.core.tenant import tenant_where_clause
+from app.core.exceptions import ForbiddenError
+
+router = APIRouter(prefix="/items", tags=["Items"])
+
+
+def require_owner_or_manager(user: UserContext = Depends(get_current_user)) -> UserContext:
+    """Require owner or manager role."""
+    if user.role not in ("owner", "manager"):
+        raise ForbiddenError(f"Role '{user.role}' is not allowed. Required: owner or manager")
+    return user
+
+
+# ── Schemas ──────────────────────────────────────────────────
+
+class ItemCreate(BaseModel):
+    Item_Name: str
+    Description: Optional[str] = None
+    price: float
+    Available_Status: bool = True
+    Category: Optional[str] = None
+    Subcategory: Optional[str] = None
+    Cuisine: Optional[str] = None
+    Spice_Level: Optional[str] = None
+    Prep_Time_Min: Optional[int] = None
+    Image_url: Optional[str] = None
+    is_veg: Optional[bool] = None
+    tags: Optional[List[str]] = None
+    sort_order: Optional[int] = None
+    dine_in_available: bool = True
+    takeaway_available: bool = True
+    delivery_available: bool = True
+
+
+class ItemUpdate(BaseModel):
+    Item_Name: Optional[str] = None
+    Description: Optional[str] = None
+    price: Optional[float] = None
+    Available_Status: Optional[bool] = None
+    Category: Optional[str] = None
+    Subcategory: Optional[str] = None
+    Cuisine: Optional[str] = None
+    Spice_Level: Optional[str] = None
+    Prep_Time_Min: Optional[int] = None
+    Image_url: Optional[str] = None
+    is_veg: Optional[bool] = None
+    tags: Optional[List[str]] = None
+    sort_order: Optional[int] = None
+    dine_in_available: Optional[bool] = None
+    takeaway_available: Optional[bool] = None
+    delivery_available: Optional[bool] = None
+
+
+class ItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    Item_ID: int
+    Item_Name: str
+    Description: Optional[str] = None
+    price: Any  # numeric → Decimal from DB
+    Available_Status: Optional[bool] = None
+    Category: Optional[str] = None
+    Subcategory: Optional[str] = None
+    Cuisine: Optional[str] = None
+    Spice_Level: Optional[str] = None
+    Prep_Time_Min: Optional[int] = None
+    Image_url: Optional[str] = None
+    is_veg: Optional[bool] = None
+    tags: Optional[List[str]] = None
+    sort_order: Optional[int] = None
+    dine_in_available: Optional[bool] = None
+    takeaway_available: Optional[bool] = None
+    delivery_available: Optional[bool] = None
+    restaurant_id: Optional[UUID] = None
+    branch_id: Optional[UUID] = None
+    user_id: Optional[UUID] = None
+    created_at: Optional[Any] = None
+    updated_at: Optional[Any] = None
+
+
+# ── Routes ───────────────────────────────────────────────────
+
+@router.get("", response_model=List[ItemResponse])
+async def list_items(
+    user: UserContext = Depends(require_owner_or_manager),
+    branch_id: Optional[str] = Query(None),
+    restaurant_id: Optional[str] = Query(None),
+):
+    clause, params = tenant_where_clause(user, "i")
+
+    conditions = [clause]
+    if branch_id:
+        params.append(branch_id)
+        conditions.append(f"i.branch_id = ${len(params)}")
+    if restaurant_id:
+        params.append(restaurant_id)
+        conditions.append(f"i.restaurant_id = ${len(params)}")
+
+    where = " AND ".join(conditions)
+
+    async with get_connection() as conn:
+        items = await conn.fetch(
+            f"SELECT * FROM items i WHERE {where} ORDER BY i.created_at DESC",
+            *params,
+        )
+        return [dict(item) for item in items]
+
+
+@router.post("", response_model=ItemResponse)
+async def create_item(
+    body: ItemCreate,
+    user: UserContext = Depends(require_owner_or_manager),
+):
+    fields = [
+        '"Item_Name"', '"Description"', 'price', '"Available_Status"', '"Category"',
+        '"Subcategory"', '"Cuisine"', '"Spice_Level"', '"Prep_Time_Min"', '"Image_url"',
+        'is_veg', 'tags', 'sort_order', 'dine_in_available', 'takeaway_available',
+        'delivery_available', 'restaurant_id', 'branch_id', 'user_id'
+    ]
+    values = [
+        body.Item_Name, body.Description, body.price, body.Available_Status, body.Category,
+        body.Subcategory, body.Cuisine, body.Spice_Level, body.Prep_Time_Min, body.Image_url,
+        body.is_veg, body.tags, body.sort_order, body.dine_in_available, body.takeaway_available,
+        body.delivery_available, user.restaurant_id, user.branch_id, user.user_id
+    ]
+    placeholders = ", ".join(f"${i+1}" for i in range(len(values)))
+
+    sql = f"INSERT INTO items ({', '.join(fields)}) VALUES ({placeholders}) RETURNING *"
+    async with get_connection() as conn:
+        item = await conn.fetchrow(sql, *values)
+        return dict(item)
+
+
+@router.get("/{item_id}", response_model=ItemResponse)
+async def get_item(
+    item_id: int,
+    user: UserContext = Depends(require_owner_or_manager),
+):
+    clause, params = tenant_where_clause(user, "i")
+    params.append(item_id)
+
+    async with get_connection() as conn:
+        item = await conn.fetchrow(
+            f'SELECT * FROM items i WHERE {clause} AND i."Item_ID" = ${len(params)}',
+            *params,
+        )
+        if not item:
+            raise HTTPException(status_code=404, detail="Item not found")
+        return dict(item)
+
+
+@router.put("/{item_id}", response_model=ItemResponse)
+async def update_item(
+    item_id: int,
+    body: ItemUpdate,
+    user: UserContext = Depends(require_owner_or_manager),
+):
+    # Map Pydantic field names to quoted DB column names
+    _col_map = {
+        "Item_Name": '"Item_Name"', "Description": '"Description"', "price": "price",
+        "Available_Status": '"Available_Status"', "Category": '"Category"',
+        "Subcategory": '"Subcategory"', "Cuisine": '"Cuisine"',
+        "Spice_Level": '"Spice_Level"', "Prep_Time_Min": '"Prep_Time_Min"',
+        "Image_url": '"Image_url"', "is_veg": "is_veg", "tags": "tags",
+        "sort_order": "sort_order", "dine_in_available": "dine_in_available",
+        "takeaway_available": "takeaway_available", "delivery_available": "delivery_available",
+    }
+    updates = []
+    params = []
+    for field, value in body.model_dump(exclude_unset=True).items():
+        if value is not None:
+            col = _col_map.get(field, field)
+            updates.append(f"{col} = ${len(params)+1}")
+            params.append(value)
+
+    if not updates:
+        return await get_item(item_id, user)
+
+    set_clause = ", ".join(updates)
+    clause, tenant_params = tenant_where_clause(user)
+    params.extend(tenant_params)
+    params.append(item_id)
+
+    async with get_connection() as conn:
+        item = await conn.fetchrow(
+            f'UPDATE items SET {set_clause} WHERE {clause} AND "Item_ID" = ${len(params)} RETURNING *',
+            *params,
+        )
+        if not item:
+            raise HTTPException(status_code=404, detail="Item not found")
+        return dict(item)
+
+
+@router.delete("/{item_id}")
+async def delete_item(
+    item_id: int,
+    user: UserContext = Depends(require_owner_or_manager),
+):
+    clause, params = tenant_where_clause(user)
+    params.append(item_id)
+
+    async with get_connection() as conn:
+        result = await conn.execute(
+            f'DELETE FROM items WHERE {clause} AND "Item_ID" = ${len(params)}',
+            *params,
+        )
+        if result == "DELETE 0":
+            raise HTTPException(status_code=404, detail="Item not found")
+        return {"message": "Item deleted"}
