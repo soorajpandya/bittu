@@ -1,10 +1,10 @@
 """Order endpoints."""
 from datetime import date
-from typing import Optional
+from typing import Optional, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.core.auth import UserContext, require_permission, require_role
 from app.services.order_service import OrderService
@@ -16,19 +16,40 @@ _svc = OrderService()
 # ── Schemas ──────────────────────────────────────────────────
 
 class OrderItemIn(BaseModel):
-    item_name: str
+    model_config = {"extra": "allow"}
+
+    item_id: Optional[Any] = None
+    item_name: Optional[str] = None
+    variant_id: Optional[Any] = None
     variant_name: Optional[str] = None
-    quantity: int = Field(ge=1)
+    quantity: int = Field(default=1, ge=1)
+    price: Optional[float] = None  # Client hint; server recalculates
+    addons: Optional[list] = None
     notes: Optional[str] = None
+
+    @model_validator(mode="after")
+    def require_item_id_or_name(self):
+        if not self.item_id and not self.item_name:
+            raise ValueError("Either item_id or item_name is required")
+        return self
 
 
 class CreateOrderIn(BaseModel):
+    model_config = {"extra": "allow"}
+
     items: list[OrderItemIn]
+    order_type: Optional[str] = None  # dine_in, takeaway, delivery
     table_id: Optional[str] = None
+    table_number: Optional[str] = None
+    branch_id: Optional[str] = None
     coupon_code: Optional[str] = None
+    coupon_id: Optional[int] = None
+    customer_id: Optional[int] = None
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
     delivery_address: Optional[str] = None
+    notes: Optional[str] = None
+    source: Optional[str] = "pos"
     idempotency_key: Optional[str] = None
 
 
@@ -45,12 +66,14 @@ async def create_order(
 ):
     return await _svc.create_order(
         user=user,
-        items=[i.model_dump() for i in body.items],
-        source="pos",  # Default source
-        table_number=body.table_id,
+        items=[i.model_dump(exclude_none=True) for i in body.items],
+        source=body.source or "pos",
+        customer_id=body.customer_id,
+        table_number=body.table_id or body.table_number,
         delivery_address=body.delivery_address,
         delivery_phone=body.customer_phone,
-        notes=body.customer_name,  # Using customer_name as notes for now
+        coupon_id=body.coupon_id,
+        notes=body.notes or body.customer_name,
         idempotency_key=body.idempotency_key,
     )
 

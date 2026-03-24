@@ -40,6 +40,29 @@ logger = get_logger(__name__)
 
 class OrderService:
 
+    # ── Item lookup helper ──
+
+    async def _lookup_item(self, conn, item_id, item_name, user_id):
+        """Look up an item by ID or name. Returns the DB row or raises NotFoundError."""
+        row = None
+        if item_id:
+            row = await conn.fetchrow(
+                """SELECT "Item_ID", "Item_Name", price, "Available_Status"
+                   FROM items WHERE "Item_ID" = $1""",
+                item_id,
+            )
+        if not row and item_name:
+            row = await conn.fetchrow(
+                """SELECT "Item_ID", "Item_Name", price, "Available_Status"
+                   FROM items WHERE "Item_Name" = $1 AND user_id = $2""",
+                item_name, user_id,
+            )
+        if not row:
+            raise NotFoundError("Item", str(item_id or item_name))
+        if not row["Available_Status"]:
+            raise ValidationError(f"Item '{row['Item_Name']}' is currently unavailable")
+        return row
+
     # ── CREATE ORDER ──
 
     async def create_order(
@@ -80,17 +103,36 @@ class OrderService:
             order_items_data = []
 
             for item_entry in items:
-                item_name = item_entry["item_name"]
+                item_name = item_entry.get("item_name")
+                item_id_input = item_entry.get("item_id")
                 quantity = item_entry.get("quantity", 1)
                 variant_name = item_entry.get("variant_name")
+                variant_id_input = item_entry.get("variant_id")
                 addons = item_entry.get("addons", [])
                 item_notes = item_entry.get("notes")
 
                 if quantity < 1 or quantity > 100:
                     raise ValidationError(f"Invalid quantity: {quantity}")
 
-                # Fetch authoritative price from DB
-                if variant_name:
+                # Fetch authoritative price from DB — lookup by id or name
+                if variant_id_input:
+                    row = await conn.fetchrow(
+                        """
+                        SELECT iv.id, iv.name, iv.price, i."Item_ID", i."Item_Name", i."Available_Status"
+                        FROM item_variants iv
+                        JOIN items i ON i."Item_ID" = iv.item_id
+                        WHERE iv.id = $1 AND iv.is_active = true
+                        """,
+                        variant_id_input,
+                    )
+                    if row:
+                        unit_price = Decimal(str(row["price"]))
+                        item_name_full = f"{row['Item_Name']} ({row['name']})"
+                        item_id = row["Item_ID"]
+                        variant_id = row["id"]
+                    else:
+                        raise NotFoundError("Variant", str(variant_id_input))
+                elif variant_name:
                     row = await conn.fetchrow(
                         """
                         SELECT iv.id, iv.name, iv.price, i."Item_ID", i."Item_Name", i."Available_Status"
@@ -107,37 +149,19 @@ class OrderService:
                         variant_id = row["id"]
                     else:
                         # Fallback to base item if variant not found
-                        row = await conn.fetchrow(
-                            """
-                            SELECT "Item_ID", "Item_Name", price, "Available_Status"
-                            FROM items WHERE "Item_Name" = $1 AND user_id = $2
-                            """,
-                            item_name, tenant["user_id"],
-                        )
-                        if not row:
-                            raise NotFoundError("Item", item_name)
-                        if not row["Available_Status"]:
-                            raise ValidationError(f"Item '{row['Item_Name']}' is currently unavailable")
+                        row = await self._lookup_item(conn, item_id_input, item_name, tenant["user_id"])
                         unit_price = Decimal(str(row["price"]))
                         item_name_full = row["Item_Name"]
                         item_id = row["Item_ID"]
                         variant_id = None
                 else:
-                    row = await conn.fetchrow(
-                        """
-                        SELECT "Item_ID", "Item_Name", price, "Available_Status"
-                        FROM items WHERE "Item_Name" = $1 AND user_id = $2
-                        """,
-                        item_name, tenant["user_id"],
-                    )
-                    if not row:
-                        raise NotFoundError("Item", item_name)
-                    if not row["Available_Status"]:
-                        raise ValidationError(f"Item '{row['Item_Name']}' is currently unavailable")
+                    row = await self._lookup_item(conn, item_id_input, item_name, tenant["user_id"])
                     unit_price = Decimal(str(row["price"]))
                     item_name_full = row["Item_Name"]
                     item_id = row["Item_ID"]
                     variant_id = None
+                    if not item_name:
+                        item_name = row["Item_Name"]
 
                 # Calculate addon prices
                 addon_total = Decimal("0")
