@@ -1,4 +1,5 @@
 """Restaurant endpoints."""
+import uuid as _uuid
 from typing import Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -64,13 +65,14 @@ async def update_restaurant(
     user: UserContext = Depends(get_current_user),
 ):
     """Partial-update a restaurant owned by the current user."""
+    rid = _uuid.UUID(restaurant_id)
     owner_id = user.owner_id if user.is_branch_user else user.user_id
     data = body.model_dump(exclude_unset=True)
 
     async with get_serializable_transaction() as conn:
         existing = await conn.fetchrow(
             "SELECT * FROM restaurants WHERE id = $1 AND owner_id = $2 FOR UPDATE",
-            restaurant_id,
+            rid,
             owner_id,
         )
         if not existing:
@@ -81,7 +83,7 @@ async def update_restaurant(
             return dict(existing)
 
         set_parts = []
-        vals = [restaurant_id, owner_id]
+        vals = [rid, owner_id]
         for k, v in fields.items():
             vals.append(v)
             set_parts.append(f"{k} = ${len(vals)}")
