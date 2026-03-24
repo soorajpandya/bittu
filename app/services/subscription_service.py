@@ -73,14 +73,18 @@ class SubscriptionService:
             status = sub["status"]
             is_active = False
 
-            if status in ("ACTIVE", "TRIAL", "trialing"):
+            if status == "ACTIVE":
                 is_active = True
+            elif status in ("TRIAL", "trialing"):
+                # Trial must not have expired
+                if sub.get("trial_expires_at"):
+                    is_active = sub["trial_expires_at"] > now
+                else:
+                    is_active = True
             elif status == "PAST_DUE" and sub.get("grace_period_end"):
                 is_active = sub["grace_period_end"] > now
             elif status == "GRACE_PERIOD" and sub.get("grace_period_end"):
                 is_active = sub["grace_period_end"] > now
-            elif status == "TRIAL" and sub.get("trial_expires_at"):
-                is_active = sub["trial_expires_at"] > now
 
             await cache_set(cache_key, "true" if is_active else "false", ttl=300)
             return is_active
@@ -108,14 +112,22 @@ class SubscriptionService:
         """Verify and return the user's current subscription status."""
         try:
             is_active = await self.check_active(user.user_id)
+        except Exception as e:
+            logger.error(f"Failed to check subscription status for {user.user_id}: {e}")
+            is_active = False
+
+        try:
             sub = await self.get_subscription(user)
-            return {
-                "active": is_active,
-                "subscription": sub,
-                "user_id": user.user_id,
-            }
-        except Exception:
-            return {"active": False, "subscription": None, "user_id": user.user_id}
+        except Exception as e:
+            logger.error(f"Failed to get subscription for {user.user_id}: {e}")
+            sub = None
+
+        return {
+            "is_active": is_active,
+            "active": is_active,
+            "subscription": sub,
+            "user_id": user.user_id,
+        }
 
     async def start_free_trial(self, user: UserContext) -> dict:
         """Start a 14-day free trial. One trial per user."""

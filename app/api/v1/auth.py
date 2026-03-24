@@ -1,44 +1,24 @@
 """
-Auth router — public endpoints for signup, login, OTP, password reset, token refresh.
+Auth router — Google OAuth via Supabase, token refresh, user profile, logout.
 
-All endpoints are PUBLIC (no Bearer token required) except /me, /logout, /update-password.
+All endpoints are PUBLIC (no Bearer token required) except /me, /logout.
 """
 from fastapi import APIRouter, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel
 from typing import Optional
 
 from app.core.auth import UserContext, get_current_user
 from app.core.database import get_connection
 from app.services.auth_service import (
-    signup_with_email,
-    signup_with_phone,
-    login_with_email,
-    login_with_phone,
-    send_otp,
-    send_email_otp,
-    verify_otp,
-    verify_email_otp,
+    get_google_oauth_url,
+    exchange_google_code,
     refresh_token,
-    forgot_password,
-    update_password,
     get_user,
     logout,
     AuthError,
     _initialize_restaurant_and_branch,
-
-    login_with_phone,
-    send_otp,
-    send_email_otp,
-    verify_otp,
-    verify_email_otp,
-    refresh_token,
-    forgot_password,
-    update_password,
-    get_user,
-    logout,
-    AuthError,
 )
 
 from app.core.logging import get_logger
@@ -50,48 +30,8 @@ logger = get_logger(__name__)
 
 # ── Request / Response schemas ──────────────────────────────
 
-class EmailSignupRequest(BaseModel):
-    email: EmailStr
-    password: str = Field(..., min_length=6)
-    full_name: Optional[str] = None
-    phone: Optional[str] = None
-
-class EmailLoginRequest(BaseModel):
-    email: EmailStr
-    password: str
-
-class PhoneSignupRequest(BaseModel):
-    phone: str = Field(..., pattern=r"^\+\d{10,15}$")
-    password: str = Field(..., min_length=6)
-    full_name: Optional[str] = None
-
-class PhoneLoginRequest(BaseModel):
-    phone: str = Field(..., pattern=r"^\+\d{10,15}$")
-    password: str
-
-class SendOtpRequest(BaseModel):
-    phone: str = Field(..., pattern=r"^\+\d{10,15}$")
-
-class SendEmailOtpRequest(BaseModel):
-    email: EmailStr
-
-class VerifyOtpRequest(BaseModel):
-    phone: str = Field(..., pattern=r"^\+\d{10,15}$")
-    token: str
-
-class VerifyEmailOtpRequest(BaseModel):
-    email: EmailStr
-    token: str
-
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
-
-class ForgotPasswordRequest(BaseModel):
-    email: EmailStr
-    redirect_to: Optional[str] = None
-
-class UpdatePasswordRequest(BaseModel):
-    new_password: str = Field(..., min_length=6)
 
 
 # ── Error handler ───────────────────────────────────────────
@@ -102,89 +42,26 @@ def _handle_auth_error(e: AuthError):
 
 # ── PUBLIC endpoints (no token required) ────────────────────
 
-@router.post("/signup/email")
-async def signup_email(body: EmailSignupRequest):
-    """Register with email + password. Returns session with access_token."""
+@router.get("/google")
+async def google_redirect(redirect_to: str):
+    """
+    Returns the Supabase Google OAuth URL.
+    Frontend should redirect the user's browser to the returned URL.
+    `redirect_to` is where Supabase sends the user after Google consent (your frontend callback page).
+    """
+    url = get_google_oauth_url(redirect_to)
+    return {"url": url}
+
+
+@router.post("/google/callback")
+async def google_callback(code: str):
+    """
+    Exchange the authorization code from Supabase Google OAuth callback for a session.
+    The frontend calls this after being redirected back from Google with the `code` param.
+    Returns access_token + refresh_token + user.
+    """
     try:
-        metadata = {}
-        if body.full_name:
-            metadata["full_name"] = body.full_name
-        if body.phone:
-            metadata["phone"] = body.phone
-        result = await signup_with_email(body.email, body.password, metadata or None)
-        return result
-    except AuthError as e:
-        return _handle_auth_error(e)
-
-
-@router.post("/signup/phone")
-async def signup_phone(body: PhoneSignupRequest):
-    """Register with phone + password."""
-    try:
-        metadata = {}
-        if body.full_name:
-            metadata["full_name"] = body.full_name
-        result = await signup_with_phone(body.phone, body.password, metadata or None)
-        return result
-    except AuthError as e:
-        return _handle_auth_error(e)
-
-
-@router.post("/login/email")
-async def login_email(body: EmailLoginRequest):
-    """Login with email + password. Returns access_token + refresh_token."""
-    try:
-        result = await login_with_email(body.email, body.password)
-        return result
-    except AuthError as e:
-        return _handle_auth_error(e)
-
-
-@router.post("/login/phone")
-async def login_phone(body: PhoneLoginRequest):
-    """Login with phone + password."""
-    try:
-        result = await login_with_phone(body.phone, body.password)
-        return result
-    except AuthError as e:
-        return _handle_auth_error(e)
-
-
-@router.post("/otp/send")
-async def send_phone_otp(body: SendOtpRequest):
-    """Send OTP to phone for passwordless login."""
-    try:
-        result = await send_otp(body.phone)
-        return {"message": "OTP sent", **result}
-    except AuthError as e:
-        return _handle_auth_error(e)
-
-
-@router.post("/otp/send-email")
-async def send_email_magic_link(body: SendEmailOtpRequest):
-    """Send OTP / magic link to email."""
-    try:
-        result = await send_email_otp(body.email)
-        return {"message": "OTP sent to email", **result}
-    except AuthError as e:
-        return _handle_auth_error(e)
-
-
-@router.post("/otp/verify")
-async def verify_phone_otp(body: VerifyOtpRequest):
-    """Verify phone OTP. Returns session with access_token."""
-    try:
-        result = await verify_otp(body.phone, body.token)
-        return result
-    except AuthError as e:
-        return _handle_auth_error(e)
-
-
-@router.post("/otp/verify-email")
-async def verify_email_otp_endpoint(body: VerifyEmailOtpRequest):
-    """Verify email OTP. Returns session with access_token."""
-    try:
-        result = await verify_email_otp(body.email, body.token)
+        result = await exchange_google_code(code)
         return result
     except AuthError as e:
         return _handle_auth_error(e)
@@ -195,16 +72,6 @@ async def refresh_access_token(body: RefreshTokenRequest):
     """Get a new access_token using a refresh_token."""
     try:
         result = await refresh_token(body.refresh_token)
-        return result
-    except AuthError as e:
-        return _handle_auth_error(e)
-
-
-@router.post("/forgot-password")
-async def forgot_password_endpoint(body: ForgotPasswordRequest):
-    """Send password-reset email."""
-    try:
-        result = await forgot_password(body.email, body.redirect_to)
         return result
     except AuthError as e:
         return _handle_auth_error(e)
@@ -292,19 +159,6 @@ async def debug_db():
                 "suggestion": "Check DATABASE_URL, network connectivity, and Supabase credentials"
             }
         )
-
-
-@router.post("/update-password")
-async def update_password_endpoint(
-    body: UpdatePasswordRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
-):
-    """Update password (user must be logged in)."""
-    try:
-        result = await update_password(credentials.credentials, body.new_password)
-        return result
-    except AuthError as e:
-        return _handle_auth_error(e)
 
 
 @router.post("/logout")

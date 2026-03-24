@@ -9,6 +9,15 @@ router = APIRouter(prefix="/notifications", tags=["Notifications"])
 _svc = NotificationService()
 
 
+@router.get("")
+async def list_notifications(
+    limit: int = Query(20, ge=1, le=200),
+    user: UserContext = Depends(require_role("owner", "manager", "cashier", "chef", "waiter", "staff")),
+):
+    """List recent notifications/alerts for the current user."""
+    return await _svc.get_alerts(user=user, unread_only=False, limit=limit)
+
+
 @router.get("/alerts")
 async def list_alerts(
     unread_only: bool = False,

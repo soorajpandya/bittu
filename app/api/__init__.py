@@ -57,6 +57,12 @@ from app.api.v1 import (
     help_articles,
     misc,
     restaurants,
+    restaurant_tables,
+    table_events,
+    table_sessions,
+    kitchen_stations,
+    ingredients,
+    favourite_items,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -116,3 +122,9 @@ router.include_router(audit_logs.router)
 router.include_router(help_articles.router)
 router.include_router(misc.router)
 router.include_router(restaurants.router)
+router.include_router(restaurant_tables.router)
+router.include_router(table_events.router)
+router.include_router(table_sessions.router)
+router.include_router(kitchen_stations.router)
+router.include_router(ingredients.router)
+router.include_router(favourite_items.router)

@@ -64,7 +64,9 @@ def _cfg():
 
 
 def _base_url() -> str:
-    return "https://api.cashfree.com/verification"
+    mode = _cfg().CF_DIGILOCKER_MODE
+    host = "https://api.cashfree.com" if mode in ("production", "live") else "https://sandbox.cashfree.com"
+    return f"{host}/verification"
 
 
 def _headers() -> dict:

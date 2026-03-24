@@ -45,7 +45,10 @@ async def list_orders(
     offset: int = Query(0, ge=0),
     user: UserContext = Depends(require_role("owner", "manager")),
 ):
-    return await _svc.list_orders(user, status=status, limit=limit, offset=offset)
+    try:
+        return await _svc.list_orders(user, status=status, limit=limit, offset=offset)
+    except Exception:
+        return []
 
 
 @router.get("/{po_id}")

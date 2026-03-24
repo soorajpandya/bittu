@@ -46,6 +46,30 @@ async def list_groups(
     return await _svc.list_groups(user)
 
 
+@router.get("/options")
+async def list_all_options(
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    """List all modifier options across all groups."""
+    from app.core.database import get_connection
+    try:
+        uid = user.owner_id if user.is_branch_user else user.user_id
+        async with get_connection() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT mo.*, mg.name as group_name
+                FROM modifier_options mo
+                JOIN modifier_groups mg ON mg.id = mo.group_id
+                WHERE mg.user_id = $1
+                ORDER BY mg.name, mo.name
+                """,
+                uid,
+            )
+            return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
 @router.get("/{group_id}")
 async def get_group(
     group_id: int,

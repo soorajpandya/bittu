@@ -159,7 +159,7 @@ async def create_staff(
 
 @router.get("")
 async def list_staff(
-    branch_id: str,
+    branch_id: Optional[str] = None,
     user: UserContext = Depends(require_role("owner")),
 ):
     return await _svc.get_branch_users(user=user, branch_id=branch_id)

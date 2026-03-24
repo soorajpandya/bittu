@@ -1,13 +1,23 @@
 """Table Session / QR ordering endpoints."""
 from typing import Optional
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
-from app.core.auth import UserContext, require_permission
+from app.core.auth import UserContext, require_permission, require_role
+from app.core.database import get_connection
+from app.core.logging import get_logger
 from app.services.table_service import TableSessionService
 
 router = APIRouter(prefix="/tables", tags=["Tables"])
 _svc = TableSessionService()
+logger = get_logger(__name__)
+
+
+class CreateTableIn(BaseModel):
+    table_number: str
+    capacity: Optional[int] = 4
+    status: Optional[str] = "available"
+    is_active: Optional[bool] = True
 
 
 class StartSessionIn(BaseModel):
@@ -36,6 +46,53 @@ class AddToCartIn(BaseModel):
 class RemoveCartItemIn(BaseModel):
     session_id: str
     item_id: str
+
+
+@router.get("")
+async def list_tables(
+    user: UserContext = Depends(require_role("owner", "manager", "cashier", "chef", "waiter", "staff")),
+):
+    """List all tables for the current user's restaurant."""
+    try:
+        owner_id = user.owner_id if user.is_branch_user else user.user_id
+        async with get_connection() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM restaurant_tables WHERE user_id = $1 ORDER BY table_number ASC",
+                owner_id,
+            )
+            return [dict(r) for r in rows]
+    except Exception as e:
+        logger.warning("list_tables_failed", error=str(e), user_id=user.user_id)
+        return []
+
+
+@router.post("", status_code=201)
+async def create_table(
+    body: CreateTableIn,
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    """Create a new restaurant table."""
+    try:
+        owner_id = user.owner_id if user.is_branch_user else user.user_id
+        async with get_connection() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO restaurant_tables (user_id, restaurant_id, table_number, capacity, status, is_active)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING *
+                """,
+                owner_id,
+                user.restaurant_id,
+                body.table_number,
+                body.capacity,
+                body.status,
+                body.is_active,
+            )
+            return dict(row)
+    except Exception as e:
+        logger.warning("create_table_failed", error=str(e), user_id=user.user_id)
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=500, content={"detail": "Failed to create table"})
 
 
 @router.post("/sessions")

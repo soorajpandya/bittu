@@ -100,7 +100,17 @@ def create_app() -> FastAPI:
         openapi_url=openapi_url,
     )
 
-    # -- CORS (tightened in production) --
+    # -- Custom middleware (outermost → innermost) --
+    # NOTE: add_middleware wraps in reverse — last added = outermost.
+    # CORSMiddleware must be outermost so CORS headers are present
+    # even on error responses from ErrorHandlerMiddleware.
+    app.add_middleware(ErrorHandlerMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(RequestIdMiddleware)
+
+    # -- CORS (outermost — added last so it wraps everything) --
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,
@@ -108,13 +118,6 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Idempotency-Key"],
     )
-
-    # -- Custom middleware (outermost → innermost) --
-    app.add_middleware(ErrorHandlerMiddleware)
-    app.add_middleware(SecurityHeadersMiddleware)
-    app.add_middleware(RateLimitMiddleware)
-    app.add_middleware(RequestLoggingMiddleware)
-    app.add_middleware(RequestIdMiddleware)
 
     # -- Routes --
     app.include_router(api_router)

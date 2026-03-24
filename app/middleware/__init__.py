@@ -88,11 +88,23 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """
-    Redis-backed rate limiting per IP.
+    Redis-backed rate limiting per real client IP.
     Skips health checks and WebSocket upgrades.
+    Uses X-Forwarded-For when behind a trusted proxy.
     """
 
     SKIP_PATHS = {"/health", "/metrics", "/docs", "/openapi.json"}
+
+    @staticmethod
+    def _get_client_ip(request: Request) -> str:
+        """Extract real client IP, respecting X-Forwarded-For from trusted proxies."""
+        settings = get_settings()
+        direct_ip = request.client.host if request.client else "unknown"
+        if direct_ip in settings.TRUSTED_PROXIES:
+            forwarded = request.headers.get("X-Forwarded-For", "")
+            if forwarded:
+                return forwarded.split(",")[0].strip()
+        return direct_ip
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         if request.url.path in self.SKIP_PATHS:
@@ -104,7 +116,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         try:
             from app.core.redis import check_rate_limit
-            client_ip = request.client.host if request.client else "unknown"
+            client_ip = self._get_client_ip(request)
             allowed = await check_rate_limit(
                 f"ip:{client_ip}",
                 get_settings().RATE_LIMIT_PER_MINUTE,

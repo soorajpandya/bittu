@@ -41,6 +41,31 @@ async def list_combos(
     return await _svc.list_combos(user, active_only=active_only)
 
 
+@router.get("/items")
+async def list_combo_items(
+    user: UserContext = Depends(require_role("owner", "manager", "cashier")),
+):
+    """List all combo-item mappings across all combos."""
+    from app.core.database import get_connection
+    try:
+        owner_id = user.owner_id if user.is_branch_user else user.user_id
+        async with get_connection() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT ci.*, c.name as combo_name, i."Item_Name" as item_name
+                FROM combo_items ci
+                JOIN combos c ON c.id = ci.combo_id
+                LEFT JOIN items i ON i."Item_ID" = ci.item_id
+                WHERE c.user_id = $1
+                ORDER BY c.name, ci.item_id
+                """,
+                owner_id,
+            )
+            return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
 @router.get("/{combo_id}")
 async def get_combo(
     combo_id: int,

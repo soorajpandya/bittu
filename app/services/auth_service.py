@@ -1,9 +1,11 @@
 """
 Authentication service — proxies Supabase GoTrue Auth REST API.
 
-All auth flows (signup, login, OTP, password-reset, token refresh, logout)
-go through the backend so the frontend never touches Supabase credentials
-directly and the backend can add audit logging / rate-limiting.
+Google OAuth is the primary auth flow. The backend provides:
+  - Google OAuth URL generation
+  - Code exchange (PKCE) for session tokens
+  - Token refresh, user profile, logout
+  - Restaurant/branch initialization on first login
 """
 import httpx
 import uuid
@@ -92,101 +94,57 @@ class AuthError(Exception):
 
 
 # ────────────────────────────────────────────────────────────
-# Public API
+# Google OAuth
 # ────────────────────────────────────────────────────────────
 
-async def signup_with_email(email: str, password: str, metadata: Optional[dict] = None) -> dict:
+def get_google_oauth_url(redirect_to: str) -> str:
     """
-    Register a new user with email + password.
-    Returns session (access_token, refresh_token, user).
-    Automatically initializes restaurant and primary branch.
+    Build the Supabase OAuth authorize URL for Google.
+    The frontend should redirect the user's browser to this URL.
+    After Google consent, Supabase will redirect to `redirect_to` with the code.
     """
-    body: dict = {"email": email, "password": password}
-    if metadata:
-        body["data"] = metadata
-    result = await _post("signup", body)
-    logger.info("user_signup", email=email)
-    
-    # Initialize restaurant and primary branch for new user
-    if result.get("user", {}).get("id"):
-        user_id = result["user"]["id"]
+    s = get_settings()
+    base = f"{s.SUPABASE_URL}/auth/v1/authorize"
+    return f"{base}?provider=google&redirect_to={redirect_to}"
+
+
+async def exchange_google_code(code: str) -> dict:
+    """
+    Exchange the authorization code from Supabase Google OAuth callback
+    for a session (access_token + refresh_token).
+    Automatically initializes restaurant and primary branch for the user.
+    """
+    s = get_settings()
+    url = f"{s.SUPABASE_URL}/auth/v1/token?grant_type=pkce"
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            url,
+            json={"auth_code": code},
+            headers=_headers(),
+        )
+    data = resp.json() if resp.status_code != 204 else {}
+    if resp.status_code >= 400:
+        msg = data.get("error_description") or data.get("msg") or data.get("message") or str(data)
+        logger.warning("google_code_exchange_failed", status=resp.status_code, detail=msg)
+        raise AuthError(resp.status_code, msg)
+
+    user = data.get("user", {})
+    user_id = user.get("id")
+    email = user.get("email")
+
+    logger.info("google_login", email=email, user_id=user_id)
+
+    # Initialize restaurant and primary branch for new/returning user
+    if user_id:
         await _initialize_restaurant_and_branch(user_id, email=email)
-    
-    return result
+
+    return data
 
 
-async def login_with_email(email: str, password: str) -> dict:
-    """
-    Login with email + password.
-    Returns session (access_token, refresh_token, user).
-    """
-    body = {"email": email, "password": password}
-    result = await _post("token?grant_type=password", body)
-    logger.info("user_login", email=email)
-    return result
-
-
-async def login_with_phone(phone: str, password: str) -> dict:
-    """Login with phone + password."""
-    body = {"phone": phone, "password": password}
-    result = await _post("token?grant_type=password", body)
-    logger.info("user_login_phone", phone=phone)
-    return result
-
-
-async def send_otp(phone: str) -> dict:
-    """
-    Send OTP to a phone number for passwordless login.
-    If user doesn't exist, Supabase creates them automatically.
-    """
-    body = {"phone": phone}
-    result = await _post("otp", body)
-    logger.info("otp_sent", phone=phone)
-    return result
-
-
-async def send_email_otp(email: str) -> dict:
-    """Send magic-link / OTP to email for passwordless login."""
-    body = {"email": email}
-    result = await _post("otp", body)
-    logger.info("email_otp_sent", email=email)
-    return result
-
-
-async def verify_otp(phone: str, otp_token: str) -> dict:
-    """
-    Verify phone OTP.
-    Returns session (access_token, refresh_token, user).
-    Automatically initializes restaurant and primary branch for new users.
-    """
-    body = {"phone": phone, "token": otp_token, "type": "sms"}
-    result = await _post("verify", body)
-    logger.info("otp_verified", phone=phone)
-    
-    # Initialize restaurant and primary branch for new user
-    if result.get("user", {}).get("id"):
-        user_id = result["user"]["id"]
-        await _initialize_restaurant_and_branch(user_id, email=None)
-    
-    return result
-
-
-async def verify_email_otp(email: str, otp_token: str) -> dict:
-    """
-    Verify email OTP / magic-link token.
-    Automatically initializes restaurant and primary branch for new users.
-    """
-    body = {"email": email, "token": otp_token, "type": "email"}
-    result = await _post("verify", body)
-    logger.info("email_otp_verified", email=email)
-    
-    # Initialize restaurant and primary branch for new user
-    if result.get("user", {}).get("id"):
-        user_id = result["user"]["id"]
-        await _initialize_restaurant_and_branch(user_id, email=email)
-    
-    return result
-
+# ────────────────────────────────────────────────────────────
+# Session management
+# ────────────────────────────────────────────────────────────
 
 async def refresh_token(refresh_token_str: str) -> dict:
     """
@@ -196,42 +154,6 @@ async def refresh_token(refresh_token_str: str) -> dict:
     body = {"refresh_token": refresh_token_str}
     result = await _post("token?grant_type=refresh_token", body)
     return result
-
-
-async def forgot_password(email: str, redirect_to: Optional[str] = None) -> dict:
-    """Send password-reset email."""
-    body: dict = {"email": email}
-    if redirect_to:
-        body["redirect_to"] = redirect_to
-    # Uses service role to bypass rate limits on reset emails
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(
-            _auth_url("recover"),
-            json=body,
-            headers=_headers(use_service_role=True),
-        )
-    data = resp.json() if resp.status_code != 204 else {}
-    if resp.status_code >= 400:
-        msg = data.get("error_description") or data.get("msg") or str(data)
-        raise AuthError(resp.status_code, msg)
-    logger.info("password_reset_sent", email=email)
-    return {"message": "Password reset email sent"}
-
-
-async def update_password(access_token: str, new_password: str) -> dict:
-    """Update password for currently logged-in user (requires valid access_token)."""
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.put(
-            _auth_url("user"),
-            json={"password": new_password},
-            headers=_bearer_headers(access_token),
-        )
-    data = resp.json() if resp.status_code != 204 else {}
-    if resp.status_code >= 400:
-        msg = data.get("error_description") or data.get("msg") or str(data)
-        raise AuthError(resp.status_code, msg)
-    logger.info("password_updated")
-    return data
 
 
 async def get_user(access_token: str) -> dict:
@@ -260,25 +182,6 @@ async def update_user_metadata(user_id: str, metadata: dict) -> dict:
     Requires service role key.
     """
     return await _put(f"admin/users/{user_id}", metadata, service_role=True)
-
-
-async def signup_with_phone(phone: str, password: str, metadata: Optional[dict] = None) -> dict:
-    """
-    Register a new user with phone + password.
-    Automatically initializes restaurant and primary branch.
-    """
-    body: dict = {"phone": phone, "password": password}
-    if metadata:
-        body["data"] = metadata
-    result = await _post("signup", body)
-    logger.info("user_signup_phone", phone=phone)
-    
-    # Initialize restaurant and primary branch for new user
-    if result.get("user", {}).get("id"):
-        user_id = result["user"]["id"]
-        await _initialize_restaurant_and_branch(user_id, email=None)
-    
-    return result
 
 
 async def _initialize_restaurant_and_branch(user_id: str, email: Optional[str] = None) -> dict:

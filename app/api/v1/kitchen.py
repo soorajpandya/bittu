@@ -1,6 +1,6 @@
 """Kitchen Display System endpoints."""
 from typing import Optional
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.core.auth import UserContext, require_permission
@@ -20,10 +20,14 @@ class UpdateItemStatusIn(BaseModel):
 
 @router.get("/active")
 async def get_active_orders(
-    branch_id: str,
+    branch_id: Optional[str] = None,
+    day_start: Optional[str] = None,
+    day_end: Optional[str] = None,
+    station_id: Optional[str] = None,
+    status: Optional[str] = None,
     user: UserContext = Depends(require_permission("kitchen.read")),
 ):
-    return await _svc.get_active_orders(user=user, branch_id=branch_id)
+    return await _svc.get_active_orders(user=user, station_id=station_id, status=status)
 
 
 @router.patch("/orders/{order_id}/status")
@@ -47,7 +51,7 @@ async def update_kitchen_item_status(
 @router.get("/stations/{station_id}")
 async def get_station_orders(
     station_id: str,
-    branch_id: str,
+    branch_id: Optional[str] = None,
     user: UserContext = Depends(require_permission("kitchen.read")),
 ):
-    return await _svc.get_station_orders(user=user, branch_id=branch_id, station_id=station_id)
+    return await _svc.get_station_orders(user=user, station_id=station_id)

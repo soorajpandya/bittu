@@ -16,11 +16,11 @@ class ReceivePurchaseIn(BaseModel):
 
 @router.get("/stock")
 async def get_stock_levels(
-    branch_id: str,
+    branch_id: Optional[str] = None,
     low_only: bool = False,
     user: UserContext = Depends(require_permission("inventory.read")),
 ):
-    return await _svc.get_stock_levels(user=user, branch_id=branch_id, low_only=low_only)
+    return await _svc.get_stock_levels(user=user, low_stock_only=low_only)
 
 
 @router.post("/receive")
