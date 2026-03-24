@@ -158,6 +158,7 @@ async def get_item(
 
 
 @router.put("/{item_id}", response_model=ItemResponse)
+@router.patch("/{item_id}", response_model=ItemResponse)
 async def update_item(
     item_id: int,
     body: ItemUpdate,
