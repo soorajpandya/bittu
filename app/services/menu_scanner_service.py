@@ -44,6 +44,10 @@ class MenuScannerService:
         Optionally enriches with Google Vision OCR if API key is configured.
         """
         s = _cfg()
+
+        if not s.OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY is not configured on the server")
+
         ocr_text = None
 
         # Optional: Google Vision OCR (non-blocking supplement)
