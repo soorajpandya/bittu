@@ -1,16 +1,19 @@
 """Payment endpoints."""
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.core.auth import UserContext, require_permission
 from app.services.payment_service import PaymentService
+from app.services.elevenlabs_service import ElevenLabsService
 
 from app.core.database import get_connection
 from app.core.logging import get_logger
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
 _svc = PaymentService()
+_voice_svc = ElevenLabsService()
 logger = get_logger(__name__)
 
 
@@ -32,6 +35,17 @@ class RefundIn(BaseModel):
     payment_id: str
     amount: Optional[float] = None
     reason: Optional[str] = None
+
+
+class RecordPaymentIn(BaseModel):
+    order_id: str
+    method: str = "cash"  # cash | upi | card | wallet | online
+    amount: Optional[float] = None
+
+
+class PaymentVoiceIn(BaseModel):
+    amount: float
+    language: str = "en"
 
 
 @router.get("")
@@ -68,6 +82,33 @@ async def list_payments(
     except Exception as e:
         logger.warning("list_payments_failed", error=str(e), user_id=user.user_id)
         return []
+
+
+@router.post("")
+async def record_payment(
+    body: RecordPaymentIn,
+    user: UserContext = Depends(require_permission("payments.create")),
+):
+    """Record a payment for an order (called from POS save-and-print)."""
+    return await _svc.initiate_payment(
+        user=user,
+        order_id=body.order_id,
+        method=body.method,
+        amount=body.amount,
+    )
+
+
+@router.post("/voice", response_class=Response)
+async def payment_voice(
+    body: PaymentVoiceIn,
+    user: UserContext = Depends(require_permission("voice.use")),
+):
+    """Play a voice notification for a payment amount."""
+    audio = await _voice_svc.payment_voice_notification(
+        amount=body.amount,
+        language=body.language,
+    )
+    return Response(content=audio, media_type="audio/mpeg")
 
 
 @router.post("/initiate")
