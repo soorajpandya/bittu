@@ -1,5 +1,6 @@
 """Restaurant endpoints."""
 import uuid as _uuid
+from datetime import time as _time
 from typing import Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -81,6 +82,11 @@ async def update_restaurant(
         fields = {k: v for k, v in data.items() if v is not None}
         if not fields:
             return dict(existing)
+
+        # Convert time strings ("09:00") to datetime.time for asyncpg
+        for tf in ("opening_time", "closing_time"):
+            if tf in fields and isinstance(fields[tf], str):
+                fields[tf] = _time.fromisoformat(fields[tf])
 
         set_parts = []
         vals = [rid, owner_id]
