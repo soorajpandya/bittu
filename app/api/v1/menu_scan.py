@@ -16,6 +16,15 @@ class ScanBase64In(BaseModel):
     mime_type: str = "image/jpeg"
 
 
+@router.post("/ai-menu-scan")
+async def ai_menu_scan(
+    body: ScanBase64In,
+    user: UserContext = Depends(require_permission("menu.manage")),
+):
+    """AI menu scan — primary endpoint used by frontend."""
+    return await _svc.scan_menu_image(body.image_base64, body.mime_type)
+
+
 @router.post("/base64")
 async def scan_menu_base64(
     body: ScanBase64In,
