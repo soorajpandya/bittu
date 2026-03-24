@@ -216,3 +216,55 @@ async def delete_item(
         if result == "DELETE 0":
             raise HTTPException(status_code=404, detail="Item not found")
         return {"message": "Item deleted"}
+
+
+# ── Nested sub-resource routes ───────────────────────────────
+from app.services.item_customization_service import ItemVariantService, ItemAddonService, ItemExtraService
+from app.services.item_station_service import ItemStationService
+from app.services.modifier_service import ModifierService
+
+_variant_svc = ItemVariantService()
+_addon_svc = ItemAddonService()
+_extra_svc = ItemExtraService()
+_station_svc = ItemStationService()
+_modifier_svc = ModifierService()
+
+
+@router.get("/{item_id}/variants")
+async def list_item_variants(
+    item_id: int,
+    user: UserContext = Depends(require_owner_or_manager),
+):
+    return await _variant_svc.list_variants(user, item_id=item_id)
+
+
+@router.get("/{item_id}/addons")
+async def list_item_addons(
+    item_id: int,
+    user: UserContext = Depends(require_owner_or_manager),
+):
+    return await _addon_svc.list_addons(user, item_id=item_id)
+
+
+@router.get("/{item_id}/extras")
+async def list_item_extras(
+    item_id: int,
+    user: UserContext = Depends(require_owner_or_manager),
+):
+    return await _extra_svc.list_extras(user, item_id=item_id)
+
+
+@router.get("/{item_id}/station-mappings")
+async def list_item_station_mappings(
+    item_id: int,
+    user: UserContext = Depends(require_owner_or_manager),
+):
+    return await _station_svc.list_mappings(user, item_id=item_id)
+
+
+@router.get("/{item_id}/modifier-groups")
+async def list_item_modifier_groups(
+    item_id: int,
+    user: UserContext = Depends(require_owner_or_manager),
+):
+    return await _modifier_svc.list_groups(user)

@@ -38,6 +38,7 @@ from app.api.v1 import (
     item_ingredients,
     modifiers,
     item_stations,
+    modifier_groups,
     # ── Customers & CRM ──
     customers,
     customer_addresses,
@@ -103,6 +104,7 @@ router.include_router(item_extras.router)
 router.include_router(item_ingredients.router)
 router.include_router(modifiers.router)
 router.include_router(item_stations.router)
+router.include_router(modifier_groups.router)
 # ── Customers & CRM ──
 router.include_router(customers.router)
 router.include_router(customer_addresses.router)
