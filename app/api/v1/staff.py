@@ -37,9 +37,9 @@ class UpdateBranchUserIn(BaseModel):
 
 class CreateStaffIn(BaseModel):
     branch_id: Optional[str] = None
-    email: str
-    name: str
-    role: str
+    email: Optional[str] = None
+    name: Optional[str] = None
+    role: str = "staff"
     phone: Optional[str] = None
 
 
@@ -164,11 +164,16 @@ async def create_staff(
     if not branch_id:
         from app.core.exceptions import ValidationError
         raise ValidationError("No branch found. Please create a restaurant first.")
+
+    # Default email/name from auth context if not provided
+    email = body.email or user.email or ""
+    name = body.name or (email.split("@")[0] if email else "Staff")
+
     return await _svc.create_branch_user(
         user=user,
         branch_id=branch_id,
-        email=body.email,
-        name=body.name,
+        email=email,
+        name=name,
         role=body.role,
         phone=body.phone,
     )
