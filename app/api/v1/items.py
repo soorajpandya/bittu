@@ -186,13 +186,20 @@ async def update_item(
         return await get_item(item_id, user)
 
     set_clause = ", ".join(updates)
-    clause, tenant_params = tenant_where_clause(user)
-    params.extend(tenant_params)
+
+    # Build tenant WHERE with correct param offset (after SET params)
+    offset = len(params)
+    if user.is_branch_user:
+        params.extend([user.owner_id, user.branch_id])
+        where_clause = f"user_id = ${offset+1} AND branch_id = ${offset+2}"
+    else:
+        params.append(user.user_id)
+        where_clause = f"user_id = ${offset+1}"
     params.append(item_id)
 
     async with get_connection() as conn:
         item = await conn.fetchrow(
-            f'UPDATE items SET {set_clause} WHERE {clause} AND "Item_ID" = ${len(params)} RETURNING *',
+            f'UPDATE items SET {set_clause} WHERE {where_clause} AND "Item_ID" = ${len(params)} RETURNING *',
             *params,
         )
         if not item:
