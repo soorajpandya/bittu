@@ -116,8 +116,8 @@ class Settings(BaseSettings):
     UPSTASH_REDIS_REST_TOKEN: str = ""
 
     # ── Rate Limiting ──
-    RATE_LIMIT_PER_MINUTE: int = 300
-    RATE_LIMIT_AUTH_PER_MINUTE: int = 20  # Stricter for auth endpoints
+    RATE_LIMIT_PER_MINUTE: int = 600
+    RATE_LIMIT_AUTH_PER_MINUTE: int = 60  # Stricter for auth endpoints
 
     # ── Deployment ──
     WORKERS: int = 4
