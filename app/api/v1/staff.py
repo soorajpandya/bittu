@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.core.auth import UserContext, require_role
+from app.core.database import get_connection
 from app.services.staff_service import StaffService
 
 router = APIRouter(prefix="/staff", tags=["Staff"])
@@ -35,7 +36,7 @@ class UpdateBranchUserIn(BaseModel):
 
 
 class CreateStaffIn(BaseModel):
-    branch_id: str
+    branch_id: Optional[str] = None
     email: str
     name: str
     role: str
@@ -147,9 +148,25 @@ async def create_staff(
     body: CreateStaffIn,
     user: UserContext = Depends(require_role("owner")),
 ):
+    branch_id = body.branch_id
+    if not branch_id:
+        # Auto-resolve main branch for the owner
+        if user.branch_id:
+            branch_id = user.branch_id
+        else:
+            async with get_connection() as conn:
+                row = await conn.fetchrow(
+                    "SELECT id FROM sub_branches WHERE owner_id = $1 AND is_main_branch = true LIMIT 1",
+                    user.user_id,
+                )
+                if row:
+                    branch_id = str(row["id"])
+    if not branch_id:
+        from app.core.exceptions import ValidationError
+        raise ValidationError("No branch found. Please create a restaurant first.")
     return await _svc.create_branch_user(
         user=user,
-        branch_id=body.branch_id,
+        branch_id=branch_id,
         email=body.email,
         name=body.name,
         role=body.role,
