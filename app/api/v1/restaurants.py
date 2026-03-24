@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.core.auth import UserContext, get_current_user
-from app.core.database import get_connection
+from app.core.database import get_connection, get_serializable_transaction
+from app.core.exceptions import NotFoundError
 from app.services.auth_service import _initialize_restaurant_and_branch
 from app.core.logging import get_logger
 
@@ -14,6 +15,26 @@ logger = get_logger(__name__)
 
 class CreateRestaurantIn(BaseModel):
     name: Optional[str] = None
+
+
+class UpdateRestaurantIn(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    pincode: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    logo_url: Optional[str] = None
+    cover_url: Optional[str] = None
+    gst_number: Optional[str] = None
+    fssai_number: Optional[str] = None
+    is_active: Optional[bool] = None
+    opening_time: Optional[str] = None
+    closing_time: Optional[str] = None
+    avg_prep_time: Optional[int] = None
 
 
 @router.get("")
@@ -34,6 +55,44 @@ async def get_restaurants(
             owner_id,
         )
         return [dict(r) for r in rows]
+
+
+@router.patch("/{restaurant_id}")
+async def update_restaurant(
+    restaurant_id: str,
+    body: UpdateRestaurantIn,
+    user: UserContext = Depends(get_current_user),
+):
+    """Partial-update a restaurant owned by the current user."""
+    owner_id = user.owner_id if user.is_branch_user else user.user_id
+    data = body.model_dump(exclude_unset=True)
+
+    async with get_serializable_transaction() as conn:
+        existing = await conn.fetchrow(
+            "SELECT * FROM restaurants WHERE id = $1 AND owner_id = $2 FOR UPDATE",
+            restaurant_id,
+            owner_id,
+        )
+        if not existing:
+            raise NotFoundError("Restaurant", restaurant_id)
+
+        fields = {k: v for k, v in data.items() if v is not None}
+        if not fields:
+            return dict(existing)
+
+        set_parts = []
+        vals = [restaurant_id, owner_id]
+        for k, v in fields.items():
+            vals.append(v)
+            set_parts.append(f"{k} = ${len(vals)}")
+        set_parts.append(f"updated_at = now()")
+
+        row = await conn.fetchrow(
+            f"UPDATE restaurants SET {', '.join(set_parts)} "
+            f"WHERE id = $1 AND owner_id = $2 RETURNING *",
+            *vals,
+        )
+    return dict(row)
 
 
 @router.post("", status_code=201)
