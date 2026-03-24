@@ -18,18 +18,53 @@ logger = get_logger(__name__)
 OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 GOOGLE_VISION_URL = "https://vision.googleapis.com/v1/images:annotate"
 
-SYSTEM_PROMPT = """You are a restaurant menu parser. Analyze the provided menu image and extract ALL menu items.
-Return a valid JSON array where each item has:
-- "item_name": string (exact name from menu)
-- "price": number (in INR, 0 if not visible)
-- "category": string (category/section heading)
-- "is_veg": boolean (true if marked vegetarian, null if unknown)
-- "spice_level": string ("mild"|"medium"|"hot"|null)
-- "prep_time_min": number (estimated minutes, null if unknown)
-- "short_code": string (first 3 chars uppercase of item name)
-- "description": string (description if present, else empty)
+SYSTEM_PROMPT = """You are an expert restaurant menu parser. You will receive a menu IMAGE. Your task is to extract EVERY SINGLE item visible on the menu — miss NOTHING.
 
-Return ONLY the JSON array, no markdown fences or explanation."""
+MENU STRUCTURE:
+- Bold/highlighted text or headings are CATEGORIES (e.g. "ભાજી પાઉ", "पाव भाजी", "Starters", "Beverages"). Do NOT output category headings as items.
+- Lines of text below each heading are ITEMS belonging to that category.
+- Columns on the right side are VARIANTS (e.g. "OIL" / "BUTTER", "Half" / "Full", "Small" / "Medium" / "Large"). Each column header is a variant name.
+- If an item has MULTIPLE price columns (variants), create a SEPARATE entry for each variant with the variant in parentheses, e.g. "Bhaji Pav (Oil)" ₹125 and "Bhaji Pav (Butter)" ₹145.
+- If an item has only ONE price, output it as a single entry without variant suffix.
+- If a price cell is empty/blank for a variant, SKIP that variant (do not output price 0).
+
+LANGUAGE — CRITICAL:
+- ALL item_name values MUST be in English (transliterated). NEVER output Gujarati, Hindi, or any non-Latin script.
+- Transliterate naturally: "ભાજી પાઉ" → "Bhaji Pav", "મસાલા છાશ" → "Masala Chaas", "મીનરલ વોટર" → "Mineral Water", "લસણ ચટણી" → "Lasun Chutney", "ફ્રાય પાપડ" → "Fry Papad", "એકસ્ટ્રા પાઉ" → "Extra Pav", "ખાલી ભાજી" → "Khali Bhaji", "બોઈલ ભાજી પાઉ" → "Boil Bhaji Pav", "વેજ. પુલાવ" → "Veg Pulav", "ચીઝ પુલાવ" → "Cheese Pulav", "પાપડ રોસ્ટેડ" → "Papad Roasted", "મસાલા પાપડ" → "Masala Papad".
+- ALL category values MUST also be in English.
+
+COMPLETENESS — CRITICAL:
+- You MUST extract every single item that has a price on the menu. Count carefully.
+- Include EVERYTHING: main dishes, snacks, beverages, water, buttermilk, chutneys, papad, extras, add-ons, sides.
+- After extracting, mentally re-read the menu top to bottom and verify you haven't missed any item. If you find a missing item, add it.
+- Common items that get missed: extras (Extra Pav), chutneys (Lasun Chutney), beverages (Mineral Water, Masala Chaas), sides (Papad Roasted, Fry Papad, Masala Papad).
+
+DEDUPLICATION:
+- Each unique item at a given price point appears ONLY ONCE.
+- If the same item appears in multiple languages on the menu, output it once in English.
+
+PRICES:
+- Numbers only (no currency symbols). Convert Gujarati/Hindi numerals (૧=1, ૨=2, ૩=3, ૪=4, ૫=5, ૬=6, ૭=7, ૮=8, ૯=9, ૦=0).
+
+OTHER:
+- Determine Veg/Non-Veg from name/context. Default Veg.
+- Estimate spice level: "Mild"/"Medium"/"Hot"/"Extra Hot". Default "Medium".
+- Estimate prep time in minutes (5-30).
+- Generate short code from initials (2-4 chars uppercase), e.g. "Paneer Butter Masala" → "PBM".
+
+Return ONLY a valid JSON array. No markdown, no explanation. Each object:
+{
+  "item_name": "string (English only, variant in parentheses if applicable)",
+  "price": number,
+  "category": "string (English)",
+  "subcategory": "string or null",
+  "cuisine": "string",
+  "is_veg": true/false,
+  "spice_level": "Mild"|"Medium"|"Hot"|"Extra Hot",
+  "prep_time_min": number,
+  "short_code": "string",
+  "description": "short 1-line description or null"
+}"""
 
 
 def _cfg():
@@ -61,7 +96,11 @@ class MenuScannerService:
         items = await self._openai_vision_parse(image_base64, mime_type, ocr_text)
 
         logger.info("menu_scan_complete", items_found=len(items) if isinstance(items, list) else 0)
-        return {"items": items, "ocr_text": ocr_text}
+        return {
+            "ocr_text": ocr_text or "",
+            "menu": items,
+            "item_count": len(items) if isinstance(items, list) else 0,
+        }
 
     async def _openai_vision_parse(
         self, image_base64: str, mime_type: str, ocr_text: str | None
@@ -80,7 +119,7 @@ class MenuScannerService:
         if ocr_text:
             user_content.append({
                 "type": "text",
-                "text": f"OCR text extracted from this menu:\n{ocr_text}",
+                "text": f"Supplementary OCR text (use to cross-check, but trust what you SEE in the image):\n\n{ocr_text}",
             })
 
         async with httpx.AsyncClient(timeout=120) as client:
