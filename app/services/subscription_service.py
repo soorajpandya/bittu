@@ -382,3 +382,435 @@ class SubscriptionService:
             event_type=SUBSCRIPTION_CANCELLED,
             payload={"user_id": str(sub["user_id"])},
         ))
+
+    # ── Subscribe (create Razorpay subscription) ──
+
+    async def subscribe(self, user: UserContext, plan_slug: str) -> dict:
+        """
+        Create a Razorpay subscription for the user.
+        Returns Razorpay subscription details (id, short_url) for frontend checkout.
+        """
+        from app.services.razorpay_extended_service import RazorpayExtendedService
+        rz = RazorpayExtendedService()
+
+        async with get_serializable_transaction() as conn:
+            # Validate plan
+            plan = await conn.fetchrow(
+                "SELECT * FROM subscription_plans WHERE slug = $1 AND is_active = true",
+                plan_slug,
+            )
+            if not plan:
+                raise NotFoundError("Plan", plan_slug)
+
+            if not plan["razorpay_plan_id"]:
+                raise ValidationError("This plan is not configured for payment yet. Contact support.")
+
+            # Check existing active subscription
+            existing = await conn.fetchrow(
+                """
+                SELECT id, status, plan_id FROM user_subscriptions
+                WHERE user_id = $1 AND status IN ('ACTIVE', 'trialing', 'TRIAL', 'PENDING')
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                user.user_id,
+            )
+            if existing and existing["status"] in ("ACTIVE",):
+                raise ValidationError("You already have an active subscription. Use upgrade instead.")
+
+            # Create Razorpay subscription
+            rz_sub = await rz.create_subscription(
+                plan_id=plan["razorpay_plan_id"],
+                total_count=12,  # 12 cycles for yearly
+                user_id=user.user_id,
+                plan_name=plan["name"],
+                user_email=user.email or "",
+            )
+
+            now = datetime.now(timezone.utc)
+
+            if existing:
+                await conn.execute(
+                    """
+                    UPDATE user_subscriptions
+                    SET plan_id = $1, status = 'PENDING',
+                        razorpay_subscription_id = $2, updated_at = $3
+                    WHERE id = $4
+                    """,
+                    plan["id"], rz_sub["id"], now, existing["id"],
+                )
+                sub_id = existing["id"]
+            else:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO user_subscriptions
+                        (user_id, plan_id, status, razorpay_subscription_id, created_at, updated_at)
+                    VALUES ($1, $2, 'PENDING', $3, $4, $4)
+                    RETURNING id
+                    """,
+                    user.user_id, plan["id"], rz_sub["id"], now,
+                )
+                sub_id = row["id"]
+
+            await cache_delete(f"sub_active:{user.user_id}")
+
+        return {
+            "subscription_id": sub_id,
+            "razorpay_subscription_id": rz_sub["id"],
+            "short_url": rz_sub.get("short_url", ""),
+            "status": "PENDING",
+            "plan": dict(plan),
+        }
+
+    # ── Cancel Subscription ──
+
+    async def cancel_subscription(self, user: UserContext) -> dict:
+        """
+        Cancel the user's active subscription.
+        Access continues until current period ends.
+        """
+        from app.services.razorpay_extended_service import RazorpayExtendedService
+        rz = RazorpayExtendedService()
+
+        async with get_serializable_transaction() as conn:
+            sub = await conn.fetchrow(
+                """
+                SELECT id, status, razorpay_subscription_id, current_period_end
+                FROM user_subscriptions
+                WHERE user_id = $1 AND status IN ('ACTIVE', 'PAST_DUE', 'GRACE_PERIOD', 'trialing', 'TRIAL')
+                ORDER BY created_at DESC LIMIT 1
+                FOR UPDATE
+                """,
+                user.user_id,
+            )
+            if not sub:
+                raise NotFoundError("Subscription", "No active subscription found")
+
+            now = datetime.now(timezone.utc)
+
+            # Cancel on Razorpay if exists
+            if sub["razorpay_subscription_id"]:
+                try:
+                    import httpx, base64
+                    settings = get_settings()
+                    creds = base64.b64encode(
+                        f"{settings.RAZORPAY_KEY_ID}:{settings.RAZORPAY_KEY_SECRET}".encode()
+                    ).decode()
+                    async with httpx.AsyncClient(timeout=30) as client:
+                        await client.post(
+                            f"https://api.razorpay.com/v1/subscriptions/{sub['razorpay_subscription_id']}/cancel",
+                            json={"cancel_at_cycle_end": 1},
+                            headers={
+                                "Content-Type": "application/json",
+                                "Authorization": f"Basic {creds}",
+                            },
+                        )
+                except Exception as e:
+                    logger.error("razorpay_cancel_failed", error=str(e))
+
+            # If trial, cancel immediately; if paid, end at period end
+            if sub["status"] in ("trialing", "TRIAL"):
+                await conn.execute(
+                    """
+                    UPDATE user_subscriptions
+                    SET status = 'CANCELLED', cancelled_at = $1, ended_at = $1, updated_at = $1
+                    WHERE id = $2
+                    """,
+                    now, sub["id"],
+                )
+                end_date = now
+            else:
+                end_date = sub.get("current_period_end") or now
+                await conn.execute(
+                    """
+                    UPDATE user_subscriptions
+                    SET status = 'CANCELLED', cancelled_at = $1, ended_at = $2, updated_at = $1
+                    WHERE id = $3
+                    """,
+                    now, end_date, sub["id"],
+                )
+
+            await cache_delete(f"sub_active:{user.user_id}")
+
+        return {
+            "status": "CANCELLED",
+            "cancelled_at": now.isoformat(),
+            "access_until": end_date.isoformat() if end_date else now.isoformat(),
+        }
+
+    # ── Upgrade Plan ──
+
+    async def upgrade_plan(self, user: UserContext, new_plan_slug: str) -> dict:
+        """
+        Upgrade to a higher plan. Takes effect immediately.
+        Creates a new Razorpay subscription for the new plan.
+        """
+        from app.services.razorpay_extended_service import RazorpayExtendedService
+        rz = RazorpayExtendedService()
+
+        async with get_serializable_transaction() as conn:
+            # Get current subscription
+            sub = await conn.fetchrow(
+                """
+                SELECT us.id, us.status, us.plan_id, us.razorpay_subscription_id,
+                       sp.slug as current_slug, sp.price as current_price
+                FROM user_subscriptions us
+                LEFT JOIN subscription_plans sp ON sp.id = us.plan_id
+                WHERE us.user_id = $1 AND us.status IN ('ACTIVE', 'trialing', 'TRIAL')
+                ORDER BY us.created_at DESC LIMIT 1
+                FOR UPDATE
+                """,
+                user.user_id,
+            )
+            if not sub:
+                raise NotFoundError("Subscription", "No active subscription to upgrade")
+
+            # Get new plan
+            new_plan = await conn.fetchrow(
+                "SELECT * FROM subscription_plans WHERE slug = $1 AND is_active = true",
+                new_plan_slug,
+            )
+            if not new_plan:
+                raise NotFoundError("Plan", new_plan_slug)
+
+            if not new_plan["razorpay_plan_id"]:
+                raise ValidationError("Target plan is not configured for payment yet.")
+
+            # Ensure it's actually an upgrade
+            if new_plan["price"] <= (sub["current_price"] or 0):
+                raise ValidationError("Use downgrade endpoint for lower plans")
+
+            # Cancel old Razorpay subscription
+            if sub["razorpay_subscription_id"]:
+                try:
+                    import httpx, base64
+                    settings = get_settings()
+                    creds = base64.b64encode(
+                        f"{settings.RAZORPAY_KEY_ID}:{settings.RAZORPAY_KEY_SECRET}".encode()
+                    ).decode()
+                    async with httpx.AsyncClient(timeout=30) as client:
+                        await client.post(
+                            f"https://api.razorpay.com/v1/subscriptions/{sub['razorpay_subscription_id']}/cancel",
+                            json={"cancel_at_cycle_end": 0},
+                            headers={
+                                "Content-Type": "application/json",
+                                "Authorization": f"Basic {creds}",
+                            },
+                        )
+                except Exception as e:
+                    logger.warning("razorpay_cancel_old_sub", error=str(e))
+
+            # Create new Razorpay subscription for upgraded plan
+            rz_sub = await rz.create_subscription(
+                plan_id=new_plan["razorpay_plan_id"],
+                total_count=12,
+                user_id=user.user_id,
+                plan_name=new_plan["name"],
+                user_email=user.email or "",
+            )
+
+            now = datetime.now(timezone.utc)
+            await conn.execute(
+                """
+                UPDATE user_subscriptions
+                SET plan_id = $1, status = 'PENDING',
+                    razorpay_subscription_id = $2,
+                    upgrade_from_plan_id = $3, updated_at = $4
+                WHERE id = $5
+                """,
+                new_plan["id"], rz_sub["id"], sub["plan_id"], now, sub["id"],
+            )
+
+            await cache_delete(f"sub_active:{user.user_id}")
+
+        return {
+            "subscription_id": sub["id"],
+            "razorpay_subscription_id": rz_sub["id"],
+            "short_url": rz_sub.get("short_url", ""),
+            "status": "PENDING",
+            "upgraded_from": sub["current_slug"],
+            "upgraded_to": new_plan_slug,
+            "plan": dict(new_plan),
+        }
+
+    # ── Downgrade Plan ──
+
+    async def downgrade_plan(self, user: UserContext, new_plan_slug: str) -> dict:
+        """
+        Schedule a downgrade to a lower plan.
+        Takes effect at next billing cycle.
+        """
+        async with get_serializable_transaction() as conn:
+            sub = await conn.fetchrow(
+                """
+                SELECT us.id, us.status, us.plan_id, us.current_period_end,
+                       sp.slug as current_slug, sp.price as current_price
+                FROM user_subscriptions us
+                LEFT JOIN subscription_plans sp ON sp.id = us.plan_id
+                WHERE us.user_id = $1 AND us.status = 'ACTIVE'
+                ORDER BY us.created_at DESC LIMIT 1
+                FOR UPDATE
+                """,
+                user.user_id,
+            )
+            if not sub:
+                raise NotFoundError("Subscription", "No active subscription to downgrade")
+
+            new_plan = await conn.fetchrow(
+                "SELECT * FROM subscription_plans WHERE slug = $1 AND is_active = true",
+                new_plan_slug,
+            )
+            if not new_plan:
+                raise NotFoundError("Plan", new_plan_slug)
+
+            if new_plan["price"] >= (sub["current_price"] or 0):
+                raise ValidationError("Use upgrade endpoint for higher plans")
+
+            effective_date = sub.get("current_period_end") or (
+                datetime.now(timezone.utc) + timedelta(days=30)
+            )
+
+            now = datetime.now(timezone.utc)
+            await conn.execute(
+                """
+                UPDATE user_subscriptions
+                SET downgrade_to_plan_id = $1, downgrade_effective_at = $2, updated_at = $3
+                WHERE id = $4
+                """,
+                new_plan["id"], effective_date, now, sub["id"],
+            )
+
+        return {
+            "status": "DOWNGRADE_SCHEDULED",
+            "current_plan": sub["current_slug"],
+            "downgrade_to": new_plan_slug,
+            "effective_at": effective_date.isoformat(),
+        }
+
+    # ── Add-ons ──
+
+    async def list_addons(self) -> list[dict]:
+        """List all available add-on products."""
+        async with get_connection() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM addon_products WHERE is_active = true ORDER BY name"
+            )
+            return [dict(r) for r in rows]
+
+    async def purchase_addon(self, user: UserContext, addon_slug: str, quantity: int = 1, shipping_address: dict = None) -> dict:
+        """Create an order for an add-on product (e.g., printer)."""
+        from app.services.razorpay_extended_service import RazorpayExtendedService
+
+        async with get_serializable_transaction() as conn:
+            addon = await conn.fetchrow(
+                "SELECT * FROM addon_products WHERE slug = $1 AND is_active = true",
+                addon_slug,
+            )
+            if not addon:
+                raise NotFoundError("AddOn", addon_slug)
+
+            amount = float(addon["price"]) * quantity
+
+            # Create Razorpay order for one-time payment
+            rz = RazorpayExtendedService()
+            import httpx, base64
+            settings = get_settings()
+            creds = base64.b64encode(
+                f"{settings.RAZORPAY_KEY_ID}:{settings.RAZORPAY_KEY_SECRET}".encode()
+            ).decode()
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    "https://api.razorpay.com/v1/orders",
+                    json={
+                        "amount": int(amount * 100),  # paise
+                        "currency": "INR",
+                        "notes": {
+                            "user_id": user.user_id,
+                            "addon_slug": addon_slug,
+                            "quantity": str(quantity),
+                        },
+                    },
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Basic {creds}",
+                    },
+                )
+                resp.raise_for_status()
+                rz_order = resp.json()
+
+            import json as _json
+            row = await conn.fetchrow(
+                """
+                INSERT INTO addon_orders
+                    (user_id, addon_id, quantity, amount, status, razorpay_order_id, shipping_address, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, 'pending', $5, $6, now(), now())
+                RETURNING id
+                """,
+                user.user_id, addon["id"], quantity, amount,
+                rz_order["id"],
+                _json.dumps(shipping_address) if shipping_address else None,
+            )
+
+        return {
+            "order_id": row["id"],
+            "razorpay_order_id": rz_order["id"],
+            "amount": amount,
+            "currency": "INR",
+            "addon": dict(addon),
+        }
+
+    # ── Admin Methods ──
+
+    async def admin_list_subscriptions(self, status_filter: str = None, limit: int = 50, offset: int = 0) -> list[dict]:
+        """Admin: List all subscriptions with optional status filter."""
+        async with get_connection() as conn:
+            if status_filter:
+                rows = await conn.fetch(
+                    """
+                    SELECT us.*, sp.name as plan_name, sp.slug as plan_slug, sp.price as plan_price
+                    FROM user_subscriptions us
+                    LEFT JOIN subscription_plans sp ON sp.id = us.plan_id
+                    WHERE us.status = $1
+                    ORDER BY us.created_at DESC
+                    LIMIT $2 OFFSET $3
+                    """,
+                    status_filter, limit, offset,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT us.*, sp.name as plan_name, sp.slug as plan_slug, sp.price as plan_price
+                    FROM user_subscriptions us
+                    LEFT JOIN subscription_plans sp ON sp.id = us.plan_id
+                    ORDER BY us.created_at DESC
+                    LIMIT $1 OFFSET $2
+                    """,
+                    limit, offset,
+                )
+            return [dict(r) for r in rows]
+
+    async def admin_update_plan(self, plan_id: int, data: dict) -> dict:
+        """Admin: Update plan pricing/features."""
+        async with get_serializable_transaction() as conn:
+            plan = await conn.fetchrow(
+                "SELECT * FROM subscription_plans WHERE id = $1 FOR UPDATE", plan_id
+            )
+            if not plan:
+                raise NotFoundError("Plan", str(plan_id))
+
+            fields = {k: v for k, v in data.items() if v is not None}
+            if not fields:
+                return dict(plan)
+
+            set_parts = []
+            vals = [plan_id]
+            for k, v in fields.items():
+                vals.append(v)
+                set_parts.append(f"{k} = ${len(vals)}")
+            vals.append(datetime.now(timezone.utc))
+            set_parts.append(f"updated_at = ${len(vals)}")
+
+            row = await conn.fetchrow(
+                f"UPDATE subscription_plans SET {', '.join(set_parts)} WHERE id = $1 RETURNING *",
+                *vals,
+            )
+            return dict(row)

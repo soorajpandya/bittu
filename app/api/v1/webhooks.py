@@ -51,8 +51,7 @@ async def razorpay_subscription_webhook(request: Request):
 
     payload = await request.json()
     event = payload.get("event", "")
-    entity = payload.get("payload", {}).get("subscription", {}).get("entity", {})
 
-    logger.info("razorpay_subscription_webhook", event=event, subscription_id=entity.get("id"))
-    await _subscription_svc.handle_payment_webhook(event=event, payload=entity)
+    logger.info("razorpay_subscription_webhook", event=event)
+    await _subscription_svc.handle_payment_webhook(event_type=event, payload=payload)
     return {"status": "ok"}

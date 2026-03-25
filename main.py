@@ -18,6 +18,7 @@ from app.middleware import (
     RateLimitMiddleware,
     ErrorHandlerMiddleware,
     SecurityHeadersMiddleware,
+    SubscriptionCheckMiddleware,
 )
 from app.api import router as api_router
 from app.realtime import ws_endpoint, redis_subscriber
@@ -106,6 +107,7 @@ def create_app() -> FastAPI:
     # even on error responses from ErrorHandlerMiddleware.
     app.add_middleware(ErrorHandlerMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(SubscriptionCheckMiddleware)
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(RequestIdMiddleware)
