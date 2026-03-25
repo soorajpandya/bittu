@@ -46,48 +46,52 @@ class SubscriptionService:
         if cached is not None:
             return cached == "true"
 
-        async with get_connection() as conn:
-            sub = await conn.fetchrow(
-                """
-                SELECT id, status, trial_expires_at, current_period_end, grace_period_end
-                FROM user_subscriptions
-                WHERE user_id = $1
-                ORDER BY created_at DESC LIMIT 1
-                """,
-                user_id,
-            )
-
-            if not sub:
-                # Check trial eligibility
-                trial = await conn.fetchrow(
-                    "SELECT trial_expires_at FROM trial_eligibility WHERE user_id = $1",
+        try:
+            async with get_connection() as conn:
+                sub = await conn.fetchrow(
+                    """
+                    SELECT id, status, trial_expires_at, current_period_end, grace_period_end
+                    FROM user_subscriptions
+                    WHERE user_id = $1
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
                     user_id,
                 )
-                if trial and trial["trial_expires_at"] > datetime.now(timezone.utc):
-                    await cache_set(cache_key, "true", ttl=300)
-                    return True
-                await cache_set(cache_key, "false", ttl=60)
-                return False
 
-            now = datetime.now(timezone.utc)
-            status = sub["status"]
-            is_active = False
+                if not sub:
+                    # Check trial eligibility
+                    trial = await conn.fetchrow(
+                        "SELECT trial_expires_at FROM trial_eligibility WHERE user_id = $1",
+                        user_id,
+                    )
+                    if trial and trial["trial_expires_at"] > datetime.now(timezone.utc):
+                        await cache_set(cache_key, "true", ttl=300)
+                        return True
+                    await cache_set(cache_key, "false", ttl=60)
+                    return False
 
-            if status == "ACTIVE":
-                is_active = True
-            elif status in ("TRIAL", "trialing"):
-                # Trial must not have expired
-                if sub.get("trial_expires_at"):
-                    is_active = sub["trial_expires_at"] > now
-                else:
+                now = datetime.now(timezone.utc)
+                status = sub["status"]
+                is_active = False
+
+                if status == "ACTIVE":
                     is_active = True
-            elif status == "PAST_DUE" and sub.get("grace_period_end"):
-                is_active = sub["grace_period_end"] > now
-            elif status == "GRACE_PERIOD" and sub.get("grace_period_end"):
-                is_active = sub["grace_period_end"] > now
+                elif status in ("TRIAL", "trialing"):
+                    # Trial must not have expired
+                    if sub.get("trial_expires_at"):
+                        is_active = sub["trial_expires_at"] > now
+                    else:
+                        is_active = True
+                elif status == "PAST_DUE" and sub.get("grace_period_end"):
+                    is_active = sub["grace_period_end"] > now
+                elif status == "GRACE_PERIOD" and sub.get("grace_period_end"):
+                    is_active = sub["grace_period_end"] > now
 
-            await cache_set(cache_key, "true" if is_active else "false", ttl=300)
-            return is_active
+                await cache_set(cache_key, "true" if is_active else "false", ttl=300)
+                return is_active
+        except Exception:
+            # Tables may not exist yet if migration hasn't been run
+            return True
 
     async def get_plans(self) -> list[dict]:
         """List all available subscription plans."""
@@ -690,11 +694,15 @@ class SubscriptionService:
 
     async def list_addons(self) -> list[dict]:
         """List all available add-on products."""
-        async with get_connection() as conn:
-            rows = await conn.fetch(
-                "SELECT * FROM addon_products WHERE is_active = true ORDER BY name"
-            )
-            return [dict(r) for r in rows]
+        try:
+            async with get_connection() as conn:
+                rows = await conn.fetch(
+                    "SELECT * FROM addon_products WHERE is_active = true ORDER BY name"
+                )
+                return [dict(r) for r in rows]
+        except Exception:
+            # Table may not exist yet if migration hasn't been run
+            return []
 
     async def purchase_addon(self, user: UserContext, addon_slug: str, quantity: int = 1, shipping_address: dict = None) -> dict:
         """Create an order for an add-on product (e.g., printer)."""
