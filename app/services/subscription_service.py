@@ -99,7 +99,10 @@ class SubscriptionService:
             async with get_connection() as conn:
                 rows = await conn.fetch(
                     """
-                    SELECT id, name, description, price, currency, interval, features, is_active, sort_order
+                    SELECT id, name, slug, description, price, monthly_price, currency, interval,
+                           features, limits, not_included,
+                           highlight, highlight_label, cta_text, discount_label,
+                           is_active, sort_order
                     FROM subscription_plans
                     WHERE is_active = true
                     ORDER BY sort_order ASC, price ASC

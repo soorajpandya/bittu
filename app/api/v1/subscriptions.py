@@ -36,7 +36,10 @@ class AdminUpdatePlanIn(BaseModel):
     monthly_price: Optional[float] = None
     description: Optional[str] = None
     features: Optional[list] = None
+    limits: Optional[list] = None
+    not_included: Optional[list] = None
     highlight: Optional[bool] = None
+    highlight_label: Optional[str] = None
     cta_text: Optional[str] = None
     discount_label: Optional[str] = None
     razorpay_plan_id: Optional[str] = None

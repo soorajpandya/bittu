@@ -10,12 +10,15 @@ CREATE TABLE IF NOT EXISTS subscription_plans (
     name            VARCHAR(100) NOT NULL,
     slug            VARCHAR(50) UNIQUE NOT NULL,         -- starter, growth, pro
     description     TEXT DEFAULT '',
-    price           NUMERIC(10,2) NOT NULL,              -- annual price in INR
+    price           NUMERIC(10,2) NOT NULL,              -- annual price incl. GST in INR
     monthly_price   NUMERIC(10,2),                       -- display-only monthly equivalent
     currency        VARCHAR(3) DEFAULT 'INR',
     interval        VARCHAR(20) DEFAULT 'yearly',        -- yearly | monthly
-    features        JSONB DEFAULT '[]'::jsonb,           -- array of feature strings
+    features        JSONB DEFAULT '[]'::jsonb,           -- included features array
+    limits          JSONB DEFAULT '[]'::jsonb,           -- plan limits array
+    not_included    JSONB DEFAULT '[]'::jsonb,           -- features NOT in this plan
     highlight       BOOLEAN DEFAULT false,               -- "Most Popular" badge
+    highlight_label VARCHAR(100),                        -- e.g. "Most restaurants choose this"
     cta_text        VARCHAR(100) DEFAULT 'Get Started',
     discount_label  VARCHAR(100),                        -- e.g. "Save ₹1500"
     razorpay_plan_id VARCHAR(100),                       -- Razorpay plan ID for recurring billing
@@ -142,37 +145,53 @@ CREATE TABLE IF NOT EXISTS addon_orders (
 
 -- ── Seed Plans ──────────────────────────────────────────────
 
-INSERT INTO subscription_plans (name, slug, price, monthly_price, description, interval, features, highlight, cta_text, discount_label, sort_order)
+INSERT INTO subscription_plans (name, slug, price, monthly_price, description, interval, features, limits, not_included, highlight, highlight_label, cta_text, discount_label, sort_order)
 VALUES
 (
-    'Starter', 'starter', 2999, 250,
-    'Perfect for small restaurants getting started with digital billing',
+    'Starter', 'starter', 3538, 295,
+    'Best for small setups',
     'yearly',
     '["Billing + KOT", "AI Menu Upload", "Voice Billing", "Table Management", "Basic Reports"]'::jsonb,
-    false, 'Start Free Trial', NULL, 1
+    '["Max 3 staff accounts", "Max 1 device login", "Single branch only", "Basic analytics only"]'::jsonb,
+    '["WhatsApp Marketing", "Inventory Management", "Offers & Coupons", "Loyalty System"]'::jsonb,
+    false, NULL, 'Start Free Trial', NULL, 1
 ),
 (
-    'Growth', 'growth', 5999, 500,
-    'Everything you need to grow your restaurant business',
+    'Growth', 'growth', 7078, 590,
+    'Most Popular — built for real business growth',
     'yearly',
-    '["Everything in Starter", "WhatsApp Marketing", "Customer Loyalty System", "Stock Management", "Advanced Reports", "Google Business Profile", "Priority Support"]'::jsonb,
-    true, 'Start My Setup', 'Save ₹1,500', 2
+    '["Everything in Starter", "WhatsApp Marketing", "Loyalty & Discounts", "Inventory Management", "Offers & Coupons", "Google Business Integration"]'::jsonb,
+    '["Max 10 staff accounts", "Max 3 devices", "Single branch only", "Advanced analytics (limited depth)"]'::jsonb,
+    '["Multi-branch support", "Audit logs", "Advanced analytics dashboard"]'::jsonb,
+    true, 'Most restaurants choose this', 'Start My Setup', NULL, 2
 ),
 (
-    'Pro', 'pro', 9999, 834,
-    'For multi-branch restaurants that need advanced features',
+    'Pro', 'pro', 11798, 983,
+    'For scaling & multi-outlet businesses',
     'yearly',
-    '["Everything in Growth", "Multi-device Login", "Multi-branch Support", "Advanced Analytics Dashboard", "Dedicated Onboarding", "Premium WhatsApp Automation"]'::jsonb,
-    false, 'Scale My Business', NULL, 3
+    '["Everything in Growth", "Multi-branch Support", "Advanced Analytics Dashboard", "Audit Logs", "Role-Based Access Control"]'::jsonb,
+    '["Max 25 staff accounts", "Max 5 devices"]'::jsonb,
+    '[]'::jsonb,
+    false, NULL, 'Scale My Business', NULL, 3
 )
 ON CONFLICT (slug) DO UPDATE SET
     price = EXCLUDED.price,
     monthly_price = EXCLUDED.monthly_price,
+    description = EXCLUDED.description,
     features = EXCLUDED.features,
+    limits = EXCLUDED.limits,
+    not_included = EXCLUDED.not_included,
     highlight = EXCLUDED.highlight,
+    highlight_label = EXCLUDED.highlight_label,
     cta_text = EXCLUDED.cta_text,
     discount_label = EXCLUDED.discount_label,
     updated_at = now();
+
+-- ── Alter existing tables (safe to re-run) ─────────────────
+
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS limits JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS not_included JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS highlight_label VARCHAR(100);
 
 -- ── Seed Add-on (Printer) ──────────────────────────────────
 
