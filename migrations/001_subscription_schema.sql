@@ -143,6 +143,12 @@ CREATE TABLE IF NOT EXISTS addon_orders (
     updated_at           TIMESTAMPTZ DEFAULT now()
 );
 
+-- ── Alter existing tables (safe to re-run) ─────────────────
+
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS limits JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS not_included JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS highlight_label VARCHAR(100);
+
 -- ── Seed Plans ──────────────────────────────────────────────
 
 INSERT INTO subscription_plans (name, slug, price, monthly_price, description, interval, features, limits, not_included, highlight, highlight_label, cta_text, discount_label, sort_order)
@@ -186,12 +192,6 @@ ON CONFLICT (slug) DO UPDATE SET
     cta_text = EXCLUDED.cta_text,
     discount_label = EXCLUDED.discount_label,
     updated_at = now();
-
--- ── Alter existing tables (safe to re-run) ─────────────────
-
-ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS limits JSONB DEFAULT '[]'::jsonb;
-ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS not_included JSONB DEFAULT '[]'::jsonb;
-ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS highlight_label VARCHAR(100);
 
 -- ── Seed Add-on (Printer) ──────────────────────────────────
 
