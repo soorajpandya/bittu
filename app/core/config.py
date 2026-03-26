@@ -111,6 +111,11 @@ class Settings(BaseSettings):
     # ── Google Cloud Vision ──
     GOOGLE_VISION_API_KEY: str = ""
 
+    # ── Google Business Profile ──
+    GOOGLE_BUSINESS_CLIENT_ID: str = ""
+    GOOGLE_BUSINESS_CLIENT_SECRET: str = ""
+    GOOGLE_BUSINESS_REDIRECT_URI: str = "https://www.merabittu.com/auth/callback"
+
     # ── Upstash Redis (REST) ──
     UPSTASH_REDIS_REST_URL: str = ""
     UPSTASH_REDIS_REST_TOKEN: str = ""

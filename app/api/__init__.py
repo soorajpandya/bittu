@@ -23,6 +23,8 @@ from app.api.v1 import (
     paytm,
     cashfree,
     zivonpay,
+    # ── Google Business Profile ──
+    google_business,
     # ── KYC / Verification ──
     kyc,
     digilocker,
@@ -89,6 +91,8 @@ router.include_router(payu.router)
 router.include_router(paytm.router)
 router.include_router(cashfree.router)
 router.include_router(zivonpay.router)
+# ── Google Business Profile ──
+router.include_router(google_business.router)
 # ── KYC / Verification ──
 router.include_router(kyc.router)
 router.include_router(digilocker.router)
