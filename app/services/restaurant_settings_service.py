@@ -36,11 +36,12 @@ class RestaurantSettingsService:
             if json_field in data and isinstance(data[json_field], dict):
                 data[json_field] = json.dumps(data[json_field])
 
-        async with get_serializable_transaction() as conn:
-            existing = await conn.fetchrow(
-                "SELECT id FROM restaurant_settings WHERE user_id = $1 FOR UPDATE",
-                uid,
-            )
+        async with get_connection() as conn:
+            async with conn.transaction():
+                existing = await conn.fetchrow(
+                    "SELECT id FROM restaurant_settings WHERE user_id = $1 FOR UPDATE",
+                    uid,
+                )
             if existing:
                 fields = {k: v for k, v in data.items() if v is not None and k in _ALLOWED_COLUMNS}
                 if not fields:
