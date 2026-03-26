@@ -12,7 +12,7 @@ from app.services.google.token_manager import GoogleTokenManager
 logger = get_logger(__name__)
 
 BUSINESS_INFO_BASE = "https://mybusinessbusinessinformation.googleapis.com/v1"
-MY_BUSINESS_BASE = "https://mybusiness.googleapis.com/v4"
+ACCOUNT_MGMT_BASE = "https://mybusinessaccountmanagement.googleapis.com/v1"
 
 token_mgr = GoogleTokenManager()
 
@@ -26,7 +26,7 @@ class GoogleLocationsService:
 
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.get(
-                f"{MY_BUSINESS_BASE}/accounts",
+                f"{ACCOUNT_MGMT_BASE}/accounts",
                 headers={"Authorization": f"Bearer {access_token}"},
             )
 
