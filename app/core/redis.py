@@ -116,16 +116,20 @@ async def set_idempotency(key: str, result: str, ttl: int = 3600):
 
 async def check_rate_limit(identifier: str, limit: int, window: int = 60) -> bool:
     """
-    Sliding window rate limiter.
-    Returns True if within limit, False if exceeded.
+    Fixed-window rate limiter using Lua for atomicity.
+    EXPIRE is only set when the key is first created, so the window
+    actually expires even under continuous rejected traffic.
     """
     r = get_redis()
     key = f"ratelimit:{identifier}"
-    pipe = r.pipeline()
-    pipe.incr(key)
-    pipe.expire(key, window)
-    results = await pipe.execute()
-    current_count = results[0]
+    lua = """
+    local current = redis.call('INCR', KEYS[1])
+    if current == 1 then
+        redis.call('EXPIRE', KEYS[1], ARGV[1])
+    end
+    return current
+    """
+    current_count = await r.eval(lua, 1, key, window)
     return current_count <= limit
 
 
