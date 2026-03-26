@@ -9,6 +9,14 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 
+_ALLOWED_COLUMNS = {
+    "tax_percentage", "currency", "receipt_header", "receipt_footer",
+    "auto_accept_orders", "enable_qr_ordering", "enable_delivery",
+    "enable_dine_in", "enable_takeaway", "printer_config", "theme_config",
+    "enable_led_display", "led_display_url", "enable_dual_screen", "dual_screen_url",
+}
+
+
 class RestaurantSettingsService:
 
     async def get_settings(self, user: UserContext) -> dict:
@@ -34,7 +42,7 @@ class RestaurantSettingsService:
                 uid,
             )
             if existing:
-                fields = {k: v for k, v in data.items() if v is not None}
+                fields = {k: v for k, v in data.items() if v is not None and k in _ALLOWED_COLUMNS}
                 if not fields:
                     row = await conn.fetchrow(
                         "SELECT * FROM restaurant_settings WHERE user_id = $1", uid
@@ -44,7 +52,10 @@ class RestaurantSettingsService:
                 vals = [uid]
                 for k, v in fields.items():
                     vals.append(v)
-                    set_parts.append(f"{k} = ${len(vals)}")
+                    if k in ("printer_config", "theme_config"):
+                        set_parts.append(f"{k} = ${len(vals)}::jsonb")
+                    else:
+                        set_parts.append(f"{k} = ${len(vals)}")
                 row = await conn.fetchrow(
                     f"UPDATE restaurant_settings SET {', '.join(set_parts)} WHERE user_id = $1 RETURNING *",
                     *vals,

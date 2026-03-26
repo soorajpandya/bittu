@@ -20,14 +20,14 @@ async def list_table_events(
     """List recent table session events / activity log."""
     try:
         owner_id = user.owner_id if user.is_branch_user else user.user_id
-        allowed_cols = {"created_at", "table_number", "status", "started_at", "ended_at"}
-        col = order_by if order_by in allowed_cols else "created_at"
+        allowed_cols = {"started_at", "table_number", "status", "ended_at"}
+        col = order_by if order_by in allowed_cols else "started_at"
         direction = "ASC" if ascending else "DESC"
         async with get_connection() as conn:
             rows = await conn.fetch(
                 f"""
                 SELECT ts.id, ts.table_id, rt.table_number,
-                       ts.status, ts.guest_count, ts.started_at, ts.ended_at, ts.created_at
+                       ts.status, ts.guest_count, ts.started_at, ts.ended_at
                 FROM table_sessions ts
                 JOIN restaurant_tables rt ON rt.id = ts.table_id
                 WHERE ts.user_id = $1
