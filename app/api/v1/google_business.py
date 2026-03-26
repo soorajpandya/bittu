@@ -69,6 +69,7 @@ class CreatePostRequest(BaseModel):
 @router.get("/connect")
 async def google_connect(
     restaurant_id: str = Query(..., description="Restaurant to connect"),
+    redirect_uri: Optional[str] = Query(None, description="Frontend callback URL"),
     user: UserContext = Depends(get_current_user),
 ):
     """
@@ -82,13 +83,14 @@ async def google_connect(
     }
     ```
     """
-    return _auth_svc.generate_auth_url(restaurant_id)
+    return _auth_svc.generate_auth_url(restaurant_id, redirect_uri=redirect_uri)
 
 
 @router.get("/callback")
 async def google_callback(
     code: str = Query(...),
     state: str = Query(...),
+    redirect_uri: Optional[str] = Query(None, description="Must match the redirect_uri used in /connect"),
     user: UserContext = Depends(get_current_user),
 ):
     """
@@ -103,7 +105,7 @@ async def google_callback(
     }
     ```
     """
-    return await _auth_svc.handle_callback(code=code, state=state, user_id=user.user_id)
+    return await _auth_svc.handle_callback(code=code, state=state, user_id=user.user_id, redirect_uri=redirect_uri)
 
 
 @router.get("/status")

@@ -26,16 +26,17 @@ token_mgr = GoogleTokenManager()
 class GoogleAuthService:
     """OAuth 2.0 flow for Google Business Profile."""
 
-    def generate_auth_url(self, restaurant_id: str) -> dict:
+    def generate_auth_url(self, restaurant_id: str, redirect_uri: str | None = None) -> dict:
         """
         Build the Google OAuth consent URL.
         The `state` param carries restaurant_id for post-callback routing.
         """
         settings = get_settings()
         state = f"{restaurant_id}:{secrets.token_urlsafe(16)}"
+        resolved_redirect = redirect_uri or settings.GOOGLE_BUSINESS_REDIRECT_URI
         params = {
             "client_id": settings.GOOGLE_BUSINESS_CLIENT_ID,
-            "redirect_uri": settings.GOOGLE_BUSINESS_REDIRECT_URI,
+            "redirect_uri": resolved_redirect,
             "response_type": "code",
             "scope": GOOGLE_SCOPE,
             "access_type": "offline",
@@ -46,7 +47,7 @@ class GoogleAuthService:
         return {"auth_url": url, "state": state}
 
     async def handle_callback(
-        self, code: str, state: str, user_id: str
+        self, code: str, state: str, user_id: str, redirect_uri: str | None = None
     ) -> dict:
         """
         Exchange authorization code for tokens and store them.
@@ -59,6 +60,7 @@ class GoogleAuthService:
         restaurant_id = parts[0]
 
         settings = get_settings()
+        resolved_redirect = redirect_uri or settings.GOOGLE_BUSINESS_REDIRECT_URI
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
                 GOOGLE_TOKEN_URL,
@@ -66,7 +68,7 @@ class GoogleAuthService:
                     "code": code,
                     "client_id": settings.GOOGLE_BUSINESS_CLIENT_ID,
                     "client_secret": settings.GOOGLE_BUSINESS_CLIENT_SECRET,
-                    "redirect_uri": settings.GOOGLE_BUSINESS_REDIRECT_URI,
+                    "redirect_uri": resolved_redirect,
                     "grant_type": "authorization_code",
                 },
             )
