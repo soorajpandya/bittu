@@ -95,6 +95,68 @@ async def create_table(
         return JSONResponse(status_code=500, content={"detail": "Failed to create table"})
 
 
+class UpdateTableIn(BaseModel):
+    table_number: Optional[str] = None
+    capacity: Optional[int] = None
+    status: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+@router.patch("/{table_id}")
+async def update_table(
+    table_id: str,
+    body: UpdateTableIn,
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    """Update a restaurant table."""
+    try:
+        owner_id = user.owner_id if user.is_branch_user else user.user_id
+        updates = {k: v for k, v in body.model_dump().items() if v is not None}
+        if not updates:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=400, content={"detail": "No fields to update"})
+
+        set_clauses = ", ".join(f"{k} = ${i+2}" for i, k in enumerate(updates))
+        values = list(updates.values())
+
+        async with get_connection() as conn:
+            row = await conn.fetchrow(
+                f"UPDATE restaurant_tables SET {set_clauses} WHERE id = $1 AND user_id = ${len(values)+2} RETURNING *",
+                table_id, *values, owner_id,
+            )
+            if not row:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(status_code=404, content={"detail": "Table not found"})
+            return dict(row)
+    except Exception as e:
+        logger.warning("update_table_failed", error=str(e), user_id=user.user_id)
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=500, content={"detail": "Failed to update table"})
+
+
+@router.delete("/{table_id}")
+async def delete_table(
+    table_id: str,
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    """Delete a restaurant table."""
+    try:
+        owner_id = user.owner_id if user.is_branch_user else user.user_id
+        async with get_connection() as conn:
+            result = await conn.execute(
+                "DELETE FROM restaurant_tables WHERE id = $1 AND user_id = $2",
+                table_id, owner_id,
+            )
+            if "DELETE 0" in result:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(status_code=404, content={"detail": "Table not found"})
+            return {"status": "deleted"}
+    except Exception as e:
+        logger.warning("delete_table_failed", error=str(e), user_id=user.user_id)
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=500, content={"detail": "Failed to delete table"})
+
+
 @router.post("/sessions")
 async def start_session(
     body: StartSessionIn,
@@ -102,8 +164,8 @@ async def start_session(
 ):
     return await _svc.start_session(
         user=user,
-        branch_id=body.branch_id,
         table_id=body.table_id,
+        branch_id=body.branch_id,
         customer_name=body.customer_name,
     )
 
@@ -133,7 +195,7 @@ async def get_cart(
     session_id: str,
     user: UserContext = Depends(require_permission("tables.manage")),
 ):
-    return await _svc.get_cart(user=user, session_id=session_id)
+    return await _svc.get_cart(session_id=session_id)
 
 
 @router.delete("/cart/remove")

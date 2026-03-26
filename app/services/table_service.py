@@ -46,6 +46,8 @@ class TableSessionService:
         user: UserContext,
         table_id: str,
         guest_count: int = 1,
+        branch_id: Optional[str] = None,
+        customer_name: Optional[str] = None,
     ) -> dict:
         """
         Start a new table session.
@@ -255,13 +257,19 @@ class TableSessionService:
         except LockError:
             raise LockAcquisitionError(f"cart:{session_id}")
 
-    async def get_cart(self, session_token: str) -> list[dict]:
-        """Get all items in the session cart."""
-        session = await self._get_active_session(session_token)
+    async def get_cart(self, session_token: str = None, session_id: str = None, **kwargs) -> list[dict]:
+        """Get all items in the session cart. Accepts session_token OR session_id."""
+        if session_id:
+            sid = session_id
+        elif session_token:
+            session = await self._get_active_session(session_token)
+            sid = str(session["id"])
+        else:
+            raise ValidationError("session_token or session_id required")
         async with get_connection() as conn:
             items = await conn.fetch(
                 "SELECT * FROM table_session_carts WHERE session_id = $1 ORDER BY created_at",
-                str(session["id"]),
+                sid,
             )
             return [dict(i) for i in items]
 
@@ -798,8 +806,8 @@ class TableSessionService:
             for oi_info in order_item_rows:
                 await conn.execute(
                     """
-                    INSERT INTO kitchen_order_items (kitchen_order_id, order_item_id, status, item_name, created_at)
-                    VALUES ($1, $2, 'queued'::kitchen_status, $3, now())
+                    INSERT INTO kitchen_order_items (kitchen_order_id, order_item_id, status, item_name, quantity)
+                    VALUES ($1, $2, 'queued'::kitchen_status, $3, 1)
                     """,
                     kitchen_order_id, oi_info["order_item_id"], oi_info["item_name"],
                 )
