@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.core.auth import UserContext, get_current_user
+from app.core.exceptions import NotFoundError, UnauthorizedError
 from app.services.google.auth import GoogleAuthService
 from app.services.google.locations import GoogleLocationsService
 from app.services.google.reviews import GoogleReviewsService
@@ -153,6 +154,9 @@ async def google_locations(
     }
     ```
     """
+    conn = await _token_mgr.get_connection_for_restaurant(user.user_id, restaurant_id)
+    if not conn:
+        return {"connected": False, "accounts": [], "locations": {}}
     return await _locations_svc.fetch_and_store_locations(user.user_id, restaurant_id)
 
 
@@ -203,6 +207,9 @@ async def google_reviews(
     }
     ```
     """
+    conn = await _token_mgr.get_connection_for_restaurant(user.user_id, restaurant_id)
+    if not conn or not conn.get("location_id"):
+        return {"connected": False, "reviews": [], "average_rating": None, "total_review_count": 0, "next_page_token": None}
     return await _reviews_svc.list_reviews(
         user_id=user.user_id,
         restaurant_id=restaurant_id,
@@ -278,6 +285,9 @@ async def google_list_posts(
     user: UserContext = Depends(get_current_user),
 ):
     """List existing Google Business posts for the connected location."""
+    conn = await _token_mgr.get_connection_for_restaurant(user.user_id, restaurant_id)
+    if not conn or not conn.get("location_id"):
+        return {"connected": False, "posts": [], "next_page_token": None}
     return await _posts_svc.list_posts(
         user_id=user.user_id,
         restaurant_id=restaurant_id,
@@ -312,6 +322,9 @@ async def google_insights(
     }
     ```
     """
+    conn = await _token_mgr.get_connection_for_restaurant(user.user_id, restaurant_id)
+    if not conn or not conn.get("location_id"):
+        return {"connected": False, "location_id": None, "location_name": "", "period": None, "metrics": {}}
     return await _insights_svc.get_performance_metrics(
         user_id=user.user_id,
         restaurant_id=restaurant_id,
@@ -343,6 +356,9 @@ async def google_insights_summary(
     }
     ```
     """
+    conn = await _token_mgr.get_connection_for_restaurant(user.user_id, restaurant_id)
+    if not conn or not conn.get("location_id"):
+        return {"connected": False, "summary": {"total_impressions": 0, "total_calls": 0, "total_website_clicks": 0, "total_direction_requests": 0, "total_bookings": 0, "period_days": days}}
     return await _insights_svc.get_summary(
         user_id=user.user_id,
         restaurant_id=restaurant_id,
