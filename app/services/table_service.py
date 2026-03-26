@@ -450,11 +450,11 @@ class TableSessionService:
         async with get_connection() as conn:
             # Look up owner from restaurant
             rest = await conn.fetchrow(
-                "SELECT user_id FROM restaurants WHERE id = $1", restaurant_id,
+                "SELECT owner_id FROM restaurants WHERE id = $1", restaurant_id,
             )
             if not rest:
                 raise NotFoundError("Restaurant", restaurant_id)
-            user_id = str(rest["user_id"])
+            user_id = str(rest["owner_id"])
 
             cats = await conn.fetch(
                 "SELECT id, name, slug, description, image_url, sort_order FROM categories WHERE user_id = $1 AND is_active = true ORDER BY sort_order",
