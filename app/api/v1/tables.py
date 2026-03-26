@@ -154,3 +154,88 @@ async def end_session(
     user: UserContext = Depends(require_permission("tables.manage")),
 ):
     return await _svc.end_session(user=user, session_id=session_id)
+
+
+# ── QR Ordering Endpoints (public — customer-facing, no JWT) ──
+
+
+class QRScanIn(BaseModel):
+    restaurant_id: str
+    table_id: str
+    device_id: str
+
+
+class QRCartActionIn(BaseModel):
+    session_token: str
+    action: Optional[str] = "add"  # add | update | remove | clear
+    item_id: Optional[int] = None
+    variant_id: Optional[str] = None
+    quantity: Optional[int] = 1
+    addons: Optional[list] = []
+    extras: Optional[list] = []
+    notes: Optional[str] = None
+    device_id: Optional[str] = None
+    cart_item_id: Optional[str] = None
+
+
+class QRPlaceOrderIn(BaseModel):
+    session_token: str
+    device_id: Optional[str] = None
+    notes: Optional[str] = None
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    payment_method: Optional[str] = "cash"
+
+
+@router.post("/qr/scan")
+async def qr_scan(body: QRScanIn):
+    """Customer scans QR code — creates or resumes a table session."""
+    return await _svc.qr_scan(
+        restaurant_id=body.restaurant_id,
+        table_id=body.table_id,
+        device_id=body.device_id,
+    )
+
+
+@router.get("/qr/menu")
+async def qr_menu(
+    restaurant_id: str = Query(...),
+    user_id: str = Query(...),
+    branch_id: Optional[str] = Query(None),
+):
+    """Return full menu for QR ordering."""
+    return await _svc.qr_menu(
+        restaurant_id=restaurant_id,
+        user_id=user_id,
+        branch_id=branch_id,
+    )
+
+
+@router.get("/qr/cart")
+async def qr_get_cart(session_token: str = Query(...)):
+    """Get cart contents for a QR session."""
+    return await _svc.qr_get_cart(session_token=session_token)
+
+
+@router.post("/qr/cart")
+async def qr_cart_action(body: QRCartActionIn):
+    """Add / update / remove / clear items in QR cart."""
+    return await _svc.qr_cart_action(body.model_dump())
+
+
+@router.post("/qr/place-order")
+async def qr_place_order(body: QRPlaceOrderIn):
+    """Place a dine-in order from QR cart."""
+    return await _svc.qr_place_order(body.model_dump())
+
+
+@router.get("/qr/order-status")
+async def qr_order_status(
+    session_token: str = Query(...),
+    order_id: str = Query(...),
+):
+    """Get order tracking with kitchen item statuses."""
+    return await _svc.qr_order_status(
+        session_token=session_token,
+        order_id=order_id,
+    )
