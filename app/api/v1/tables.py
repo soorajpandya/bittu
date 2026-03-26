@@ -176,6 +176,8 @@ class QRCartActionIn(BaseModel):
     notes: Optional[str] = None
     device_id: Optional[str] = None
     cart_item_id: Optional[str] = None
+    item_name: Optional[str] = None
+    unit_price: Optional[float] = None
 
 
 class QRPlaceOrderIn(BaseModel):
@@ -200,15 +202,9 @@ async def qr_scan(body: QRScanIn):
 @router.get("/qr/menu")
 async def qr_menu(
     restaurant_id: str = Query(...),
-    user_id: str = Query(...),
-    branch_id: Optional[str] = Query(None),
 ):
     """Return full menu for QR ordering."""
-    return await _svc.qr_menu(
-        restaurant_id=restaurant_id,
-        user_id=user_id,
-        branch_id=branch_id,
-    )
+    return await _svc.qr_menu(restaurant_id=restaurant_id)
 
 
 @router.get("/qr/cart")
@@ -232,10 +228,6 @@ async def qr_place_order(body: QRPlaceOrderIn):
 @router.get("/qr/order-status")
 async def qr_order_status(
     session_token: str = Query(...),
-    order_id: str = Query(...),
 ):
-    """Get order tracking with kitchen item statuses."""
-    return await _svc.qr_order_status(
-        session_token=session_token,
-        order_id=order_id,
-    )
+    """Get all orders for this session with kitchen status."""
+    return await _svc.qr_order_status(session_token=session_token)

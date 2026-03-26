@@ -344,10 +344,9 @@ class TableSessionService:
         """
         Customer scans QR code on a table.
         If an active session exists for that table, join it.
-        Otherwise, create a new session.
+        Otherwise, create a new session (4-hour expiry).
         """
         async with get_connection() as conn:
-            # Verify table exists and belongs to restaurant
             table = await conn.fetchrow(
                 """
                 SELECT id, table_number, capacity, user_id, restaurant_id
@@ -361,16 +360,11 @@ class TableSessionService:
 
             owner_id = str(table["user_id"])
 
-            # Fetch restaurant info
             restaurant = await conn.fetchrow(
-                """
-                SELECT id, name, logo_url, phone, address, city
-                FROM restaurants WHERE id = $1
-                """,
+                "SELECT id, name, logo_url, phone, address, city FROM restaurants WHERE id = $1",
                 restaurant_id,
             )
 
-        # Check for existing active session
         async with get_connection() as conn:
             existing = await conn.fetchrow(
                 "SELECT * FROM table_sessions WHERE table_id = $1 AND is_active = true",
@@ -381,7 +375,6 @@ class TableSessionService:
             session_id = str(existing["id"])
             session_token = existing["session_token"]
             branch_id = str(existing["branch_id"]) if existing["branch_id"] else None
-            # Register device
             async with get_connection() as conn:
                 await conn.execute(
                     """
@@ -393,15 +386,13 @@ class TableSessionService:
                     session_id, device_id,
                 )
         else:
-            # Create new session
             session_id = str(uuid.uuid4())
             session_token = secrets.token_urlsafe(32)
             now = datetime.now(timezone.utc)
-            expires_at = now + timedelta(minutes=get_settings().SESSION_TIMEOUT_MINUTES)
+            expires_at = now + timedelta(hours=4)
             branch_id = None
 
             async with get_serializable_transaction() as conn:
-                # Deactivate stale session if any
                 if existing:
                     await conn.execute(
                         "UPDATE table_sessions SET is_active = false, status = 'expired' WHERE id = $1",
@@ -420,7 +411,6 @@ class TableSessionService:
                     owner_id, session_token, now, expires_at,
                 )
 
-                # Update table status
                 await conn.execute(
                     """
                     UPDATE restaurant_tables
@@ -431,7 +421,6 @@ class TableSessionService:
                     now, session_token, table_id,
                 )
 
-                # Register device
                 await conn.execute(
                     """
                     INSERT INTO table_session_devices (session_id, device_id)
@@ -456,21 +445,22 @@ class TableSessionService:
 
     # ── QR MENU ──
 
-    async def qr_menu(
-        self,
-        restaurant_id: str,
-        user_id: str,
-        branch_id: Optional[str] = None,
-    ) -> dict:
+    async def qr_menu(self, restaurant_id: str) -> dict:
         """Return full menu for QR ordering: categories, items, variants, addons, extras, modifiers, combos."""
         async with get_connection() as conn:
-            # Categories
+            # Look up owner from restaurant
+            rest = await conn.fetchrow(
+                "SELECT user_id FROM restaurants WHERE id = $1", restaurant_id,
+            )
+            if not rest:
+                raise NotFoundError("Restaurant", restaurant_id)
+            user_id = str(rest["user_id"])
+
             cats = await conn.fetch(
                 "SELECT id, name, slug, description, image_url, sort_order FROM categories WHERE user_id = $1 AND is_active = true ORDER BY sort_order",
                 user_id,
             )
 
-            # Items — only dine-in available
             items = await conn.fetch(
                 """
                 SELECT "Item_ID", "Item_Name", "Description", price, "Category",
@@ -483,40 +473,49 @@ class TableSessionService:
                 """,
                 user_id,
             )
-            item_ids = [r["Item_ID"] for r in items]
 
-            # Variants
             variants = await conn.fetch(
                 "SELECT id, item_id, name, price, sku FROM item_variants WHERE user_id = $1 AND is_active = true",
                 user_id,
             )
 
-            # Addons
             addons = await conn.fetch(
                 "SELECT id, item_id, name, price FROM item_addons WHERE user_id = $1 AND is_active = true",
                 user_id,
             )
 
-            # Extras
             extras = await conn.fetch(
                 "SELECT id, item_id, name, price FROM item_extras WHERE user_id = $1 AND is_active = true",
                 user_id,
             )
 
-            # Modifier groups + options
+            # Modifier groups with nested options (restaurant-level)
             groups = await conn.fetch(
                 "SELECT id, name, is_required, min_selections, max_selections FROM modifier_groups WHERE user_id = $1",
                 user_id,
             )
-            options = []
+            group_map = {}
+            for g in groups:
+                gd = dict(g)
+                gd["id"] = str(gd["id"])
+                gd["modifierOptions"] = []
+                group_map[gd["id"]] = gd
+
             if groups:
                 group_ids = [str(g["id"]) for g in groups]
                 options = await conn.fetch(
                     "SELECT id, group_id, name, price, is_active FROM modifier_options WHERE group_id = ANY($1::uuid[]) AND is_active = true",
                     group_ids,
                 )
+                for o in options:
+                    gid = str(o["group_id"])
+                    if gid in group_map:
+                        group_map[gid]["modifierOptions"].append({
+                            "id": str(o["id"]),
+                            "name": o["name"],
+                            "price": float(o["price"]) if o["price"] else 0,
+                        })
 
-            # Combos
             combos = await conn.fetch(
                 "SELECT id, name, description, price, image_url FROM combos WHERE user_id = $1 AND is_active = true",
                 user_id,
@@ -540,10 +539,9 @@ class TableSessionService:
             "variants": [dict(r) for r in variants],
             "addons": [dict(r) for r in addons],
             "extras": [dict(r) for r in extras],
-            "modifier_groups": [dict(r) for r in groups],
-            "modifier_options": [dict(r) for r in options],
+            "modifierGroups": list(group_map.values()),
             "combos": [dict(r) for r in combos],
-            "combo_items": [dict(r) for r in combo_items],
+            "comboItems": [dict(r) for r in combo_items],
         }
 
     # ── QR CART ──
@@ -559,11 +557,12 @@ class TableSessionService:
 
     async def qr_cart_action(self, data: dict) -> dict:
         """Handle add / update / remove / clear actions on QR cart."""
+        import json
+
         session_token = data.get("session_token")
         action = data.get("action", "add")
         session = await self._get_active_session(session_token)
         session_id = str(session["id"])
-        owner_id = str(session["user_id"])
 
         try:
             async with DistributedLock(f"cart:{session_id}", timeout=5):
@@ -587,25 +586,41 @@ class TableSessionService:
                 if action == "update":
                     cart_item_id = data.get("cart_item_id")
                     quantity = data.get("quantity", 1)
+                    addons = data.get("addons") or []
+                    extras = data.get("extras") or []
                     async with get_connection() as conn:
-                        await conn.execute(
-                            """
-                            UPDATE table_session_carts
-                            SET quantity = $1, total_price = unit_price * $1
-                            WHERE id = $2 AND session_id = $3
-                            """,
-                            quantity, cart_item_id, session_id,
+                        row = await conn.fetchrow(
+                            "SELECT unit_price FROM table_session_carts WHERE id = $1 AND session_id = $2",
+                            cart_item_id, session_id,
                         )
+                        if row:
+                            base = float(row["unit_price"])
+                            addon_total = sum(float(a.get("price", 0)) for a in addons)
+                            extra_total = sum(float(e.get("price", 0)) for e in extras)
+                            total_price = (base + addon_total + extra_total) * quantity
+                            await conn.execute(
+                                """
+                                UPDATE table_session_carts
+                                SET quantity = $1, total_price = $2,
+                                    addons = $3::jsonb, extras = $4::jsonb
+                                WHERE id = $5 AND session_id = $6
+                                """,
+                                quantity, total_price,
+                                json.dumps(addons), json.dumps(extras),
+                                cart_item_id, session_id,
+                            )
                     return {"status": "updated"}
 
-                # Default: add
+                # ── Default: add ──
                 item_id = data.get("item_id")
                 variant_id = data.get("variant_id")
                 quantity = data.get("quantity", 1)
-                addons = data.get("addons", [])
-                extras = data.get("extras", [])
+                addons = data.get("addons") or []
+                extras = data.get("extras") or []
                 notes = data.get("notes")
                 added_by = data.get("device_id")
+                client_item_name = data.get("item_name")
+                client_unit_price = data.get("unit_price")
 
                 async with get_serializable_transaction() as conn:
                     item = await conn.fetchrow(
@@ -615,8 +630,8 @@ class TableSessionService:
                     if not item or not item["Available_Status"]:
                         raise ValidationError("Item not available")
 
-                    unit_price = float(item["price"])
-                    item_name = item["Item_Name"]
+                    item_name = client_item_name or item["Item_Name"]
+                    unit_price = float(client_unit_price) if client_unit_price is not None else float(item["price"])
                     variant_name = None
 
                     if variant_id:
@@ -628,10 +643,11 @@ class TableSessionService:
                             unit_price = float(variant["price"])
                             variant_name = variant["name"]
 
-                    total_price = unit_price * quantity
-                    cart_item_id = str(uuid.uuid4())
+                    addon_total = sum(float(a.get("price", 0)) for a in addons)
+                    extra_total = sum(float(e.get("price", 0)) for e in extras)
+                    total_price = (unit_price + addon_total + extra_total) * quantity
 
-                    import json
+                    cart_item_id = str(uuid.uuid4())
                     await conn.execute(
                         """
                         INSERT INTO table_session_carts (
@@ -661,7 +677,10 @@ class TableSessionService:
     # ── QR PLACE ORDER ──
 
     async def qr_place_order(self, data: dict) -> dict:
-        """Convert cart into order for QR dine-in."""
+        """Convert cart into order + kitchen_orders + kitchen_order_items."""
+        import json
+        from decimal import Decimal
+
         session_token = data["session_token"]
         device_id = data.get("device_id")
         notes = data.get("notes")
@@ -675,7 +694,6 @@ class TableSessionService:
         owner_id = str(session["user_id"])
 
         async with get_serializable_transaction() as conn:
-            # Get cart items
             cart = await conn.fetch(
                 "SELECT * FROM table_session_carts WHERE session_id = $1",
                 session_id,
@@ -683,18 +701,16 @@ class TableSessionService:
             if not cart:
                 raise ValidationError("Cart is empty")
 
-            # Get table number
             table = await conn.fetchrow(
-                "SELECT table_number FROM restaurant_tables WHERE id = $1",
+                "SELECT id, table_number FROM restaurant_tables WHERE id = $1",
                 str(session["table_id"]),
             )
             table_number = table["table_number"] if table else None
+            table_id = str(table["id"]) if table else None
 
             # Server-side price calculation
-            from decimal import Decimal
             subtotal = Decimal("0")
             order_items_data = []
-            import json
 
             for ci in cart:
                 line_total = Decimal(str(ci["total_price"]))
@@ -719,14 +735,9 @@ class TableSessionService:
             tax_amount = subtotal * tax_pct / 100
             total_amount = subtotal + tax_amount
 
-            # Generate order number
-            count_row = await conn.fetchval(
-                "SELECT COUNT(*) FROM orders WHERE user_id = $1", owner_id
-            )
-            order_number = f"QR-{(count_row or 0) + 1:04d}"
-
             order_id = str(uuid.uuid4())
 
+            # INSERT order — order_number auto-generated by DB
             await conn.execute(
                 """
                 INSERT INTO orders (
@@ -740,33 +751,78 @@ class TableSessionService:
                     NULL, $10, $11::jsonb, $12::jsonb
                 )
                 """,
-                order_id, owner_id, str(session.get("branch_id")) if session.get("branch_id") else None,
+                order_id, owner_id,
+                str(session.get("branch_id")) if session.get("branch_id") else None,
                 restaurant_id, float(subtotal), float(tax_amount), float(total_amount),
                 table_number, customer_phone, notes,
-                json.dumps(order_items_data),
-                json.dumps({"customer_name": customer_name, "device_id": device_id, "session_id": session_id, "order_number": order_number}),
+                json.dumps([]),
+                json.dumps({
+                    "customer_name": customer_name,
+                    "device_id": device_id,
+                    "session_id": session_id,
+                    "payment_method": payment_method,
+                }),
             )
 
-            # Insert order_items
+            # INSERT order_items — RETURNING id for kitchen linkage
+            order_item_rows = []
             for oi in order_items_data:
-                await conn.execute(
+                oi_row = await conn.fetchrow(
                     """
                     INSERT INTO order_items (
                         order_id, item_id, variant_id, item_name,
                         quantity, unit_price, total_price, addons, notes, user_id
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+                    RETURNING id
                     """,
                     order_id, oi["item_id"], oi.get("variant_id"), oi["item_name"],
                     oi["quantity"], oi["unit_price"], oi["total_price"],
                     json.dumps(oi.get("addons") or []), oi.get("notes"), owner_id,
                 )
+                order_item_rows.append({
+                    "order_item_id": oi_row["id"],
+                    "item_name": oi["item_name"],
+                })
+
+            # INSERT kitchen_orders
+            kitchen_order_id = str(uuid.uuid4())
+            await conn.execute(
+                """
+                INSERT INTO kitchen_orders (id, order_id, status, user_id, priority, created_at)
+                VALUES ($1, $2, 'queued'::kitchen_status, $3, 0, now())
+                """,
+                kitchen_order_id, order_id, owner_id,
+            )
+
+            # INSERT kitchen_order_items
+            for oi_info in order_item_rows:
+                await conn.execute(
+                    """
+                    INSERT INTO kitchen_order_items (kitchen_order_id, order_item_id, status, item_name, created_at)
+                    VALUES ($1, $2, 'queued'::kitchen_status, $3, now())
+                    """,
+                    kitchen_order_id, oi_info["order_item_id"], oi_info["item_name"],
+                )
+
+            # UPDATE restaurant_tables.current_order_id
+            if table_id:
+                await conn.execute(
+                    "UPDATE restaurant_tables SET current_order_id = $1 WHERE id = $2",
+                    order_id, table_id,
+                )
 
             # Clear cart
             await conn.execute(
-                "DELETE FROM table_session_carts WHERE session_id = $1", session_id
+                "DELETE FROM table_session_carts WHERE session_id = $1", session_id,
             )
 
-        # Emit event
+            # Get DB-generated order_number
+            order_number = await conn.fetchval(
+                "SELECT order_number FROM orders WHERE id = $1", order_id,
+            )
+
+        order_number = str(order_number) if order_number else order_id[:8]
+
         await emit_and_publish(DomainEvent(
             event_type=TABLE_ORDER_PLACED,
             payload={
@@ -789,42 +845,81 @@ class TableSessionService:
 
     # ── QR ORDER STATUS ──
 
-    async def qr_order_status(self, session_token: str, order_id: str) -> dict:
-        """Get order tracking info for QR customer."""
+    async def qr_order_status(self, session_token: str) -> dict:
+        """Get all orders for this session with kitchen status."""
         session = await self._get_active_session(session_token)
+        session_id = str(session["id"])
         owner_id = str(session["user_id"])
 
         async with get_connection() as conn:
-            order = await conn.fetchrow(
-                "SELECT id, status, total_amount, subtotal, tax_amount, table_number, notes, items, metadata, created_at FROM orders WHERE id = $1 AND user_id = $2",
-                order_id, owner_id,
-            )
-            if not order:
-                raise NotFoundError("Order", order_id)
-
-            # Kitchen item statuses
-            kitchen_items = await conn.fetch(
+            orders = await conn.fetch(
                 """
-                SELECT oi.item_name, oi.quantity, oi.unit_price, oi.total_price,
-                       COALESCE(ki.status, 'pending') as kitchen_status
-                FROM order_items oi
-                LEFT JOIN kitchen_order_items ki ON ki.order_item_id = oi.id
-                WHERE oi.order_id = $1
+                SELECT id, order_number, status, total_amount, subtotal, tax_amount,
+                       table_number, notes, metadata, created_at
+                FROM orders
+                WHERE user_id = $1 AND metadata->>'session_id' = $2
+                ORDER BY created_at DESC
                 """,
-                order_id,
+                owner_id, session_id,
             )
 
-        return {
-            "order_id": str(order["id"]),
-            "status": order["status"],
-            "total": float(order["total_amount"]),
-            "subtotal": float(order["subtotal"]),
-            "tax_amount": float(order["tax_amount"]),
-            "table_number": order["table_number"],
-            "created_at": order["created_at"].isoformat() if order["created_at"] else None,
-            "metadata": order["metadata"],
-            "items": [dict(ki) for ki in kitchen_items],
-        }
+            result = []
+            for o in orders:
+                oid = str(o["id"])
+
+                ko = await conn.fetchrow(
+                    "SELECT id, status, started_at, ready_at, served_at FROM kitchen_orders WHERE order_id = $1",
+                    oid,
+                )
+
+                kitchen_items = []
+                if ko:
+                    kitchen_items = await conn.fetch(
+                        """
+                        SELECT koi.item_name, oi.quantity, koi.status,
+                               koi.started_at, koi.ready_at
+                        FROM kitchen_order_items koi
+                        JOIN order_items oi ON oi.id = koi.order_item_id
+                        WHERE koi.kitchen_order_id = $1
+                        """,
+                        str(ko["id"]),
+                    )
+
+                kitchen_status = ko["status"] if ko else "pending"
+                started_at = ko["started_at"] if ko else None
+                ready_at = ko["ready_at"] if ko else None
+
+                estimated_mins = None
+                if kitchen_status == "queued":
+                    estimated_mins = 15
+                elif kitchen_status == "preparing" and started_at:
+                    elapsed = (datetime.now(timezone.utc) - started_at).total_seconds() / 60
+                    estimated_mins = max(1, 10 - int(elapsed))
+
+                result.append({
+                    "order_id": oid,
+                    "order_number": o["order_number"],
+                    "status": o["status"],
+                    "kitchen_status": kitchen_status,
+                    "total": float(o["total_amount"]),
+                    "subtotal": float(o["subtotal"]),
+                    "tax_amount": float(o["tax_amount"]),
+                    "table_number": o["table_number"],
+                    "created_at": o["created_at"].isoformat() if o["created_at"] else None,
+                    "estimated_mins": estimated_mins,
+                    "started_at": started_at.isoformat() if started_at else None,
+                    "ready_at": ready_at.isoformat() if ready_at else None,
+                    "kitchen_items": [
+                        {
+                            "item_name": ki["item_name"],
+                            "quantity": ki["quantity"],
+                            "status": ki["status"],
+                        }
+                        for ki in kitchen_items
+                    ],
+                })
+
+        return {"orders": result}
 
     # ── HELPERS ──
 
