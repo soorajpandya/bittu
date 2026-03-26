@@ -355,23 +355,36 @@ class TableSessionService:
         Otherwise, create a new session (4-hour expiry).
         """
         async with get_connection() as conn:
+            # Look up table by id — the url_id might be restaurant_id OR user_id (owner_id)
             table = await conn.fetchrow(
                 """
                 SELECT id, table_number, capacity, user_id, restaurant_id
                 FROM restaurant_tables
-                WHERE id = $1 AND restaurant_id = $2 AND is_active = true
+                WHERE id = $1 AND is_active = true
+                  AND (restaurant_id = $2 OR user_id = $2)
                 """,
                 table_id, restaurant_id,
             )
             if not table:
+                # Fallback: look up by just table id
+                table = await conn.fetchrow(
+                    """
+                    SELECT id, table_number, capacity, user_id, restaurant_id
+                    FROM restaurant_tables
+                    WHERE id = $1 AND is_active = true
+                    """,
+                    table_id,
+                )
+            if not table:
                 raise NotFoundError("Table", table_id)
 
             owner_id = str(table["user_id"])
+            actual_restaurant_id = str(table["restaurant_id"]) if table["restaurant_id"] else None
 
             restaurant = await conn.fetchrow(
                 "SELECT id, name, logo_url, phone, address, city FROM restaurants WHERE id = $1",
-                restaurant_id,
-            )
+                actual_restaurant_id,
+            ) if actual_restaurant_id else None
 
         async with get_connection() as conn:
             existing = await conn.fetchrow(
@@ -384,15 +397,22 @@ class TableSessionService:
             session_token = existing["session_token"]
             branch_id = str(existing["branch_id"]) if existing["branch_id"] else None
             async with get_connection() as conn:
-                await conn.execute(
-                    """
-                    INSERT INTO table_session_devices (session_id, device_id)
-                    VALUES ($1, $2)
-                    ON CONFLICT (session_id, device_id)
-                    DO UPDATE SET last_seen = now(), is_active = true
-                    """,
-                    session_id, device_id,
-                )
+                try:
+                    await conn.execute(
+                        """
+                        INSERT INTO table_session_devices (session_id, device_id)
+                        VALUES ($1, $2)
+                        ON CONFLICT (session_id, device_id)
+                        DO UPDATE SET last_seen = now(), is_active = true
+                        """,
+                        session_id, device_id,
+                    )
+                except Exception:
+                    # Fallback if unique constraint doesn't exist
+                    await conn.execute(
+                        "INSERT INTO table_session_devices (session_id, device_id) VALUES ($1, $2)",
+                        session_id, device_id,
+                    )
         else:
             session_id = str(uuid.uuid4())
             session_token = secrets.token_urlsafe(32)
@@ -415,7 +435,7 @@ class TableSessionService:
                         started_at, is_active, status, expires_at
                     ) VALUES ($1, $2, $3, $4, NULL, $5, 1, 1, $6, true, 'active', $7)
                     """,
-                    session_id, table_id, restaurant_id,
+                    session_id, table_id, actual_restaurant_id,
                     owner_id, session_token, now, expires_at,
                 )
 
@@ -429,20 +449,27 @@ class TableSessionService:
                     now, session_token, table_id,
                 )
 
-                await conn.execute(
-                    """
-                    INSERT INTO table_session_devices (session_id, device_id)
-                    VALUES ($1, $2)
-                    ON CONFLICT (session_id, device_id)
-                    DO UPDATE SET last_seen = now(), is_active = true
-                    """,
-                    session_id, device_id,
-                )
+                try:
+                    await conn.execute(
+                        """
+                        INSERT INTO table_session_devices (session_id, device_id)
+                        VALUES ($1, $2)
+                        ON CONFLICT (session_id, device_id)
+                        DO UPDATE SET last_seen = now(), is_active = true
+                        """,
+                        session_id, device_id,
+                    )
+                except Exception:
+                    await conn.execute(
+                        "INSERT INTO table_session_devices (session_id, device_id) VALUES ($1, $2)",
+                        session_id, device_id,
+                    )
 
         return {
             "session_id": session_id,
             "session_token": session_token,
             "branch_id": branch_id,
+            "restaurant_id": actual_restaurant_id,
             "restaurant": dict(restaurant) if restaurant else {},
             "table": {
                 "id": str(table["id"]),
@@ -456,10 +483,15 @@ class TableSessionService:
     async def qr_menu(self, restaurant_id: str) -> dict:
         """Return full menu for QR ordering: categories, items, variants, addons, extras, modifiers, combos."""
         async with get_connection() as conn:
-            # Look up owner from restaurant
+            # Look up owner from restaurant — try as restaurant_id first, then as user_id
             rest = await conn.fetchrow(
-                "SELECT owner_id FROM restaurants WHERE id = $1", restaurant_id,
+                "SELECT id, owner_id FROM restaurants WHERE id = $1", restaurant_id,
             )
+            if not rest:
+                # Maybe the passed id is actually the owner_id
+                rest = await conn.fetchrow(
+                    "SELECT id, owner_id FROM restaurants WHERE owner_id = $1 LIMIT 1", restaurant_id,
+                )
             if not rest:
                 raise NotFoundError("Restaurant", restaurant_id)
             user_id = str(rest["owner_id"])
