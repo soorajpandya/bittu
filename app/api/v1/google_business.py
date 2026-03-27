@@ -150,18 +150,19 @@ async def google_callback(
     code: str = Query(...),
     state: str = Query(...),
     redirect_uri: Optional[str] = Query(None),
-    user: UserContext = Depends(get_current_user),
 ):
-    """Handle OAuth callback — exchange authorization code for tokens."""
+    """
+    Handle OAuth callback — exchange authorization code for tokens.
+    Public endpoint: user identity is derived from the server-side state token.
+    """
     try:
         return await _auth_svc.handle_callback(
             code=code,
             state=state,
-            user_id=user.user_id,
             redirect_uri=redirect_uri,
         )
     except Exception as e:
-        logger.error("google_callback_error", error=str(e), user_id=user.user_id)
+        logger.error("google_callback_error", error=str(e), state=state[:16])
         return JSONResponse(
             status_code=getattr(e, "status_code", 500),
             content={"connected": False, "error": str(e)},

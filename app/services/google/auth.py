@@ -81,11 +81,12 @@ class GoogleAuthService:
         return {"auth_url": url, "state": state}
 
     async def handle_callback(
-        self, code: str, state: str, user_id: str, redirect_uri: str | None = None
+        self, code: str, state: str, redirect_uri: str | None = None
     ) -> dict:
         """
         Exchange authorization code for tokens and store them.
-        Validates state is unused, unexpired, and matches the calling user.
+        User identity is derived from the server-side state token (no JWT required).
+        Validates state is unused and unexpired.
         """
         # ── Validate state ──
         async with get_connection() as conn:
@@ -99,25 +100,19 @@ class GoogleAuthService:
             )
 
         if not state_row:
-            logger.warning("google_oauth_invalid_state", state=state[:16], user_id=user_id)
+            logger.warning("google_oauth_invalid_state", state=state[:16])
             raise ValidationError("Invalid OAuth state parameter.")
 
         if state_row["used"]:
-            logger.warning("google_oauth_replayed_state", user_id=user_id)
+            logger.warning("google_oauth_replayed_state", state=state[:16])
             raise ValidationError("OAuth state has already been used.")
 
         if datetime.now(timezone.utc) > state_row["expires_at"]:
-            logger.warning("google_oauth_expired_state", user_id=user_id)
+            logger.warning("google_oauth_expired_state", state=state[:16])
             raise ValidationError("OAuth state has expired. Please try again.")
 
-        if state_row["user_id"] != user_id:
-            logger.warning(
-                "google_oauth_user_mismatch",
-                expected=state_row["user_id"],
-                got=user_id,
-            )
-            raise ForbiddenError("OAuth state does not belong to this user.")
-
+        # Derive user identity from server-side state (secure — state is a 32-byte nonce)
+        user_id = state_row["user_id"]
         restaurant_id = state_row["restaurant_id"]
         resolved_redirect = redirect_uri or state_row["redirect_uri"]
 
