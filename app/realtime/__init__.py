@@ -126,10 +126,18 @@ async def redis_subscriber():
                 # Convention: events:<event_type> e.g. events:order.status_changed
                 event_type = channel.replace("events:", "")
                 branch_id = data.get("branch_id")
+                restaurant_id = data.get("restaurant_id")
 
                 # Fan out to branch channel
                 if branch_id:
                     await manager.broadcast(f"branch:{branch_id}", {
+                        "event": event_type,
+                        "data": data,
+                    })
+
+                # Fan out to restaurant channel (for owners / multi-branch)
+                if restaurant_id:
+                    await manager.broadcast(f"restaurant:{restaurant_id}", {
                         "event": event_type,
                         "data": data,
                     })
@@ -195,6 +203,10 @@ async def ws_endpoint(websocket: WebSocket, token: Optional[str] = None):
     # Auto-subscribe to branch channel if the user belongs to one
     if user_ctx.branch_id:
         await manager.subscribe(conn, f"branch:{user_ctx.branch_id}")
+
+    # Auto-subscribe owners/managers to restaurant-wide channel
+    if user_ctx.role in ("owner", "manager") and user_ctx.restaurant_id:
+        await manager.subscribe(conn, f"restaurant:{user_ctx.restaurant_id}")
 
     logger.info("ws_connected", user_id=user_id, branch_id=user_ctx.branch_id)
 
@@ -266,6 +278,12 @@ def _can_subscribe(user_ctx, channel: str) -> bool:
             return True
         # Owners can subscribe to any of their branches (validated at router level)
         if user_ctx.role == "owner":
+            return True
+        return False
+
+    if channel.startswith("restaurant:"):
+        # Owners/managers can subscribe to restaurant-wide events
+        if user_ctx.role in ("owner", "manager"):
             return True
         return False
 

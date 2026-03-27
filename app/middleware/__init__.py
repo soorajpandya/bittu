@@ -201,6 +201,7 @@ class SubscriptionCheckMiddleware(BaseHTTPMiddleware):
         "/ws",
         "/api/v1/auth",
         "/api/v1/webhooks",
+        "/api/v1/tables/qr",
         "/api/v1/subscriptions/plans",
         "/api/v1/subscriptions/addons",
         "/api/v1/subscriptions/free-trial",

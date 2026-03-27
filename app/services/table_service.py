@@ -27,6 +27,7 @@ from app.core.state_machines import TableStatus, validate_table_transition
 from app.core.events import (
     DomainEvent, emit_and_publish,
     TABLE_SESSION_STARTED, TABLE_SESSION_ENDED, TABLE_CART_UPDATED, TABLE_ORDER_PLACED,
+    TABLE_STATUS_CHANGED, TABLE_CALL_WAITER,
 )
 from app.core.exceptions import (
     NotFoundError, ConflictError, ValidationError, LockAcquisitionError,
@@ -1005,3 +1006,87 @@ class TableSessionService:
             if session["expires_at"] and session["expires_at"] < datetime.now(timezone.utc):
                 raise ValidationError("Session has expired")
             return dict(session)
+
+    # ── CALL WAITER (from QR customer) ──
+
+    async def call_waiter(self, data: dict) -> dict:
+        """Customer requests waiter assistance from QR interface."""
+        session_token = data["session_token"]
+        request_type = data.get("request_type", "assistance")  # assistance | bill | water
+
+        session = await self._get_active_session(session_token)
+        session_id = str(session["id"])
+        restaurant_id = str(session["restaurant_id"]) if session["restaurant_id"] else None
+
+        # Look up table number
+        async with get_connection() as conn:
+            table = await conn.fetchrow(
+                "SELECT table_number FROM restaurant_tables WHERE id = $1",
+                str(session["table_id"]),
+            )
+
+        table_number = table["table_number"] if table else "?"
+
+        await emit_and_publish(DomainEvent(
+            event_type=TABLE_CALL_WAITER,
+            payload={
+                "session_id": session_id,
+                "table_id": str(session["table_id"]),
+                "table_number": table_number,
+                "request_type": request_type,
+            },
+            user_id=str(session["user_id"]),
+            restaurant_id=restaurant_id,
+            branch_id=str(session["branch_id"]) if session.get("branch_id") else None,
+        ))
+
+        return {"status": "sent", "request_type": request_type}
+
+    # ── MARK PAID & VACATE (admin) ──
+
+    async def mark_paid_and_vacate(
+        self, user: UserContext, session_id: str, order_id: Optional[str] = None,
+    ) -> dict:
+        """Mark order as paid and end the table session in one action."""
+        async with get_connection() as conn:
+            session = await conn.fetchrow(
+                "SELECT * FROM table_sessions WHERE id = $1 AND is_active = true",
+                session_id,
+            )
+            if not session:
+                raise NotFoundError("Session", session_id)
+
+            # Mark order(s) paid
+            if order_id:
+                await conn.execute(
+                    "UPDATE orders SET status = 'Delivered', updated_at = now() WHERE id = $1",
+                    order_id,
+                )
+            else:
+                # Mark all orders for this session as Delivered
+                owner_id = user.owner_id if user.is_branch_user else user.user_id
+                await conn.execute(
+                    """
+                    UPDATE orders SET status = 'Delivered', updated_at = now()
+                    WHERE user_id = $1 AND metadata->>'session_id' = $2
+                      AND status NOT IN ('Cancelled', 'Rejected', 'Delivered')
+                    """,
+                    owner_id, session_id,
+                )
+
+        # End the session (reuses existing logic)
+        result = await self.end_session(user=user, session_id=session_id)
+
+        await emit_and_publish(DomainEvent(
+            event_type=TABLE_STATUS_CHANGED,
+            payload={
+                "session_id": session_id,
+                "table_id": str(session["table_id"]),
+                "action": "paid_and_vacated",
+            },
+            user_id=user.user_id,
+            restaurant_id=user.restaurant_id,
+            branch_id=user.branch_id,
+        ))
+
+        return {"status": "paid_and_vacated", **result}

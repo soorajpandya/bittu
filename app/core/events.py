@@ -36,6 +36,8 @@ TABLE_SESSION_STARTED = "table.session_started"
 TABLE_SESSION_ENDED = "table.session_ended"
 TABLE_CART_UPDATED = "table.cart_updated"
 TABLE_ORDER_PLACED = "table.order_placed"
+TABLE_STATUS_CHANGED = "table.status_changed"
+TABLE_CALL_WAITER = "table.call_waiter"
 
 # Inventory events
 INVENTORY_DEDUCTED = "inventory.deducted"

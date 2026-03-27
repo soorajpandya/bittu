@@ -293,3 +293,34 @@ async def qr_order_status(
 ):
     """Get all orders for this session with kitchen status."""
     return await _svc.qr_order_status(session_token=session_token)
+
+
+# ── QR Call Waiter (public) ──
+
+class QRCallWaiterIn(BaseModel):
+    session_token: str
+    request_type: Optional[str] = "assistance"  # assistance | bill | water
+
+
+@router.post("/qr/call-waiter")
+async def qr_call_waiter(body: QRCallWaiterIn):
+    """Customer requests waiter assistance from QR interface."""
+    return await _svc.call_waiter(body.model_dump())
+
+
+# ── Admin: Mark Paid & Vacate ──
+
+class MarkPaidVacateIn(BaseModel):
+    order_id: Optional[str] = None
+
+
+@router.post("/sessions/{session_id}/paid-vacate")
+async def mark_paid_and_vacate(
+    session_id: str,
+    body: MarkPaidVacateIn = MarkPaidVacateIn(),
+    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter")),
+):
+    """Mark order as paid and end the table session."""
+    return await _svc.mark_paid_and_vacate(
+        user=user, session_id=session_id, order_id=body.order_id,
+    )
