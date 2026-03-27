@@ -52,13 +52,15 @@ class GoogleTokenManager:
     async def verify_restaurant_ownership(self, user_id: str, restaurant_id: str) -> None:
         """
         Verify that user_id owns restaurant_id.
+        Handles both cases: restaurant_id can be the actual restaurant UUID
+        or the owner's user_id (legacy frontend behaviour).
         Raises ForbiddenError on cross-tenant access.
         """
         async with get_connection() as conn:
             row = await conn.fetchrow(
                 """
                 SELECT 1 FROM restaurants
-                WHERE id = $1 AND owner_id = $2
+                WHERE (id = $1 OR owner_id = $1) AND owner_id = $2
                 LIMIT 1
                 """,
                 restaurant_id,
