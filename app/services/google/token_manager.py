@@ -42,7 +42,9 @@ class GoogleTokenManager:
                        token_expiry, account_id, location_id, location_name, is_active,
                        last_locations_sync, last_reviews_sync, last_insights_sync, last_posts_sync
                 FROM google_connections
-                WHERE user_id = $1 AND restaurant_id = $2 AND is_active = true
+                WHERE user_id = $1 AND (restaurant_id = $2 OR restaurant_id = $1) AND is_active = true
+                ORDER BY CASE WHEN restaurant_id = $2 THEN 0 ELSE 1 END
+                LIMIT 1
                 """,
                 user_id,
                 restaurant_id,
@@ -171,7 +173,7 @@ class GoogleTokenManager:
                     location_id    = $4,
                     location_name  = $5,
                     updated_at     = now()
-                WHERE user_id = $1 AND restaurant_id = $2
+                WHERE user_id = $1 AND (restaurant_id = $2 OR restaurant_id = $1)
                 """,
                 user_id,
                 restaurant_id,
@@ -187,7 +189,7 @@ class GoogleTokenManager:
                 """
                 UPDATE google_connections
                 SET is_active = false, updated_at = now()
-                WHERE user_id = $1 AND restaurant_id = $2
+                WHERE user_id = $1 AND (restaurant_id = $2 OR restaurant_id = $1)
                 """,
                 user_id,
                 restaurant_id,
@@ -212,7 +214,7 @@ class GoogleTokenManager:
                 f"""
                 UPDATE google_connections
                 SET {col} = now(), sync_error = $3, updated_at = now()
-                WHERE user_id = $1 AND restaurant_id = $2
+                WHERE user_id = $1 AND (restaurant_id = $2 OR restaurant_id = $1)
                 """,
                 user_id,
                 restaurant_id,

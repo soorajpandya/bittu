@@ -45,6 +45,23 @@ RATE_LIMIT_COOLDOWN = 5
 # ── Helpers ──────────────────────────────────────────────────
 
 
+def _resolve_restaurant_id(user: UserContext, restaurant_id: str) -> str:
+    """
+    Resolve a possibly-wrong restaurant_id from the frontend.
+    Many frontends pass user_id or owner_id as restaurant_id by mistake.
+    If the incoming value matches the user's own ID or owner_id, substitute
+    the real restaurant_id from their auth context.
+    """
+    if restaurant_id in (user.user_id, user.owner_id) and user.restaurant_id:
+        logger.debug(
+            "google_resolve_restaurant_id",
+            original=restaurant_id,
+            resolved=user.restaurant_id,
+        )
+        return user.restaurant_id
+    return restaurant_id
+
+
 async def _verify_ownership(user: UserContext, restaurant_id: str) -> None:
     """Ensure the authenticated user owns (or has access to) the restaurant."""
     # For branch users, owner_id is the restaurant owner; for owners, owner_id == user_id
@@ -112,11 +129,12 @@ async def google_connect(
     user: UserContext = Depends(get_current_user),
 ):
     """Generate an OAuth consent URL to connect a Google Business Profile."""
+    restaurant_id = _resolve_restaurant_id(user, restaurant_id)
     try:
         await _verify_ownership(user, restaurant_id)
         return await _auth_svc.generate_auth_url(
-            restaurant_id,
             user_id=user.user_id,
+            restaurant_id=restaurant_id,
             redirect_uri=redirect_uri,
         )
     except Exception as e:
@@ -156,6 +174,7 @@ async def google_connection_status(
     user: UserContext = Depends(get_current_user),
 ):
     """Check if a Google account is connected for a restaurant."""
+    restaurant_id = _resolve_restaurant_id(user, restaurant_id)
     try:
         conn = await _token_mgr.get_connection_for_restaurant(user.user_id, restaurant_id)
         if not conn:
@@ -177,12 +196,13 @@ async def google_disconnect(
     user: UserContext = Depends(get_current_user),
 ):
     """Disconnect a Google account from a restaurant. Never crashes."""
+    rid = _resolve_restaurant_id(user, body.restaurant_id)
     try:
-        await _verify_ownership(user, body.restaurant_id)
-        await _token_mgr.disconnect(user.user_id, body.restaurant_id)
+        await _verify_ownership(user, rid)
+        await _token_mgr.disconnect(user.user_id, rid)
         return {"disconnected": True}
     except Exception as e:
-        logger.error("google_disconnect_error", error=str(e), user_id=user.user_id, restaurant_id=body.restaurant_id)
+        logger.error("google_disconnect_error", error=str(e), user_id=user.user_id, restaurant_id=rid)
         return {"disconnected": False, "error": str(e)}
 
 
@@ -195,6 +215,7 @@ async def google_locations(
     user: UserContext = Depends(get_current_user),
 ):
     """Fetch Google Business accounts and their locations. Rate-limited + cached."""
+    restaurant_id = _resolve_restaurant_id(user, restaurant_id)
     _FALLBACK = {"connected": True, "accounts": [], "locations": {}}
 
     # ── Rate limit guard: 5s cooldown per user+restaurant ──
@@ -221,11 +242,12 @@ async def google_select_location(
     user: UserContext = Depends(get_current_user),
 ):
     """Select which Google Business location to use for a restaurant."""
+    rid = _resolve_restaurant_id(user, body.restaurant_id)
     try:
-        await _verify_ownership(user, body.restaurant_id)
+        await _verify_ownership(user, rid)
         return await _locations_svc.select_location(
             user_id=user.user_id,
-            restaurant_id=body.restaurant_id,
+            restaurant_id=rid,
             account_id=body.account_id,
             location_id=body.location_id,
             location_name=body.location_name,
@@ -257,6 +279,7 @@ async def google_reviews(
     user: UserContext = Depends(get_current_user),
 ):
     """Fetch reviews for the connected Google Business location."""
+    restaurant_id = _resolve_restaurant_id(user, restaurant_id)
     if await _rate_guard(user.user_id, restaurant_id, "reviews"):
         return JSONResponse(
             status_code=429,
@@ -284,11 +307,12 @@ async def google_reply_to_review(
     user: UserContext = Depends(get_current_user),
 ):
     """Reply to a Google Business review (duplicate-safe)."""
+    rid = _resolve_restaurant_id(user, body.restaurant_id)
     try:
-        await _verify_ownership(user, body.restaurant_id)
+        await _verify_ownership(user, rid)
         return await _reviews_svc.reply_to_review(
             user_id=user.user_id,
-            restaurant_id=body.restaurant_id,
+            restaurant_id=rid,
             review_id=body.review_id,
             reply_text=body.reply_text,
         )
@@ -309,11 +333,12 @@ async def google_create_post(
     user: UserContext = Depends(get_current_user),
 ):
     """Create a promotional post on Google Business Profile. Never crashes."""
+    rid = _resolve_restaurant_id(user, body.restaurant_id)
     try:
-        await _verify_ownership(user, body.restaurant_id)
+        await _verify_ownership(user, rid)
 
         # Validate connection + location exist before calling Google
-        conn = await _token_mgr.get_connection_for_restaurant(user.user_id, body.restaurant_id)
+        conn = await _token_mgr.get_connection_for_restaurant(user.user_id, rid)
         if not conn or not conn.get("location_id"):
             return JSONResponse(
                 status_code=400,
@@ -322,7 +347,7 @@ async def google_create_post(
 
         result = await _posts_svc.create_post(
             user_id=user.user_id,
-            restaurant_id=body.restaurant_id,
+            restaurant_id=rid,
             summary=body.summary,
             action_type=body.action_type,
             action_url=body.action_url,
@@ -332,7 +357,7 @@ async def google_create_post(
         )
         return result
     except Exception as e:
-        logger.error("google_create_post_error", error=str(e), user_id=user.user_id, restaurant_id=body.restaurant_id)
+        logger.error("google_create_post_error", error=str(e), user_id=user.user_id, restaurant_id=rid)
         return JSONResponse(
             status_code=getattr(e, "status_code", 500),
             content={"success": False, "error": f"Failed to create post: {str(e)[:200]}"},
@@ -347,6 +372,7 @@ async def google_list_posts(
     user: UserContext = Depends(get_current_user),
 ):
     """List existing Google Business posts for the connected location."""
+    restaurant_id = _resolve_restaurant_id(user, restaurant_id)
     _FALLBACK = {"connected": True, "posts": [], "next_page_token": None}
 
     if await _rate_guard(user.user_id, restaurant_id, "posts"):
@@ -402,6 +428,7 @@ async def google_insights(
     user: UserContext = Depends(get_current_user),
 ):
     """Fetch performance insights (views, calls, directions, bookings)."""
+    restaurant_id = _resolve_restaurant_id(user, restaurant_id)
     if await _rate_guard(user.user_id, restaurant_id, "insights"):
         return JSONResponse(status_code=429, content={**_INSIGHTS_FALLBACK, "rate_limited": True})
 
@@ -427,6 +454,7 @@ async def google_insights_summary(
     user: UserContext = Depends(get_current_user),
 ):
     """Aggregated summary for the growth dashboard."""
+    restaurant_id = _resolve_restaurant_id(user, restaurant_id)
     _SUMMARY_FALLBACK = {
         "connected": True,
         "summary": {
@@ -465,9 +493,10 @@ async def google_sync_restaurant(
     user: UserContext = Depends(get_current_user),
 ):
     """Trigger a full data sync for a restaurant (locations, reviews, posts, insights)."""
+    rid = _resolve_restaurant_id(user, body.restaurant_id)
     try:
-        await _verify_ownership(user, body.restaurant_id)
-        return await sync_single_restaurant(user.user_id, body.restaurant_id)
+        await _verify_ownership(user, rid)
+        return await sync_single_restaurant(user.user_id, rid)
     except Exception as e:
         logger.error("google_sync_error", error=str(e))
         return JSONResponse(
