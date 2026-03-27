@@ -11,8 +11,8 @@ async def main():
     rows = await conn.fetch("""
         SELECT gc.id, gc.user_id, gc.restaurant_id, r.id AS real_restaurant_id, r.name
         FROM google_connections gc
-        JOIN restaurants r ON r.owner_id = gc.user_id
-        WHERE gc.restaurant_id = gc.user_id
+        JOIN restaurants r ON r.owner_id::text = gc.user_id::text
+        WHERE gc.restaurant_id::text = gc.user_id::text
     """)
 
     if not rows:
@@ -30,8 +30,8 @@ async def main():
     print("\nFixing...")
     for r in rows:
         await conn.execute(
-            "UPDATE google_connections SET restaurant_id = $1, updated_at = now() WHERE id = $2",
-            r['real_restaurant_id'],
+            "UPDATE google_connections SET restaurant_id = $1::text, updated_at = now() WHERE id = $2",
+            str(r['real_restaurant_id']),
             r['id'],
         )
         print(f"  Fixed connection {r['id']}: {r['restaurant_id']} -> {r['real_restaurant_id']}")
