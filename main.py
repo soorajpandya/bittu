@@ -21,7 +21,7 @@ from app.middleware import (
     SubscriptionCheckMiddleware,
 )
 from app.api import router as api_router
-from app.realtime import ws_endpoint, redis_subscriber
+from app.realtime import ws_endpoint, ws_session_endpoint, redis_subscriber
 from app.core.metrics import metrics_endpoint
 
 logger = get_logger(__name__)
@@ -136,6 +136,14 @@ def create_app() -> FastAPI:
         token: str = WSQuery(default=""),
     ):
         await ws_endpoint(websocket, token=token or None)
+
+    # -- Public WebSocket for QR dine-in customers (session_token auth) --
+    @app.websocket("/ws/session")
+    async def websocket_session_route(
+        websocket: WebSocket,
+        session_token: str = WSQuery(default=""),
+    ):
+        await ws_session_endpoint(websocket, session_token=session_token or None)
 
     return app
 

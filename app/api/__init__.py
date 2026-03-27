@@ -66,6 +66,7 @@ from app.api.v1 import (
     kitchen_stations,
     ingredients,
     favourite_items,
+    dinein,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -134,3 +135,5 @@ router.include_router(table_sessions.router)
 router.include_router(kitchen_stations.router)
 router.include_router(ingredients.router)
 router.include_router(favourite_items.router)
+# ── Dine-In Sessions (QR v2) ──
+router.include_router(dinein.router)

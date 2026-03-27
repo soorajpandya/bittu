@@ -150,6 +150,21 @@ async def redis_subscriber():
                         "data": data,
                     })
 
+                # Fan out to session channel (dine-in customers)
+                session_id = data.get("session_id")
+                if session_id:
+                    await manager.broadcast(f"session:{session_id}", {
+                        "event": event_type,
+                        "data": data,
+                    })
+
+                # Fan out to all linked sessions (post-merge)
+                for linked_sid in data.get("linked_session_ids", []):
+                    await manager.broadcast(f"session:{linked_sid}", {
+                        "event": event_type,
+                        "data": data,
+                    })
+
                 # Direct user notification
                 target_user = data.get("user_id")
                 if target_user:
@@ -292,3 +307,88 @@ def _can_subscribe(user_ctx, channel: str) -> bool:
         return True
 
     return False
+
+
+# ──────────────────────────────────────────────────────────────
+# Public WebSocket for QR dine-in customers (session_token auth)
+# ──────────────────────────────────────────────────────────────
+
+async def ws_session_endpoint(websocket: WebSocket, session_token: Optional[str] = None):
+    """
+    Public WebSocket for dine-in diners.
+    Auth via session_token (not JWT). Auto-subscribes to session:<id> channel.
+    """
+    if not session_token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    # Validate session_token against database
+    from app.core.database import get_connection as _get_conn
+    async with _get_conn() as db:
+        session = await db.fetchrow(
+            "SELECT id, table_id, restaurant_id, user_id FROM dine_in_sessions WHERE session_token = $1 AND status = 'active'",
+            session_token,
+        )
+
+    if not session:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    await websocket.accept()
+
+    session_id = str(session["id"])
+    pseudo_user_id = f"session:{session_id}"
+
+    conn = WSConnection(ws=websocket, user_id=pseudo_user_id)
+    await manager.connect(conn)
+    await manager.subscribe(conn, f"session:{session_id}")
+
+    logger.info("ws_session_connected", session_id=session_id)
+
+    try:
+        await websocket.send_json({
+            "event": "connected",
+            "data": {"session_id": session_id},
+        })
+
+        while True:
+            try:
+                raw = await asyncio.wait_for(websocket.receive_text(), timeout=HEARTBEAT_INTERVAL)
+            except asyncio.TimeoutError:
+                try:
+                    await websocket.send_json({"event": "ping"})
+                except Exception:
+                    break
+                continue
+
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_json({"error": "invalid_json"})
+                continue
+
+            action = msg.get("action")
+            if action == "pong":
+                continue
+            elif action == "subscribe":
+                channel = msg.get("channel", "")
+                # Session clients can only subscribe to their own session or entity channels
+                if channel == f"session:{session_id}" or channel.startswith("entity:"):
+                    await manager.subscribe(conn, channel)
+                    await websocket.send_json({"event": "subscribed", "channel": channel})
+                else:
+                    await websocket.send_json({"error": "forbidden_channel", "channel": channel})
+            elif action == "unsubscribe":
+                channel = msg.get("channel", "")
+                await manager.unsubscribe(conn, channel)
+                await websocket.send_json({"event": "unsubscribed", "channel": channel})
+            else:
+                await websocket.send_json({"error": "unknown_action"})
+
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        logger.exception("ws_session_error", session_id=session_id)
+    finally:
+        await manager.disconnect(conn)
+        logger.info("ws_session_disconnected", session_id=session_id)
