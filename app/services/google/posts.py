@@ -1,19 +1,33 @@
 """
 Google Business Profile — Posts Service.
 
-Create promotional/update posts on a Google Business location.
+Create, list, and manage promotional/update posts on a Google Business location.
+Validates URLs, persists to DB, emits events, caches reads.
 """
-import httpx
+from urllib.parse import urlparse
 
+from app.core.database import get_connection
 from app.core.logging import get_logger
-from app.core.exceptions import AppException, NotFoundError
+from app.core.exceptions import NotFoundError, ValidationError
+from app.core.events import DomainEvent, emit_and_publish
 from app.services.google.token_manager import GoogleTokenManager
+from app.services.google.api_client import google_api, MY_BUSINESS_BASE, _cache_key
 
 logger = get_logger(__name__)
 
-MY_BUSINESS_BASE = "https://mybusiness.googleapis.com/v4"
-
 token_mgr = GoogleTokenManager()
+
+POSTS_CACHE_TTL = 120  # 2 minutes
+
+VALID_ACTION_TYPES = {"BOOK", "ORDER", "SHOP", "SIGN_UP", "LEARN_MORE", "CALL"}
+
+
+def _validate_url(url: str, label: str) -> str:
+    """Validate that a URL is well-formed HTTPS."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValidationError(f"Invalid {label}: must be a valid HTTP(S) URL")
+    return url
 
 
 class GooglePostsService:
@@ -33,31 +47,36 @@ class GooglePostsService:
         """
         Create a local post on the connected Google Business location.
 
-        Post types supported:
-          - STANDARD: Just text (+ optional image)
-          - EVENT: Has event title + schedule
-          - OFFER: Has coupon code, terms, etc.
-
-        Args:
-            summary: Post body text (1500 chars max).
-            action_type: One of BOOK, ORDER, SHOP, SIGN_UP, LEARN_MORE, CALL.
-            action_url: URL for the CTA button.
-            image_url: Public URL of the image to attach.
-            event: {"title": str, "schedule": {"startDate": {...}, "endDate": {...}}}
-            offer: {"couponCode": str, "termsConditions": str, ...}
+        Post types: STANDARD, EVENT, OFFER.
         """
-        conn = await token_mgr.get_connection_for_restaurant(user_id, restaurant_id)
-        if not conn or not conn.get("account_id") or not conn.get("location_id"):
+        conn_row = await token_mgr.get_connection_for_restaurant(user_id, restaurant_id)
+        if not conn_row or not conn_row.get("account_id") or not conn_row.get("location_id"):
             raise NotFoundError("Google location", "Connect and select a location first.")
 
-        access_token = await token_mgr.get_valid_token(user_id, restaurant_id)
-        account_id = conn["account_id"]
-        location_id = conn["location_id"]
+        # ── Input validation ──
+        if not summary or not summary.strip():
+            raise ValidationError("Post summary is required")
+        summary = summary.strip()[:1500]
 
-        # Build post payload
+        if action_type:
+            action_type = action_type.upper()
+            if action_type not in VALID_ACTION_TYPES:
+                raise ValidationError(
+                    f"Invalid action_type. Must be one of: {', '.join(sorted(VALID_ACTION_TYPES))}"
+                )
+
+        if action_url:
+            _validate_url(action_url, "action_url")
+        if image_url:
+            _validate_url(image_url, "image_url")
+
+        account_id = conn_row["account_id"]
+        location_id = conn_row["location_id"]
+
+        # ── Build post payload ──
         post_body: dict = {
             "languageCode": "en",
-            "summary": summary[:1500],
+            "summary": summary,
             "topicType": "STANDARD",
         }
 
@@ -71,7 +90,7 @@ class GooglePostsService:
 
         if action_type and action_url:
             post_body["callToAction"] = {
-                "actionType": action_type.upper(),
+                "actionType": action_type,
                 "url": action_url,
             }
 
@@ -85,30 +104,38 @@ class GooglePostsService:
             f"/locations/{location_id}/localPosts"
         )
 
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.post(
-                url,
-                json=post_body,
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Content-Type": "application/json",
-                },
-            )
+        result = await google_api.request(
+            "POST",
+            url,
+            user_id,
+            restaurant_id,
+            json_body=post_body,
+        )
 
-        if resp.status_code not in (200, 201):
-            logger.error("google_create_post_failed", status=resp.status_code, body=resp.text)
-            raise AppException(
-                status_code=resp.status_code,
-                detail=f"Failed to create post: {resp.text}",
-                error_code="GOOGLE_API_ERROR",
-            )
+        # ── Persist to DB ──
+        await self._upsert_post_db(restaurant_id, result)
+
+        # ── Invalidate cache ──
+        await google_api.invalidate_cache("posts", restaurant_id)
+
+        # ── Emit event ──
+        await emit_and_publish(DomainEvent(
+            event_type="google.post_created",
+            payload={
+                "topic_type": post_body["topicType"],
+                "summary": summary[:100],
+            },
+            user_id=user_id,
+            restaurant_id=restaurant_id,
+        ))
 
         logger.info(
             "google_post_created",
             user_id=user_id,
             restaurant_id=restaurant_id,
+            topic_type=post_body["topicType"],
         )
-        return resp.json()
+        return result
 
     async def list_posts(
         self,
@@ -118,40 +145,112 @@ class GooglePostsService:
         page_token: str | None = None,
     ) -> dict:
         """List existing local posts for the connected location."""
-        conn = await token_mgr.get_connection_for_restaurant(user_id, restaurant_id)
-        if not conn or not conn.get("account_id") or not conn.get("location_id"):
+        conn_row = await token_mgr.get_connection_for_restaurant(user_id, restaurant_id)
+        if not conn_row or not conn_row.get("account_id") or not conn_row.get("location_id"):
             raise NotFoundError("Google location", "Connect and select a location first.")
 
-        access_token = await token_mgr.get_valid_token(user_id, restaurant_id)
-        account_id = conn["account_id"]
-        location_id = conn["location_id"]
+        account_id = conn_row["account_id"]
+        location_id = conn_row["location_id"]
 
         params: dict = {"pageSize": min(page_size, 100)}
         if page_token:
             params["pageToken"] = page_token
 
-        url = (
-            f"{MY_BUSINESS_BASE}/accounts/{account_id}"
-            f"/locations/{location_id}/localPosts"
+        cache_extra = f"{page_size}:{page_token or ''}"
+        data = await google_api.request(
+            "GET",
+            f"{MY_BUSINESS_BASE}/accounts/{account_id}/locations/{location_id}/localPosts",
+            user_id,
+            restaurant_id,
+            params=params,
+            cache_key=_cache_key("posts", restaurant_id, cache_extra),
+            cache_ttl=POSTS_CACHE_TTL,
         )
 
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.get(
-                url,
-                params=params,
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
+        posts = data.get("localPosts", [])
 
-        if resp.status_code != 200:
-            logger.error("google_list_posts_failed", status=resp.status_code, body=resp.text)
-            raise AppException(
-                status_code=resp.status_code,
-                detail=f"Failed to list posts: {resp.text}",
-                error_code="GOOGLE_API_ERROR",
-            )
+        # Persist to DB in background
+        if posts:
+            await self._upsert_posts_db(restaurant_id, posts)
 
-        data = resp.json()
         return {
-            "posts": data.get("localPosts", []),
+            "posts": posts,
             "next_page_token": data.get("nextPageToken"),
         }
+
+    async def sync_posts(self, user_id: str, restaurant_id: str) -> int:
+        """Full sync of posts from Google API to DB. Returns count."""
+        conn_row = await token_mgr.get_connection_for_restaurant(user_id, restaurant_id)
+        if not conn_row or not conn_row.get("account_id") or not conn_row.get("location_id"):
+            return 0
+
+        account_id = conn_row["account_id"]
+        location_id = conn_row["location_id"]
+        total = 0
+        page_token = None
+
+        while True:
+            params: dict = {"pageSize": 100}
+            if page_token:
+                params["pageToken"] = page_token
+
+            try:
+                data = await google_api.request(
+                    "GET",
+                    f"{MY_BUSINESS_BASE}/accounts/{account_id}/locations/{location_id}/localPosts",
+                    user_id,
+                    restaurant_id,
+                    params=params,
+                )
+            except Exception as e:
+                logger.error("google_post_sync_page_failed", error=str(e))
+                break
+
+            posts = data.get("localPosts", [])
+            if posts:
+                await self._upsert_posts_db(restaurant_id, posts)
+                total += len(posts)
+
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+
+        await token_mgr.update_sync_timestamp(user_id, restaurant_id, "posts")
+        logger.info("google_posts_synced", restaurant_id=restaurant_id, count=total)
+        return total
+
+    # ── Private ──────────────────────────────────────────────
+
+    async def _upsert_post_db(self, restaurant_id: str, post: dict) -> None:
+        """Persist a single post to DB."""
+        await self._upsert_posts_db(restaurant_id, [post])
+
+    async def _upsert_posts_db(self, restaurant_id: str, posts: list[dict]) -> None:
+        """Persist a list of posts to DB."""
+        async with get_connection() as conn:
+            for p in posts:
+                name = p.get("name", "")
+                # Extract post_id from resource name (last segment)
+                post_id = name.rsplit("/", 1)[-1] if name else ""
+                if not post_id:
+                    continue
+
+                await conn.execute(
+                    """
+                    INSERT INTO google_posts
+                        (restaurant_id, post_id, topic_type, summary, state, raw_data, synced_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, now())
+                    ON CONFLICT (restaurant_id, post_id) DO UPDATE SET
+                        topic_type = EXCLUDED.topic_type,
+                        summary    = EXCLUDED.summary,
+                        state      = EXCLUDED.state,
+                        raw_data   = EXCLUDED.raw_data,
+                        synced_at  = now()
+                    """,
+                    restaurant_id,
+                    post_id,
+                    p.get("topicType", "STANDARD"),
+                    p.get("summary", ""),
+                    p.get("state", ""),
+                    p,
+                )
