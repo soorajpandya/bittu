@@ -257,6 +257,12 @@ class SubscriptionCheckMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if not is_active:
+            logger.warning(
+                "subscription_blocked",
+                user_id=user_id,
+                path=path,
+                is_active=is_active,
+            )
             return JSONResponse(
                 status_code=403,
                 content={
