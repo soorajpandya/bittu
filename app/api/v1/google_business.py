@@ -47,7 +47,9 @@ RATE_LIMIT_COOLDOWN = 5
 
 async def _verify_ownership(user: UserContext, restaurant_id: str) -> None:
     """Ensure the authenticated user owns (or has access to) the restaurant."""
-    await _token_mgr.verify_restaurant_ownership(user.user_id, restaurant_id)
+    # For branch users, owner_id is the restaurant owner; for owners, owner_id == user_id
+    effective_owner = user.owner_id or user.user_id
+    await _token_mgr.verify_restaurant_ownership(effective_owner, restaurant_id)
 
 
 async def _rate_guard(user_id: str, restaurant_id: str, action: str) -> bool:
