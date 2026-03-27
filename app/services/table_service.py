@@ -356,25 +356,49 @@ class TableSessionService:
         """
         async with get_connection() as conn:
             # Look up table by id — the url_id might be restaurant_id OR user_id (owner_id)
+            logger.info("qr_scan_lookup", table_id=table_id, restaurant_id=restaurant_id)
             table = await conn.fetchrow(
                 """
                 SELECT id, table_number, capacity, user_id, restaurant_id
                 FROM restaurant_tables
-                WHERE id = $1 AND is_active = true
-                  AND (restaurant_id = $2 OR user_id = $2)
+                WHERE id = $1::uuid AND is_active = true
+                  AND (restaurant_id = $2::uuid OR user_id = $2::uuid)
                 """,
                 table_id, restaurant_id,
             )
             if not table:
                 # Fallback: look up by just table id
+                logger.info("qr_scan_fallback", table_id=table_id)
                 table = await conn.fetchrow(
                     """
                     SELECT id, table_number, capacity, user_id, restaurant_id
                     FROM restaurant_tables
-                    WHERE id = $1 AND is_active = true
+                    WHERE id = $1::uuid AND is_active = true
                     """,
                     table_id,
                 )
+            if not table:
+                # Last resort: check if table exists at all (even inactive)
+                any_table = await conn.fetchrow(
+                    "SELECT id, is_active, user_id, restaurant_id FROM restaurant_tables WHERE id = $1::uuid",
+                    table_id,
+                )
+                if any_table:
+                    logger.warning("qr_scan_table_inactive",
+                        table_id=table_id, is_active=any_table["is_active"],
+                        user_id=str(any_table["user_id"]), restaurant_id=str(any_table["restaurant_id"]) if any_table["restaurant_id"] else None,
+                    )
+                else:
+                    # Check if the two IDs are swapped (table_id might be first segment)
+                    swap_table = await conn.fetchrow(
+                        "SELECT id, table_number, capacity, user_id, restaurant_id FROM restaurant_tables WHERE id = $1::uuid AND is_active = true",
+                        restaurant_id,
+                    )
+                    if swap_table:
+                        logger.warning("qr_scan_ids_swapped", actual_table_id=restaurant_id, passed_as_restaurant=table_id)
+                        table = swap_table
+                    else:
+                        logger.warning("qr_scan_table_not_found", table_id=table_id, restaurant_id=restaurant_id)
             if not table:
                 raise NotFoundError("Table", table_id)
 
@@ -786,8 +810,8 @@ class TableSessionService:
                     status, table_number, delivery_address, delivery_phone,
                     coupon_id, notes, items, metadata
                 ) VALUES (
-                    $1, $2, $3, $4, NULL, 'qr'::order_source,
-                    $5, $6, 0, $7, 'pending', $8, NULL, $9,
+                    $1, $2, $3, $4, NULL, 'qr_table'::order_source,
+                    $5, $6, 0, $7, 'Pending', $8, NULL, $9,
                     NULL, $10, $11::jsonb, $12::jsonb
                 )
                 """,
@@ -828,10 +852,17 @@ class TableSessionService:
             kitchen_order_id = str(uuid.uuid4())
             await conn.execute(
                 """
-                INSERT INTO kitchen_orders (id, order_id, status, user_id, priority, created_at)
-                VALUES ($1, $2, 'queued'::kitchen_status, $3, 0, now())
+                INSERT INTO kitchen_orders (
+                    id, order_id, restaurant_id, status, user_id,
+                    priority, source, table_session_id, branch_id, created_at
+                ) VALUES (
+                    $1, $2, $3, 'queued'::kitchen_status, $4,
+                    0, 'qr_table', $5, $6, now()
+                )
                 """,
-                kitchen_order_id, order_id, owner_id,
+                kitchen_order_id, order_id, restaurant_id, owner_id,
+                session_id,
+                str(session.get("branch_id")) if session.get("branch_id") else None,
             )
 
             # INSERT kitchen_order_items
