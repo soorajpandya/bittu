@@ -86,21 +86,42 @@ class GoogleAPIClient:
                 user_id=user_id,
                 restaurant_id=restaurant_id,
             )
-            # Force refresh
-            access_token = await _token_mgr.get_valid_token(user_id, restaurant_id)
+            # Force refresh by invalidating cached token
+            access_token = await _token_mgr.force_refresh_token(user_id, restaurant_id)
             resp = await self._do_request(method, url, access_token, params=params, json_body=json_body, timeout=timeout)
 
         # ── Handle errors ──
         if resp.status_code == 429:
+            # Parse actual Google error for better diagnostics
+            detail_msg = "Google API rate limit reached. Please try again shortly."
+            try:
+                err_data = resp.json()
+                google_msg = err_data.get("error", {}).get("message", "")
+                if google_msg:
+                    detail_msg = google_msg
+                # Check for zero-quota (API not approved)
+                for d in err_data.get("error", {}).get("details", []):
+                    if d.get("metadata", {}).get("quota_limit_value") == "0":
+                        detail_msg = (
+                            "Google Business Profile API quota is 0. "
+                            "Your Google Cloud project needs API approval. "
+                            "Visit https://developers.google.com/my-business/content/prereqs "
+                            "and submit the API access request form."
+                        )
+                        break
+            except Exception:
+                pass
+
             logger.warning(
                 "google_api_rate_limited",
                 url=url,
                 user_id=user_id,
                 restaurant_id=restaurant_id,
+                response_body=resp.text[:500],
             )
             raise AppException(
                 status_code=429,
-                detail="Google API rate limit reached. Please try again shortly.",
+                detail=detail_msg,
                 error_code="GOOGLE_RATE_LIMITED",
             )
 

@@ -76,6 +76,13 @@ class GoogleTokenManager:
             )
             raise ForbiddenError("You do not have access to this restaurant.")
 
+    async def force_refresh_token(self, user_id: str, restaurant_id: str) -> str:
+        """Force a token refresh regardless of expiry. Used after a 401 from Google."""
+        conn_row = await self.get_connection_for_restaurant(user_id, restaurant_id)
+        if not conn_row:
+            raise UnauthorizedError("Google account not connected.")
+        return await self._refresh_token(conn_row)
+
     async def get_valid_token(self, user_id: str, restaurant_id: str) -> str:
         """
         Return a valid access_token, refreshing if necessary.

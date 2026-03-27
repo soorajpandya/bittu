@@ -233,8 +233,11 @@ async def google_locations(
         return await _locations_svc.fetch_and_store_locations(user.user_id, restaurant_id)
     except Exception as e:
         logger.error("google_locations_error", error=str(e), user_id=user.user_id, restaurant_id=restaurant_id)
-        # Return safe fallback — never crash
-        return _FALLBACK
+        status = getattr(e, "status_code", 500)
+        return JSONResponse(
+            status_code=status,
+            content={**_FALLBACK, "error": str(e)[:300]},
+        )
 
 
 @router.post("/locations/select")
