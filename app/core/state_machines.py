@@ -61,12 +61,17 @@ ORDER_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
 
 
 def validate_order_transition(current: str, target: str) -> OrderStatus:
-    """Validate and return the target OrderStatus if transition is legal."""
+    """Validate and return the target OrderStatus if transition is legal.
+    Returns None if current == target (idempotent no-op)."""
     try:
         current_status = OrderStatus(current)
         target_status = OrderStatus(target)
     except ValueError as e:
         raise InvalidStateTransition("order", current, target) from e
+
+    # Idempotent: same status is a no-op
+    if current_status == target_status:
+        return None
 
     if target_status not in ORDER_TRANSITIONS.get(current_status, set()):
         raise InvalidStateTransition("order", current, target)

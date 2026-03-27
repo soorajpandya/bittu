@@ -57,6 +57,11 @@ class UpdateStatusIn(BaseModel):
     status: str
 
 
+class UpdateOrderIn(BaseModel):
+    model_config = {"extra": "allow"}
+    status: Optional[str] = None
+
+
 # ── Routes ───────────────────────────────────────────────────
 
 @router.post("")
@@ -122,18 +127,22 @@ async def update_order_status(
 @router.patch("/{order_id}")
 async def update_order(
     order_id: str,
-    body: UpdateStatusIn,
+    body: UpdateOrderIn,
     user: UserContext = Depends(require_permission("orders.update")),
 ):
-    """Alias: update order status directly on the order resource."""
-    return await _svc.update_status(user=user, order_id=order_id, new_status=body.status)
+    """Update order — if status is provided, transition it; otherwise return current order."""
+    if body.status:
+        return await _svc.update_status(user=user, order_id=order_id, new_status=body.status)
+    return await _svc.get_order_detail(user=user, order_id=order_id)
 
 
 @router.put("/{order_id}")
 async def put_order(
     order_id: str,
-    body: UpdateStatusIn,
+    body: UpdateOrderIn,
     user: UserContext = Depends(require_permission("orders.update")),
 ):
-    """Alias: some frontends use PUT for status updates."""
-    return await _svc.update_status(user=user, order_id=order_id, new_status=body.status)
+    """Update order — if status is provided, transition it; otherwise return current order."""
+    if body.status:
+        return await _svc.update_status(user=user, order_id=order_id, new_status=body.status)
+    return await _svc.get_order_detail(user=user, order_id=order_id)

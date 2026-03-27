@@ -318,6 +318,10 @@ class OrderService:
                     current = order["status"]
                     target = validate_order_transition(current, new_status)
 
+                    # Idempotent: no-op if already in the target state
+                    if target is None:
+                        return {"id": order_id, "status": current}
+
                     # Business rules for cancellation
                     if target == OrderStatus.CANCELLED:
                         await self._validate_cancellation(user, order)
