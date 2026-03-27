@@ -147,3 +147,12 @@ async def put_order(
     return await _svc.update_order(
         user=user, order_id=order_id, status=body.status, notes=body.notes,
     )
+
+
+@router.delete("/{order_id}")
+async def delete_order(
+    order_id: str,
+    user: UserContext = Depends(require_permission("orders.update")),
+):
+    """Cancel/delete an order by transitioning it to Cancelled status."""
+    return await _svc.update_status(user=user, order_id=order_id, new_status="Cancelled")
