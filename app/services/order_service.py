@@ -286,6 +286,38 @@ class OrderService:
             "items": order_items_data,
         }
 
+    # ── UPDATE ORDER (GENERAL) ──
+
+    async def update_order(
+        self,
+        user: UserContext,
+        order_id: str,
+        status: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> dict:
+        """Update order fields. Handles status transition + notes."""
+        async with get_connection() as conn:
+            owner_id = user.owner_id if user.is_branch_user else user.user_id
+            order = await conn.fetchrow(
+                "SELECT id, status FROM orders WHERE id = $1 AND user_id = $2",
+                order_id, owner_id,
+            )
+            if not order:
+                raise NotFoundError("Order", order_id)
+
+            # Update notes if provided
+            if notes is not None:
+                await conn.execute(
+                    "UPDATE orders SET notes = $1, updated_at = now() WHERE id = $2",
+                    notes, order_id,
+                )
+
+        # Update status if provided
+        if status:
+            return await self.update_status(user=user, order_id=order_id, new_status=status)
+
+        return await self.get_order_detail(user=user, order_id=order_id)
+
     # ── UPDATE ORDER STATUS ──
 
     async def update_status(

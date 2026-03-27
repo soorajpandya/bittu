@@ -60,6 +60,7 @@ class UpdateStatusIn(BaseModel):
 class UpdateOrderIn(BaseModel):
     model_config = {"extra": "allow"}
     status: Optional[str] = None
+    notes: Optional[str] = None
 
 
 # ── Routes ───────────────────────────────────────────────────
@@ -130,10 +131,10 @@ async def update_order(
     body: UpdateOrderIn,
     user: UserContext = Depends(require_permission("orders.update")),
 ):
-    """Update order — if status is provided, transition it; otherwise return current order."""
-    if body.status:
-        return await _svc.update_status(user=user, order_id=order_id, new_status=body.status)
-    return await _svc.get_order_detail(user=user, order_id=order_id)
+    """Update order fields (status, notes, etc.)."""
+    return await _svc.update_order(
+        user=user, order_id=order_id, status=body.status, notes=body.notes,
+    )
 
 
 @router.put("/{order_id}")
@@ -142,7 +143,7 @@ async def put_order(
     body: UpdateOrderIn,
     user: UserContext = Depends(require_permission("orders.update")),
 ):
-    """Update order — if status is provided, transition it; otherwise return current order."""
-    if body.status:
-        return await _svc.update_status(user=user, order_id=order_id, new_status=body.status)
-    return await _svc.get_order_detail(user=user, order_id=order_id)
+    """Update order fields (status, notes, etc.)."""
+    return await _svc.update_order(
+        user=user, order_id=order_id, status=body.status, notes=body.notes,
+    )
