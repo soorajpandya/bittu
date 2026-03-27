@@ -14,10 +14,12 @@ from app.core.exceptions import InvalidStateTransition
 # ═══════════════════════════════════════════════════════════
 
 class OrderStatus(str, Enum):
+    QUEUED = "Queued"          # Dine-in / QR table
     PENDING = "Pending"
     CONFIRMED = "Confirmed"
     PREPARING = "Preparing"
     READY = "Ready"
+    SERVED = "Served"          # Dine-in / QR table
     OUT_FOR_DELIVERY = "Out for Delivery"
     DELIVERED = "Delivered"
     CANCELLED = "Cancelled"
@@ -26,6 +28,7 @@ class OrderStatus(str, Enum):
     @property
     def is_terminal(self) -> bool:
         return self in (
+            OrderStatus.SERVED,
             OrderStatus.DELIVERED,
             OrderStatus.CANCELLED,
             OrderStatus.REJECTED,
@@ -33,6 +36,7 @@ class OrderStatus(str, Enum):
 
 
 ORDER_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
+    # ── Delivery flow ──
     OrderStatus.PENDING: {
         OrderStatus.CONFIRMED,
         OrderStatus.CANCELLED,
@@ -42,14 +46,23 @@ ORDER_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
         OrderStatus.PREPARING,
         OrderStatus.CANCELLED,
     },
+    # ── Dine-in / QR table flow ──
+    OrderStatus.QUEUED: {
+        OrderStatus.PREPARING,
+        OrderStatus.CANCELLED,
+        OrderStatus.REJECTED,
+    },
+    # ── Shared ──
     OrderStatus.PREPARING: {
         OrderStatus.READY,
         OrderStatus.CANCELLED,  # Only within grace period
     },
     OrderStatus.READY: {
-        OrderStatus.OUT_FOR_DELIVERY,
-        OrderStatus.DELIVERED,  # For dine-in / takeaway
+        OrderStatus.SERVED,            # Dine-in / takeaway
+        OrderStatus.OUT_FOR_DELIVERY,  # Delivery
+        OrderStatus.DELIVERED,         # Legacy / direct delivery
     },
+    OrderStatus.SERVED: set(),         # Terminal for dine-in
     OrderStatus.OUT_FOR_DELIVERY: {
         OrderStatus.DELIVERED,
     },

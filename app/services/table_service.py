@@ -812,7 +812,7 @@ class TableSessionService:
                     coupon_id, notes, items, metadata
                 ) VALUES (
                     $1, $2, $3, $4, NULL, 'qr_table'::order_source,
-                    $5, $6, 0, $7, 'Pending', $8, NULL, $9,
+                    $5, $6, 0, $7, 'Queued', $8, NULL, $9,
                     NULL, $10, $11::jsonb, $12::jsonb
                 )
                 """,
@@ -1071,20 +1071,20 @@ class TableSessionService:
             if not session:
                 raise NotFoundError("Session", session_id)
 
-            # Mark order(s) paid
+            # Mark order(s) as Served (dine-in terminal state)
             if order_id:
                 await conn.execute(
-                    "UPDATE orders SET status = 'Delivered', updated_at = now() WHERE id = $1",
+                    "UPDATE orders SET status = 'Served', updated_at = now() WHERE id = $1",
                     order_id,
                 )
             else:
-                # Mark all orders for this session as Delivered
+                # Mark all orders for this session as Served
                 owner_id = user.owner_id if user.is_branch_user else user.user_id
                 await conn.execute(
                     """
-                    UPDATE orders SET status = 'Delivered', updated_at = now()
+                    UPDATE orders SET status = 'Served', updated_at = now()
                     WHERE user_id = $1 AND metadata->>'session_id' = $2
-                      AND status NOT IN ('Cancelled', 'Rejected', 'Delivered')
+                      AND status NOT IN ('Cancelled', 'Rejected', 'Served', 'Delivered')
                     """,
                     owner_id, session_id,
                 )

@@ -12,29 +12,52 @@ logger = get_logger(__name__)
 
 @router.get("")
 async def list_table_events(
+    table_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    event_type: Optional[str] = None,
     limit: int = Query(20, ge=1, le=100),
     order_by: str = Query("created_at"),
     ascending: bool = Query(False),
     user: UserContext = Depends(require_role("owner", "manager", "cashier", "chef", "waiter", "staff")),
 ):
-    """List recent table session events / activity log."""
+    """List table events from the table_events table."""
     try:
         owner_id = user.owner_id if user.is_branch_user else user.user_id
-        allowed_cols = {"started_at", "table_number", "status", "ended_at"}
-        col = order_by if order_by in allowed_cols else "started_at"
         direction = "ASC" if ascending else "DESC"
+
+        conditions = ["te.user_id = $1"]
+        params: list = [owner_id]
+        idx = 2
+
+        if table_id:
+            conditions.append(f"te.table_id = ${idx}")
+            params.append(table_id)
+            idx += 1
+
+        if session_id:
+            conditions.append(f"te.session_id = ${idx}")
+            params.append(session_id)
+            idx += 1
+
+        if event_type:
+            conditions.append(f"te.event_type = ${idx}")
+            params.append(event_type)
+            idx += 1
+
+        where = " AND ".join(conditions)
+        params.append(limit)
+
         async with get_connection() as conn:
             rows = await conn.fetch(
                 f"""
-                SELECT ts.id, ts.table_id, rt.table_number,
-                       ts.status, ts.guest_count, ts.started_at, ts.ended_at
-                FROM table_sessions ts
-                JOIN restaurant_tables rt ON rt.id = ts.table_id
-                WHERE ts.user_id = $1
-                ORDER BY ts.{col} {direction}
-                LIMIT $2
+                SELECT te.id, te.table_id, te.session_id,
+                       te.event_type, te.payload, te.created_at
+                FROM table_events te
+                WHERE {where}
+                ORDER BY te.created_at {direction}
+                LIMIT ${idx}
                 """,
-                owner_id, limit,
+                *params,
             )
             return [dict(r) for r in rows]
     except Exception as e:
