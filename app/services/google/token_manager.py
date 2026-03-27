@@ -58,7 +58,7 @@ class GoogleTokenManager:
             row = await conn.fetchrow(
                 """
                 SELECT 1 FROM restaurants
-                WHERE id = $1 AND (user_id = $2 OR owner_id = $2)
+                WHERE id = $1 AND owner_id = $2
                 LIMIT 1
                 """,
                 restaurant_id,
