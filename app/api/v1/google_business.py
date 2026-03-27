@@ -298,6 +298,22 @@ async def google_list_posts(
     )
 
 
+@router.get("/post")
+async def google_list_posts_alias(
+    restaurant_id: str = Query(...),
+    page_size: int = Query(20, ge=1, le=100),
+    page_token: Optional[str] = Query(None),
+    user: UserContext = Depends(get_current_user),
+):
+    """Alias for GET /posts (singular form)."""
+    return await google_list_posts(
+        restaurant_id=restaurant_id,
+        page_size=page_size,
+        page_token=page_token,
+        user=user,
+    )
+
+
 # ── Insights ─────────────────────────────────────────────────
 
 

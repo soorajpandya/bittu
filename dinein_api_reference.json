@@ -1,0 +1,429 @@
+{
+  "title": "Dine-In Session API Reference",
+  "base_url": "https://api.merabittu.com/api/v1/dinein",
+  "notes": {
+    "auth": "All /qr/* endpoints are PUBLIC (no JWT). Auth is via session_token.",
+    "session_token": "Save session_token in localStorage after first scan. Send it back on next scan to restore session.",
+    "request_id": "Always send a unique request_id (UUID) on cart add, cart update, and place-order for idempotency (safe retries).",
+    "is_append": "If place-order returns is_append: true, items were added to existing order, not a new one.",
+    "isolation": "Each diner only sees their own orders (session-isolated) unless sessions are merged.",
+    "websocket": "Connect to wss://api.merabittu.com/ws/session?session_token=TOKEN for real-time updates."
+  },
+  "endpoints": [
+    {
+      "name": "QR Scan (Create/Restore Session)",
+      "method": "POST",
+      "path": "/qr/scan",
+      "auth": "none",
+      "request": {
+        "content_type": "application/json",
+        "body": {
+          "restaurant_id": "RESTAURANT_UUID (required)",
+          "table_id": "TABLE_UUID (required)",
+          "device_id": "browser-fingerprint-123 (required)",
+          "session_token": "SAVED_SESSION_TOKEN (optional, for restore)"
+        }
+      },
+      "response": {
+        "session_id": "uuid",
+        "session_token": "abc123...",
+        "table": {
+          "id": "uuid",
+          "table_number": "T5",
+          "capacity": 4
+        },
+        "restaurant": {
+          "id": "uuid",
+          "name": "Bittu's Kitchen",
+          "logo_url": "https://...",
+          "phone": "9876543210",
+          "address": "123 Main St",
+          "city": "Mumbai"
+        },
+        "is_new": true,
+        "active_order_id": null
+      },
+      "curl": "curl -X POST https://api.merabittu.com/api/v1/dinein/qr/scan -H \"Content-Type: application/json\" -d '{\"restaurant_id\":\"RESTAURANT_UUID\",\"table_id\":\"TABLE_UUID\",\"device_id\":\"browser-fingerprint-123\",\"session_token\":\"OPTIONAL_SAVED_TOKEN\"}'"
+    },
+    {
+      "name": "Get Session State (Reconnect / Page Refresh)",
+      "method": "GET",
+      "path": "/qr/session",
+      "auth": "none",
+      "request": {
+        "query_params": {
+          "session_token": "SESSION_TOKEN (required)"
+        }
+      },
+      "response": {
+        "session_id": "uuid",
+        "status": "active",
+        "table_id": "uuid",
+        "active_order": {
+          "order_id": "uuid",
+          "order_number": 42,
+          "status": "Queued",
+          "total": 450.0,
+          "subtotal": 420.0,
+          "tax_amount": 30.0,
+          "items": [
+            {
+              "id": 1,
+              "item_name": "Paneer Butter Masala",
+              "quantity": 2,
+              "unit_price": 210.0,
+              "total_price": 420.0,
+              "session_id": "uuid"
+            }
+          ]
+        },
+        "cart": [],
+        "linked_sessions": [],
+        "expires_at": "2026-03-27T20:00:00Z"
+      },
+      "curl": "curl \"https://api.merabittu.com/api/v1/dinein/qr/session?session_token=SESSION_TOKEN\""
+    },
+    {
+      "name": "Get Menu",
+      "method": "GET",
+      "path": "/qr/menu",
+      "auth": "none",
+      "request": {
+        "query_params": {
+          "restaurant_id": "RESTAURANT_UUID (required)"
+        }
+      },
+      "curl": "curl \"https://api.merabittu.com/api/v1/dinein/qr/menu?restaurant_id=RESTAURANT_UUID\""
+    },
+    {
+      "name": "Add to Cart",
+      "method": "POST",
+      "path": "/qr/cart/add",
+      "auth": "none",
+      "request": {
+        "content_type": "application/json",
+        "body": {
+          "session_token": "SESSION_TOKEN (required)",
+          "item_id": 123,
+          "quantity": 2,
+          "variant_id": "VARIANT_UUID or null",
+          "addons": [
+            {"id": "addon1", "name": "Extra Cheese", "price": 30}
+          ],
+          "extras": [],
+          "notes": "No onions",
+          "device_id": "browser-fingerprint-123",
+          "request_id": "req_unique_uuid_1 (recommended for idempotency)"
+        }
+      },
+      "response": {
+        "cart_item_id": "uuid",
+        "item_name": "Paneer Butter Masala",
+        "quantity": 2,
+        "total_price": 510.0,
+        "status": "added"
+      },
+      "notes": "Same item+variant+notes = quantity incremented (no duplicate rows). request_id makes it idempotent.",
+      "curl": "curl -X POST https://api.merabittu.com/api/v1/dinein/qr/cart/add -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"item_id\":123,\"quantity\":2,\"addons\":[{\"id\":\"addon1\",\"name\":\"Extra Cheese\",\"price\":30}],\"notes\":\"No onions\",\"device_id\":\"browser-123\",\"request_id\":\"req_uuid_1\"}'"
+    },
+    {
+      "name": "Update Cart Item",
+      "method": "POST",
+      "path": "/qr/cart/update",
+      "auth": "none",
+      "request": {
+        "content_type": "application/json",
+        "body": {
+          "session_token": "SESSION_TOKEN (required)",
+          "cart_item_id": "CART_ITEM_UUID (required)",
+          "quantity": 3,
+          "addons": null,
+          "extras": null,
+          "request_id": "req_unique_uuid_2 (optional)"
+        }
+      },
+      "response": {
+        "status": "updated",
+        "cart_item_id": "uuid",
+        "quantity": 3,
+        "total_price": 765.0
+      },
+      "notes": "Set quantity to 0 to remove the item.",
+      "curl": "curl -X POST https://api.merabittu.com/api/v1/dinein/qr/cart/update -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"cart_item_id\":\"CART_ITEM_UUID\",\"quantity\":3,\"request_id\":\"req_uuid_2\"}'"
+    },
+    {
+      "name": "Remove Cart Item",
+      "method": "POST",
+      "path": "/qr/cart/remove",
+      "auth": "none",
+      "request": {
+        "content_type": "application/json",
+        "body": {
+          "session_token": "SESSION_TOKEN (required)",
+          "cart_item_id": "CART_ITEM_UUID (required)"
+        }
+      },
+      "response": {
+        "status": "removed"
+      },
+      "curl": "curl -X POST https://api.merabittu.com/api/v1/dinein/qr/cart/remove -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"cart_item_id\":\"CART_ITEM_UUID\"}'"
+    },
+    {
+      "name": "Clear Cart",
+      "method": "POST",
+      "path": "/qr/cart/clear",
+      "auth": "none",
+      "request": {
+        "query_params": {
+          "session_token": "SESSION_TOKEN (required)"
+        }
+      },
+      "response": {
+        "status": "cleared"
+      },
+      "curl": "curl -X POST \"https://api.merabittu.com/api/v1/dinein/qr/cart/clear?session_token=SESSION_TOKEN\""
+    },
+    {
+      "name": "Get Cart",
+      "method": "GET",
+      "path": "/qr/cart",
+      "auth": "none",
+      "request": {
+        "query_params": {
+          "session_token": "SESSION_TOKEN (required)"
+        }
+      },
+      "response": {
+        "session_id": "uuid",
+        "cart": [
+          {
+            "id": "uuid",
+            "session_id": "uuid",
+            "item_id": 123,
+            "variant_id": null,
+            "item_name": "Paneer Butter Masala",
+            "variant_name": null,
+            "quantity": 2,
+            "unit_price": 210.0,
+            "total_price": 420.0,
+            "addons": [],
+            "extras": [],
+            "notes": "No onions",
+            "created_at": "2026-03-27T16:00:00Z"
+          }
+        ]
+      },
+      "curl": "curl \"https://api.merabittu.com/api/v1/dinein/qr/cart?session_token=SESSION_TOKEN\""
+    },
+    {
+      "name": "Place Order",
+      "method": "POST",
+      "path": "/qr/place-order",
+      "auth": "none",
+      "request": {
+        "content_type": "application/json",
+        "body": {
+          "session_token": "SESSION_TOKEN (required)",
+          "device_id": "browser-fingerprint-123 (optional)",
+          "notes": "Please make it spicy (optional)",
+          "customer_name": "Rahul (optional)",
+          "customer_phone": "9876543210 (optional)",
+          "payment_method": "cash (default: cash)",
+          "request_id": "req_unique_uuid_3 (recommended for idempotency)"
+        }
+      },
+      "response": {
+        "order_id": "uuid",
+        "order_number": "42",
+        "kitchen_order_id": "uuid",
+        "total": 540.0,
+        "is_append": false,
+        "items_added": 3,
+        "status": "Queued"
+      },
+      "notes": "If is_append is true, items were added to the existing active order (not a new order). Cart is cleared after placing.",
+      "curl": "curl -X POST https://api.merabittu.com/api/v1/dinein/qr/place-order -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"device_id\":\"browser-123\",\"notes\":\"Make it spicy\",\"customer_name\":\"Rahul\",\"customer_phone\":\"9876543210\",\"payment_method\":\"cash\",\"request_id\":\"req_uuid_3\"}'"
+    },
+    {
+      "name": "Get Order Status (Session-Isolated)",
+      "method": "GET",
+      "path": "/qr/order-status",
+      "auth": "none",
+      "request": {
+        "query_params": {
+          "session_token": "SESSION_TOKEN (required)"
+        }
+      },
+      "response": {
+        "session_id": "uuid",
+        "orders": [
+          {
+            "order_id": "uuid",
+            "order_number": 42,
+            "status": "Queued",
+            "total": 540.0,
+            "subtotal": 500.0,
+            "tax_amount": 40.0,
+            "table_number": "T5",
+            "created_at": "2026-03-27T16:30:00Z",
+            "kitchen_status": "queued",
+            "estimated_mins": 15,
+            "kitchen_items": [
+              {"item_name": "Paneer Butter Masala", "quantity": 2, "status": "queued"},
+              {"item_name": "Naan", "quantity": 3, "status": "queued"}
+            ]
+          }
+        ]
+      },
+      "notes": "Only shows orders for THIS session. Other diners at same table see their own orders only.",
+      "curl": "curl \"https://api.merabittu.com/api/v1/dinein/qr/order-status?session_token=SESSION_TOKEN\""
+    },
+    {
+      "name": "Merge Sessions",
+      "method": "POST",
+      "path": "/qr/merge",
+      "auth": "none",
+      "request": {
+        "content_type": "application/json",
+        "body": {
+          "source_session_token": "TOKEN_OF_SESSION_TO_MERGE_FROM (required)",
+          "target_session_token": "TOKEN_OF_SESSION_TO_MERGE_INTO (required)"
+        }
+      },
+      "response": {
+        "status": "merged",
+        "order_id": "uuid",
+        "source_session_id": "uuid",
+        "target_session_id": "uuid"
+      },
+      "notes": "Both sessions must be on the same table and active. After merge, both sessions see the shared order.",
+      "curl": "curl -X POST https://api.merabittu.com/api/v1/dinein/qr/merge -H \"Content-Type: application/json\" -d '{\"source_session_token\":\"SOURCE_TOKEN\",\"target_session_token\":\"TARGET_TOKEN\"}'"
+    },
+    {
+      "name": "Call Waiter",
+      "method": "POST",
+      "path": "/qr/call-waiter",
+      "auth": "none",
+      "request": {
+        "content_type": "application/json",
+        "body": {
+          "session_token": "SESSION_TOKEN (required)",
+          "request_type": "assistance | bill | water (default: assistance)"
+        }
+      },
+      "response": {
+        "status": "sent",
+        "request_type": "assistance"
+      },
+      "curl": "curl -X POST https://api.merabittu.com/api/v1/dinein/qr/call-waiter -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"request_type\":\"assistance\"}'"
+    },
+    {
+      "name": "Close Session",
+      "method": "POST",
+      "path": "/qr/close-session",
+      "auth": "none",
+      "request": {
+        "content_type": "application/json",
+        "body": {
+          "session_token": "SESSION_TOKEN (required)",
+          "reason": "completed | manual_exit (default: completed)"
+        }
+      },
+      "response": {
+        "status": "completed",
+        "session_id": "uuid"
+      },
+      "curl": "curl -X POST https://api.merabittu.com/api/v1/dinein/qr/close-session -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"reason\":\"completed\"}'"
+    },
+    {
+      "name": "Kitchen Table View (Admin)",
+      "method": "GET",
+      "path": "/admin/kitchen-view",
+      "auth": "JWT (owner, manager, chef, waiter, staff)",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer JWT_TOKEN"
+        }
+      },
+      "response": [
+        {
+          "table_id": "uuid",
+          "table_number": "T5",
+          "sessions": [
+            {
+              "session_id": "uuid",
+              "device_id": "browser-123",
+              "session_status": "active",
+              "orders": [
+                {
+                  "order_id": "uuid",
+                  "order_number": 42,
+                  "order_status": "Queued",
+                  "total": 540.0,
+                  "kitchen_order_id": "uuid",
+                  "kitchen_status": "queued",
+                  "is_merged": false
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "curl": "curl \"https://api.merabittu.com/api/v1/dinein/admin/kitchen-view\" -H \"Authorization: Bearer JWT_TOKEN\""
+    }
+  ],
+  "websocket": {
+    "name": "Real-time Updates for Diners",
+    "url": "wss://api.merabittu.com/ws/session?session_token=SESSION_TOKEN",
+    "auth": "session_token query param (no JWT needed)",
+    "auto_subscribed": "session:<session_id>",
+    "events": [
+      "dinein.order_updated",
+      "dinein.item_added",
+      "dinein.session_merged",
+      "dinein.session_closed",
+      "table.cart_updated",
+      "table.order_placed",
+      "table.call_waiter",
+      "kitchen_order.created",
+      "kitchen_order.status_changed",
+      "kitchen_order.item_ready"
+    ],
+    "message_format": {
+      "event": "event_type_string",
+      "data": {
+        "session_id": "uuid",
+        "order_id": "uuid",
+        "...": "event-specific fields"
+      }
+    },
+    "ping_pong": "Server sends {\"event\":\"ping\"}, client must respond with {\"action\":\"pong\"}",
+    "javascript_example": "const ws = new WebSocket(`wss://api.merabittu.com/ws/session?session_token=${sessionToken}`);\nws.onmessage = (e) => {\n  const msg = JSON.parse(e.data);\n  if (msg.event === 'ping') {\n    ws.send(JSON.stringify({ action: 'pong' }));\n    return;\n  }\n  console.log('Event:', msg.event, msg.data);\n};"
+  },
+  "order_flow": {
+    "description": "Typical dine-in customer flow",
+    "steps": [
+      "1. Customer scans QR → POST /qr/scan → save session_token in localStorage",
+      "2. Load menu → GET /qr/menu?restaurant_id=...",
+      "3. Add items → POST /qr/cart/add (repeat for each item)",
+      "4. Review cart → GET /qr/cart?session_token=...",
+      "5. Place order → POST /qr/place-order → cart clears, order created with status 'Queued'",
+      "6. Track order → GET /qr/order-status?session_token=... OR listen via WebSocket",
+      "7. Want more items? Repeat steps 3-5 (items append to existing order, is_append=true)",
+      "8. Call waiter → POST /qr/call-waiter",
+      "9. Done → POST /qr/close-session",
+      "10. Page refresh? → POST /qr/scan with saved session_token restores session"
+    ]
+  },
+  "merge_flow": {
+    "description": "Two diners at same table want to share one bill",
+    "steps": [
+      "1. Diner A scans QR → gets session_token_A",
+      "2. Diner B scans QR → gets session_token_B (separate session, same table)",
+      "3. Both order independently (isolated)",
+      "4. To merge: POST /qr/merge with source=A, target=B",
+      "5. Both sessions now see the combined order",
+      "6. Both get WebSocket updates for the shared order"
+    ]
+  }
+}

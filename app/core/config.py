@@ -121,7 +121,7 @@ class Settings(BaseSettings):
     UPSTASH_REDIS_REST_TOKEN: str = ""
 
     # ── Rate Limiting ──
-    RATE_LIMIT_PER_MINUTE: int = 600
+    RATE_LIMIT_PER_MINUTE: int = 1200  # Backend fallback; nginx enforces 300r/m at edge
     RATE_LIMIT_AUTH_PER_MINUTE: int = 60  # Stricter for auth endpoints
 
     # ── Deployment ──
