@@ -67,6 +67,40 @@ class SubscriptionService:
                     if trial and trial["trial_expires_at"] > datetime.now(timezone.utc):
                         await cache_set(cache_key, "true", ttl=300)
                         return True
+
+                    # Auto-provision a 14-day trial for users with no record at all
+                    if not trial:
+                        now = datetime.now(timezone.utc)
+                        trial_end = now + timedelta(days=14)
+                        try:
+                            await conn.execute(
+                                """
+                                INSERT INTO user_subscriptions
+                                    (user_id, status, trial_started_at, trial_expires_at, trial_end, trial_used, created_at, updated_at)
+                                VALUES ($1, 'trialing', $2, $3, $3, true, $2, $2)
+                                """,
+                                user_id, now, trial_end,
+                            )
+                            await conn.execute(
+                                """
+                                INSERT INTO trial_eligibility (user_id, trial_started_at, trial_expires_at)
+                                VALUES ($1, $2, $3)
+                                ON CONFLICT DO NOTHING
+                                """,
+                                user_id, now, trial_end,
+                            )
+                            logger.info("auto_trial_provisioned", user_id=user_id, trial_end=trial_end.isoformat())
+                            await cache_set(cache_key, "true", ttl=300)
+                            return True
+                        except Exception as e:
+                            logger.warning("auto_trial_failed", user_id=user_id, error=str(e))
+
+                    logger.warning(
+                        "sub_check_no_record",
+                        user_id=user_id,
+                        has_trial=trial is not None,
+                        trial_expired=str(trial["trial_expires_at"]) if trial else None,
+                    )
                     await cache_set(cache_key, "false", ttl=60)
                     return False
 
@@ -87,10 +121,20 @@ class SubscriptionService:
                 elif status == "GRACE_PERIOD" and sub.get("grace_period_end"):
                     is_active = sub["grace_period_end"] > now
 
+                if not is_active:
+                    logger.warning(
+                        "sub_check_inactive",
+                        user_id=user_id,
+                        status=status,
+                        trial_expires=str(sub.get("trial_expires_at")),
+                        period_end=str(sub.get("current_period_end")),
+                    )
+
                 await cache_set(cache_key, "true" if is_active else "false", ttl=300)
                 return is_active
-        except Exception:
+        except Exception as exc:
             # Tables may not exist yet if migration hasn't been run
+            logger.warning("sub_check_error", user_id=user_id, error=str(exc))
             return True
 
     async def get_plans(self) -> list[dict]:
