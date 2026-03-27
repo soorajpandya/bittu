@@ -117,3 +117,23 @@ async def update_order_status(
     user: UserContext = Depends(require_permission("orders.update")),
 ):
     return await _svc.update_status(user=user, order_id=order_id, new_status=body.status)
+
+
+@router.patch("/{order_id}")
+async def update_order(
+    order_id: str,
+    body: UpdateStatusIn,
+    user: UserContext = Depends(require_permission("orders.update")),
+):
+    """Alias: update order status directly on the order resource."""
+    return await _svc.update_status(user=user, order_id=order_id, new_status=body.status)
+
+
+@router.put("/{order_id}")
+async def put_order(
+    order_id: str,
+    body: UpdateStatusIn,
+    user: UserContext = Depends(require_permission("orders.update")),
+):
+    """Alias: some frontends use PUT for status updates."""
+    return await _svc.update_status(user=user, order_id=order_id, new_status=body.status)
