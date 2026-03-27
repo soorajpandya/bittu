@@ -27,7 +27,7 @@ from app.core.state_machines import TableStatus, validate_table_transition
 from app.core.events import (
     DomainEvent, emit_and_publish,
     TABLE_SESSION_STARTED, TABLE_SESSION_ENDED, TABLE_CART_UPDATED, TABLE_ORDER_PLACED,
-    TABLE_STATUS_CHANGED, TABLE_CALL_WAITER,
+    TABLE_STATUS_CHANGED, TABLE_CALL_WAITER, KITCHEN_ORDER_CREATED,
 )
 from app.core.exceptions import (
     NotFoundError, ConflictError, ValidationError, LockAcquisitionError,
@@ -904,6 +904,21 @@ class TableSessionService:
                 "table_number": table_number,
                 "total": float(total_amount),
             },
+            restaurant_id=restaurant_id,
+        ))
+
+        await emit_and_publish(DomainEvent(
+            event_type=KITCHEN_ORDER_CREATED,
+            payload={
+                "kitchen_order_id": kitchen_order_id,
+                "order_id": order_id,
+                "order_number": order_number,
+                "session_id": session_id,
+                "table_number": table_number,
+                "source": "qr_table",
+                "item_count": len(order_item_rows),
+            },
+            user_id=owner_id,
             restaurant_id=restaurant_id,
         ))
 

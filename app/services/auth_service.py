@@ -10,6 +10,7 @@ Google OAuth is the primary auth flow. The backend provides:
 import httpx
 import uuid
 from typing import Optional
+from urllib.parse import quote
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -105,7 +106,7 @@ def get_google_oauth_url(redirect_to: str) -> str:
     """
     s = get_settings()
     base = f"{s.SUPABASE_URL}/auth/v1/authorize"
-    return f"{base}?provider=google&redirect_to={redirect_to}"
+    return f"{base}?provider=google&redirect_to={quote(redirect_to, safe='')}"
 
 
 async def exchange_google_code(code: str) -> dict:
