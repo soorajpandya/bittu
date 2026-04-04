@@ -269,3 +269,92 @@ class DeliveryService:
                 user.restaurant_id,
             )
             return [dict(r) for r in rows]
+
+    # ── Delivery Partners CRUD ──────────────────────────────────
+
+    async def list_partners(self, user: UserContext) -> list[dict]:
+        async with get_connection() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, name, phone, status, is_active, latitude, longitude, created_at
+                FROM delivery_partners
+                WHERE restaurant_id = $1
+                ORDER BY name
+                """,
+                user.restaurant_id,
+            )
+            return [dict(r) for r in rows]
+
+    async def create_partner(
+        self,
+        user: UserContext,
+        name: str,
+        phone: str,
+    ) -> dict:
+        import uuid
+
+        partner_id = str(uuid.uuid4())
+        async with get_connection() as conn:
+            await conn.execute(
+                """
+                INSERT INTO delivery_partners (id, restaurant_id, name, phone, status, is_active)
+                VALUES ($1, $2, $3, $4, 'available'::partner_status, true)
+                """,
+                partner_id, user.restaurant_id, name, phone,
+            )
+        return {"id": partner_id, "name": name, "phone": phone, "status": "available", "is_active": True}
+
+    async def update_partner(
+        self,
+        user: UserContext,
+        partner_id: str,
+        name: Optional[str] = None,
+        phone: Optional[str] = None,
+        is_active: Optional[bool] = None,
+    ) -> dict:
+        async with get_connection() as conn:
+            partner = await conn.fetchrow(
+                "SELECT * FROM delivery_partners WHERE id = $1 AND restaurant_id = $2",
+                partner_id, user.restaurant_id,
+            )
+            if not partner:
+                raise NotFoundError("Delivery partner", partner_id)
+
+            sets, vals, idx = [], [], 1
+            if name is not None:
+                sets.append(f"name = ${idx}")
+                vals.append(name)
+                idx += 1
+            if phone is not None:
+                sets.append(f"phone = ${idx}")
+                vals.append(phone)
+                idx += 1
+            if is_active is not None:
+                sets.append(f"is_active = ${idx}")
+                vals.append(is_active)
+                idx += 1
+
+            if sets:
+                vals.append(partner_id)
+                await conn.execute(
+                    f"UPDATE delivery_partners SET {', '.join(sets)} WHERE id = ${idx}",
+                    *vals,
+                )
+
+            updated = await conn.fetchrow(
+                "SELECT id, name, phone, status, is_active FROM delivery_partners WHERE id = $1",
+                partner_id,
+            )
+            return dict(updated)
+
+    async def delete_partner(self, user: UserContext, partner_id: str) -> dict:
+        async with get_connection() as conn:
+            partner = await conn.fetchrow(
+                "SELECT id FROM delivery_partners WHERE id = $1 AND restaurant_id = $2",
+                partner_id, user.restaurant_id,
+            )
+            if not partner:
+                raise NotFoundError("Delivery partner", partner_id)
+
+            await conn.execute("DELETE FROM delivery_partners WHERE id = $1", partner_id)
+        return {"deleted": True}

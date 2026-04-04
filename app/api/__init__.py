@@ -9,6 +9,7 @@ from app.api.v1 import (
     tables,
     inventory,
     delivery,
+    delivery_partners,
     staff,
     subscriptions,
     notifications,
@@ -78,6 +79,7 @@ router.include_router(kitchen.router)
 router.include_router(tables.router)
 router.include_router(inventory.router)
 router.include_router(delivery.router)
+router.include_router(delivery_partners.router)
 router.include_router(staff.router)
 router.include_router(subscriptions.router)
 router.include_router(notifications.router)

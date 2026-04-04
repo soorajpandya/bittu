@@ -12,10 +12,9 @@ _svc = DeliveryService()
 
 class CreateDeliveryIn(BaseModel):
     order_id: str
-    branch_id: str
-    address: str
-    customer_phone: str
-    customer_name: Optional[str] = None
+    delivery_address: str
+    delivery_phone: str
+    pickup_address: Optional[str] = None
 
 
 class AssignPartnerIn(BaseModel):
@@ -31,6 +30,13 @@ class UpdateLocationIn(BaseModel):
     longitude: float
 
 
+@router.get("")
+async def list_active_deliveries(
+    user: UserContext = Depends(require_permission("delivery.view")),
+):
+    return await _svc.get_active_deliveries(user=user)
+
+
 @router.post("")
 async def create_delivery(
     body: CreateDeliveryIn,
@@ -39,10 +45,9 @@ async def create_delivery(
     return await _svc.create_delivery(
         user=user,
         order_id=body.order_id,
-        branch_id=body.branch_id,
-        address=body.address,
-        customer_phone=body.customer_phone,
-        customer_name=body.customer_name,
+        delivery_address=body.delivery_address,
+        delivery_phone=body.delivery_phone,
+        pickup_address=body.pickup_address,
     )
 
 
