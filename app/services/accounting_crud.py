@@ -43,7 +43,8 @@ async def acc_list(
     order_by: str = "created_at DESC",
     page: int = 1,
     per_page: int = 25,
-    search_fields: Optional[dict] = None,
+    search_fields: Optional[Any] = None,
+    search: Optional[str] = None,
 ) -> dict:
     """List records with pagination + optional filters."""
     params: list[Any] = []
@@ -65,12 +66,12 @@ async def acc_list(
                 params.append(val)
                 conditions.append(f"t.{col} = ${len(params)}")
 
-    # Search
-    if search_fields:
-        for col, val in search_fields.items():
-            if val is not None:
-                params.append(f"%{val}%")
-                conditions.append(f"t.{col} ILIKE ${len(params)}")
+    # Search across specified columns
+    if search and search_fields:
+        cols = search_fields if isinstance(search_fields, list) else list(search_fields.keys())
+        params.append(f"%{search}%")
+        or_clauses = [f"t.{col} ILIKE ${len(params)}" for col in cols]
+        conditions.append(f"({' OR '.join(or_clauses)})")
 
     where = " AND ".join(conditions) if conditions else "TRUE"
     offset = (page - 1) * per_page
