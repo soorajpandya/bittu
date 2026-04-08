@@ -1,0 +1,189 @@
+openapi: 3.0.0
+info:
+  title: Module Renaming
+  description: |
+    Rename default modules in Zoho Books to match industry-specific terminology. This helps you reuse the same default modules across different verticals while presenting the right labels to end users.
+
+    ### Why module renaming?
+    Some businesses use different words for the same business entity:
+    - Hospitals: Customers -> Patients
+    - Hotels/Restaurants: Customers -> Guests
+
+    The Module Renaming APIs let you:
+    - List which default modules support renaming and view their current labels (localized + English).
+    - Update the **singular** and **plural** display labels for a module.
+
+    ### I18N key format for renamed modules (important for new strings)
+    As module names are dynamic, user-facing messages should avoid hardcoded module names and instead use runtime placeholders that resolve to the renamed module label in the correct case.
+
+    **Old key format (hardcoded module name):**
+    - `Retainer Invoice status has been changed to 'Sent'.`
+    - `Please enter the retainer invoice number.`
+
+    **New key format (placeholder-based):**
+    - `{retainer_invoice.title} status has been changed to 'Sent'.`
+    - `Please enter the {retainer_invoice.lower} number.`
+
+    Common placeholder variants used by the renaming pipeline include title/singular/plural and different casing (lower/upper/sentence case).
+  contact: {}
+  version: 1.0.0
+servers:
+  - url: https://www.zohoapis.com/books/v3
+    description: API Endpoint
+tags:
+  - name: module-renaming
+    description: Rename default modules (e.g. Customers -> Clients/Patients/Guests) to match your business terminology
+paths:
+  /settings/systemmodules:
+    get:
+      tags:
+        - module-renaming
+      operationId: list_module_labels
+      summary: List module labels
+      description: |
+        Get the list of available modules (e.g. invoices, customers, contacts, items) and their current display labels in localized and English format. Use this to see which modules can be renamed and their current names before updating them to match your business (e.g. Customer -> Clients).
+      parameters:
+        - $ref: '#/components/parameters/organization_id'
+        - name: modules
+          in: query
+          description: |
+            Comma-separated list of module API names to filter by (for example: `invoices,contacts,items`). Maximum 20 module names are allowed. If not provided, all supported modules are returned.
+          required: false
+          schema:
+            type: string
+          example: invoices,contacts,items
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/module-labels-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+  /settings/defaultmodules/{module_api_name}:
+    put:
+      tags:
+        - module-renaming
+      operationId: rename_module
+      summary: Rename a module
+      description: |
+        Update the singular and plural display labels of a default module to match your business terminology (e.g. Customers -> Clients). For user-facing text across the product, prefer placeholder-based I18N strings (for example `{invoice.title}`, `{invoice.lower}`) so renamed labels can be substituted at runtime.
+      parameters:
+        - $ref: '#/components/parameters/organization_id'
+        - name: module_api_name
+          in: path
+          description: API name of the module to rename (e.g. `contacts` for Customers/Contacts, `invoices`, `items`).
+          required: true
+          schema:
+            type: string
+          example: contacts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/rename-module-request'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/rename-module-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.UPDATE
+components:
+  parameters:
+    organization_id:
+      name: organization_id
+      description: ID of the organization.
+      in: query
+      required: true
+      schema:
+        type: string
+      example: '10234695'
+  schemas:
+    module-label:
+      type: object
+      description: Display labels for a module (used for renaming). These labels may be substituted at runtime in placeholder-based I18N strings.
+      properties:
+        api_name:
+          type: string
+          description: API name of the module (used in endpoints).
+          example: contacts
+        singular_label:
+          type: string
+          description: Current singular display label (e.g. Customer, Invoice).
+          example: Customer
+        plural_label:
+          type: string
+          description: Current plural display label (e.g. Customers, Invoices).
+          example: Customers
+        singular_label_en:
+          type: string
+          description: English singular label.
+          example: Customer
+        plural_label_en:
+          type: string
+          description: English plural label.
+          example: Customers
+    module-labels-response:
+      type: object
+      properties:
+        modules:
+          type: array
+          description: List of modules and their current labels.
+          items:
+            $ref: '#/components/schemas/module-label'
+    rename-module-request:
+      type: object
+      description: |
+        New display name and plural name for the module (e.g. Client / Clients). These labels can be used by the application as runtime substitutions in placeholder-based I18N keys (for example `{contacts.title}`, `{contacts.lower}`) depending on the message context.
+      properties:
+        module_name:
+          type: string
+          description: New singular display name for the module (e.g. Client).
+          example: Client
+        plural_name:
+          type: string
+          description: New plural display name for the module (e.g. Clients).
+          example: Clients
+    module-config-details:
+      type: object
+      description: Module details after renaming.
+      properties:
+        module_id:
+          type: string
+        api_name:
+          type: string
+        plural_name:
+          type: string
+        module_name:
+          type: string
+        module_entity_type:
+          type: string
+        parent_module_id:
+          type: string
+        shared_type:
+          type: string
+        description:
+          type: string
+    rename-module-response:
+      type: object
+      description: Response after renaming a module.
+      properties:
+        module_config:
+          $ref: '#/components/schemas/module-config-details'
+  securitySchemes:
+    Zoho_Auth:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://accounts.zoho.com/oauth/v2/auth
+          scopes:
+            ZohoBooks.settings.READ: Read Settings
+            ZohoBooks.settings.UPDATE: Update Settings

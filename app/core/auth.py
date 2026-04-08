@@ -216,15 +216,18 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "reports:*", "settings:*", "delivery:*", "tables:*", "kitchen:*",
         "customers:*", "coupons:*", "subscriptions:*", "branches:*",
         "kyc:*", "voice:*", "ai:*", "notifications:*",
+        "accounting:*",
     },
     "manager": {
         "orders:*", "payments:*", "menu:read", "menu:write", "inventory:*",
         "staff:read", "reports:read", "delivery:*", "tables:*", "kitchen:*",
         "customers:*", "coupons:read", "kyc:*", "notifications:*",
+        "accounting:read", "accounting:write",
     },
     "cashier": {
         "orders:read", "orders:write", "payments:*", "tables:*", "customers:read",
         "customers:write", "coupons:read",
+        "accounting:read",
     },
     "chef": {
         "kitchen:*", "orders:read", "inventory:read",

@@ -1,0 +1,846 @@
+openapi: 3.0.0
+info:
+  title: Custom Functions
+  description: Custom Functions allow you to write custom scripts (Deluge, Node.js, Java, Python, or Go) that are executed as part of workflow automation. You can create, test, and deploy custom functions to extend the functionality of your organization.
+  contact: {}
+  version: 1.0.0
+servers:
+  - url: https://www.zohoapis.com/books/v3
+    description: API Endpoint
+tags:
+  - name: custom-functions
+    description: Custom Functions Module
+  - name: custom-function-histories
+    description: Custom Function Histories Module
+paths:
+  /integrations/customfunctions:
+    post:
+      tags:
+        - custom-functions
+      operationId: create_custom_function
+      summary: Create a custom function
+      description: Create a new custom function for workflow automation.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/create-custom-function-request'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/custom-function-detail-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    get:
+      tags:
+        - custom-functions
+      operationId: list_custom_functions
+      summary: List custom functions
+      description: Get a list of all custom functions configured in your organization.
+      parameters:
+        - name: filter_by
+          in: query
+          description: 'Filter custom functions by entity type. Allowed Values: <code>Entity.All</code>, <code>Entity.Invoice</code>, <code>Entity.Bill</code>, etc.'
+          required: false
+          schema:
+            type: string
+        - name: sort_column
+          in: query
+          description: 'Sort custom functions by column. Allowed Values: <code>function_name</code>, <code>created_time</code>'
+          required: false
+          schema:
+            type: string
+        - name: sort_order
+          in: query
+          description: 'Sort order. Allowed Values: <code>A</code> (Ascending), <code>D</code> (Descending)'
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/list-custom-functions-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /integrations/customfunctions/{customfunction_id}:
+    get:
+      tags:
+        - custom-functions
+      operationId: get_custom_function
+      summary: Get a custom function
+      description: Get the details of a specific custom function.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/custom-function-detail-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    put:
+      tags:
+        - custom-functions
+      operationId: update_custom_function
+      summary: Update a custom function
+      description: Update an existing custom function.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/create-custom-function-request'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/custom-function-detail-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.UPDATE
+    delete:
+      tags:
+        - custom-functions
+      operationId: delete_custom_function
+      summary: Delete a custom function
+      description: Delete an existing custom function.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.DELETE
+    parameters:
+      - name: customfunction_id
+        in: path
+        required: true
+        description: Unique identifier of the custom function.
+        schema:
+          type: string
+        example: '460000000055001'
+      - $ref: '#/components/parameters/organization_id'
+  /integrations/customfunctions/editpage:
+    get:
+      tags:
+        - custom-functions
+      operationId: get_custom_function_editpage
+      summary: Get custom function edit page data
+      description: Get the data needed to render the custom function edit page, including entities, languages, parameters, and sample scripts.
+      parameters:
+        - name: entity
+          in: query
+          description: The entity type for the custom function.
+          required: false
+          schema:
+            type: string
+        - name: customfunction_id
+          in: query
+          description: ID of the custom function to edit.
+          required: false
+          schema:
+            type: string
+        - name: galleryfunction_id
+          in: query
+          description: ID of the gallery function template.
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/custom-function-editpage-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /integrations/customfunctions/{customfunction_id}/execute:
+    post:
+      tags:
+        - custom-functions
+      operationId: execute_custom_function
+      summary: Execute a custom function
+      description: Execute a custom function for a specific entity.
+      parameters:
+        - name: entity_id
+          in: query
+          description: ID of the entity to execute the function for.
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                    readOnly: true
+                  message:
+                    type: string
+                    example: success
+                    readOnly: true
+                  response:
+                    type: object
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    parameters:
+      - name: customfunction_id
+        in: path
+        required: true
+        description: Unique identifier of the custom function.
+        schema:
+          type: string
+        example: '460000000055001'
+      - $ref: '#/components/parameters/organization_id'
+  /integrations/customfunctions/{customfunction_id}/deploy:
+    post:
+      tags:
+        - custom-functions
+      operationId: deploy_custom_function
+      summary: Deploy a custom function
+      description: Deploy a cloud-based custom function (Node.js, Java, Python, or Go).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                    readOnly: true
+                  message:
+                    type: string
+                    example: success
+                    readOnly: true
+                  response:
+                    type: object
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    parameters:
+      - name: customfunction_id
+        in: path
+        required: true
+        description: Unique identifier of the custom function.
+        schema:
+          type: string
+        example: '460000000055001'
+      - $ref: '#/components/parameters/organization_id'
+  /integrations/customfunctions/{customfunction_id}/download:
+    get:
+      tags:
+        - custom-functions
+      operationId: download_custom_function
+      summary: Download a custom function
+      description: Download the code package (ZIP) for a cloud-based custom function.
+      responses:
+        '200':
+          description: OK
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - name: customfunction_id
+        in: path
+        required: true
+        description: Unique identifier of the custom function.
+        schema:
+          type: string
+        example: '460000000055001'
+      - $ref: '#/components/parameters/organization_id'
+  /integrations/customfunctions/enable:
+    post:
+      tags:
+        - custom-functions
+      operationId: enable_custom_function_integration
+      summary: Enable custom function integration
+      description: Enable a custom function integration type (DRE or Cloud).
+      parameters:
+        - name: type
+          in: query
+          description: 'Type of integration to enable. Allowed Values: <code>dre</code>, <code>cloud</code>'
+          required: false
+          schema:
+            type: string
+            enum:
+              - dre
+              - cloud
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /integrations/customfunctions/poll:
+    get:
+      tags:
+        - custom-functions
+      operationId: poll_custom_function_status
+      summary: Poll custom function status
+      description: Check if a custom function integration type is enabled.
+      parameters:
+        - name: type
+          in: query
+          description: 'Type of integration to check. Allowed Values: <code>dre</code>, <code>cloud</code>'
+          required: false
+          schema:
+            type: string
+            enum:
+              - dre
+              - cloud
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.customfunctions.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /settings/customfunctions/histories:
+    get:
+      tags:
+        - custom-function-histories
+      operationId: list_custom_function_histories
+      summary: List custom function execution histories
+      description: Get a list of custom function execution history records.
+      parameters:
+        - name: filter_by
+          in: query
+          description: Filter custom function histories by entity type.
+          required: false
+          schema:
+            type: string
+        - name: customfunction_id
+          in: query
+          description: Filter histories by custom function ID.
+          required: false
+          schema:
+            type: string
+        - name: entity_id
+          in: query
+          description: Filter histories by entity ID.
+          required: false
+          schema:
+            type: string
+        - name: from_date
+          in: query
+          description: Start date for date range filter (yyyy-MM-dd).
+          required: false
+          schema:
+            type: string
+          example: '2025-01-01'
+        - name: to_date
+          in: query
+          description: End date for date range filter (yyyy-MM-dd).
+          required: false
+          schema:
+            type: string
+          example: '2025-12-31'
+        - name: start_time
+          in: query
+          description: Start time for time range filter.
+          required: false
+          schema:
+            type: string
+        - name: end_time
+          in: query
+          description: End time for time range filter.
+          required: false
+          schema:
+            type: string
+        - name: sort_column
+          in: query
+          description: 'Sort histories by column. Allowed Values: <code>history_time</code>'
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/list-cf-histories-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /settings/customfunctions/histories/{history_id}:
+    get:
+      tags:
+        - custom-function-histories
+      operationId: get_custom_function_history
+      summary: Get custom function history detail
+      description: Get the details of a specific custom function execution history entry.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/cf-history-detail-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - name: history_id
+        in: path
+        required: true
+        description: Unique identifier of the custom function history entry.
+        schema:
+          type: string
+        example: '460000000058001'
+      - $ref: '#/components/parameters/organization_id'
+  /settings/customfunctions/histories/{history_id}/executemanually:
+    post:
+      tags:
+        - custom-function-histories
+      operationId: execute_custom_function_manually
+      summary: Execute a custom function manually
+      description: Manually re-execute a failed custom function from history.
+      parameters:
+        - name: use_latest_entity_data
+          in: query
+          description: Whether to use the latest entity data for execution. Allowed values <code>true</code> and <code>false</code>.
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    parameters:
+      - name: history_id
+        in: path
+        required: true
+        description: Unique identifier of the custom function history entry.
+        schema:
+          type: string
+        example: '460000000058001'
+      - $ref: '#/components/parameters/organization_id'
+  /settings/customfunctions/histories/bulkexecute:
+    post:
+      tags:
+        - custom-function-histories
+      operationId: bulk_execute_custom_functions
+      summary: Bulk execute custom functions
+      description: Manually re-execute multiple failed custom functions from history.
+      parameters:
+        - name: history_ids
+          in: query
+          description: Comma-separated list of custom function history IDs to execute. Maximum 200 IDs.
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+components:
+  parameters:
+    organization_id:
+      name: organization_id
+      description: ID of the organization.
+      in: query
+      required: true
+      schema:
+        type: string
+      example: '10234695'
+    page:
+      name: page
+      in: query
+      description: Page number to be fetched. Default value is 1.
+      required: false
+      schema:
+        type: integer
+        default: 1
+      example: 1
+    per_page:
+      name: per_page
+      in: query
+      description: Number of records to be fetched per page.
+      required: false
+      schema:
+        type: integer
+        default: 10
+      example: 10
+  schemas:
+    custom-function:
+      type: object
+      properties:
+        customfunction_id:
+          description: Unique identifier of the custom function.
+          type: string
+          example: '460000000055001'
+        function_name:
+          description: Name of the custom function.
+          type: string
+          example: Calculate Tax
+        placeholder:
+          description: Placeholder identifier of the custom function.
+          type: string
+        entity:
+          description: The entity type this function applies to.
+          type: string
+          example: invoice
+        description:
+          description: Description of the custom function.
+          type: string
+        created_time:
+          description: Timestamp when the function was created.
+          type: string
+        is_active:
+          description: Whether the function is active.
+          type: boolean
+          example: true
+        is_from_plugin:
+          description: Whether the function was created from a plugin.
+          type: boolean
+          example: false
+        is_deployment_need:
+          description: Whether the function needs deployment (cloud functions).
+          type: boolean
+        is_deployed:
+          description: Whether the function is deployed.
+          type: boolean
+        language:
+          description: Programming language of the function.
+          type: string
+          enum:
+            - deluge
+            - nodejs
+            - java
+            - python
+            - golang
+          example: deluge
+        related_rules:
+          description: Workflow rules related to this function.
+          type: array
+          items:
+            type: object
+    cf-history:
+      type: object
+      properties:
+        history_id:
+          description: Unique identifier of the history entry.
+          type: string
+        customfunction_id:
+          description: ID of the custom function.
+          type: string
+        customfunction_name:
+          description: Name of the custom function.
+          type: string
+        entity_type:
+          description: Entity type associated with the execution.
+          type: string
+        entity_name:
+          description: Name of the entity.
+          type: string
+        entity_id:
+          description: Entity ID associated with the execution.
+          type: string
+        error_message:
+          description: Error message if the execution failed.
+          type: string
+        response_status:
+          description: Status of the execution.
+          type: string
+        status:
+          description: Execution status.
+          type: string
+        history_time:
+          description: Timestamp of the history entry.
+          type: string
+        workflow_id:
+          description: ID of the workflow that triggered the function.
+          type: string
+        language:
+          description: Programming language of the function.
+          type: string
+    create-custom-function-request:
+      type: object
+      properties:
+        entity:
+          description: The entity type for the custom function. Max-len [200]
+          type: string
+          example: invoice
+        script:
+          description: The function script/code.
+          type: string
+        placeholder:
+          description: Placeholder for the custom function.
+          type: string
+        language:
+          description: 'Programming language. Allowed Values: <code>deluge</code>, <code>nodejs</code>, <code>java</code>, <code>python</code>, <code>golang</code>'
+          type: string
+          enum:
+            - deluge
+            - nodejs
+            - java
+            - python
+            - golang
+          example: deluge
+        function_name:
+          description: Name of the function. Max-len [50]
+          type: string
+          example: Calculate Tax
+        description:
+          description: Description of the function. Max-len [100]
+          type: string
+        return_type:
+          description: 'Return type of the function. Allowed Values: <code>void</code>, <code>map</code>'
+          type: string
+          enum:
+            - void
+            - map
+        function_param:
+          description: Parameters for the function.
+          type: array
+          items:
+            $ref: '#/components/schemas/function-param'
+        is_execute:
+          description: Whether to execute the function immediately after save.
+          type: boolean
+        include_orgvariables_params:
+          description: Whether to include organization variable parameters.
+          type: boolean
+        creation_type:
+          description: 'Creation context. Allowed Values: <code>workflow</code>, <code>custombutton</code>, <code>signal</code>'
+          type: string
+        is_hidden:
+          description: Whether the function is hidden.
+          type: boolean
+        lock_type:
+          description: 'Type of lock. Allowed Values: <code>error</code>, <code>none</code>'
+          type: string
+        lock_reason:
+          description: Reason for locking. Max-len [255]
+          type: string
+    function-param:
+      type: object
+      properties:
+        param_name:
+          description: Name of the parameter. Max-len [20]
+          type: string
+        param_value:
+          description: Value of the parameter. Max-len [25]
+          type: string
+        param_type:
+          description: Data type of the parameter.
+          type: string
+        is_additional_param:
+          description: Whether this is an additional parameter.
+          type: boolean
+    success-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+    list-custom-functions-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        customfunctions:
+          type: array
+          items:
+            $ref: '#/components/schemas/custom-function'
+    custom-function-detail-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        customfunction:
+          type: object
+        execution_response:
+          type: object
+    custom-function-editpage-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        entities:
+          type: array
+          items:
+            type: object
+        languages:
+          type: array
+          items:
+            type: object
+        entity_params:
+          type: array
+          items:
+            type: object
+        customfunction:
+          type: object
+        common_params:
+          type: array
+          items:
+            type: object
+        sample_script:
+          type: string
+    list-cf-histories-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        histories:
+          type: array
+          items:
+            $ref: '#/components/schemas/cf-history'
+    cf-history-detail-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        history:
+          type: object
+          properties:
+            history_id:
+              type: string
+            customfunction_id:
+              type: string
+            customfunction_name:
+              type: string
+            entity_type:
+              type: string
+            entity_id:
+              type: string
+            debug_message:
+              type: string
+            error_message:
+              type: string
+            response_message:
+              type: string
+            response_status:
+              type: string
+            status:
+              type: string
+            history_time:
+              type: string
+            entity_details:
+              type: object
+            workflow_id:
+              type: string
+            language:
+              type: string
+  securitySchemes:
+    Zoho_Auth:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://accounts.zoho.com/oauth/v2/auth
+          scopes:
+            ZohoBooks.settings.CREATE: Create Settings
+            ZohoBooks.settings.UPDATE: Update Settings
+            ZohoBooks.settings.READ: Read Settings
+            ZohoBooks.settings.DELETE: Delete Settings
+            ZohoBooks.customfunctions.READ: Read Custom Functions

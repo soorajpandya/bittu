@@ -1,0 +1,995 @@
+openapi: 3.0.0
+info:
+  title: Custom Fields
+  description: Custom fields allow you to add additional data fields to existing modules in Zoho Books. Create, configure, and manage custom fields to capture business-specific information that is not available in the default fields. You can also manage dropdown options and field permissions.
+  contact: {}
+  version: 1.0.0
+servers:
+  - url: https://www.zohoapis.com/books/v3
+    description: API Endpoint
+tags:
+  - name: custom-fields
+    description: Custom Fields Module
+paths:
+  /settings/fields:
+    get:
+      tags:
+        - custom-fields
+      operationId: list_custom_fields
+      summary: List custom fields
+      description: List all custom fields configured for a specific entity.
+      parameters:
+        - name: entity
+          in: query
+          description: Entity type to list fields for (e.g., <code>invoice</code>, <code>contact</code>, <code>bill</code>, <code>expense</code>).
+          required: true
+          schema:
+            type: string
+          example: invoice
+        - name: filter_custom_fields
+          in: query
+          description: When set to <code>true</code>, returns only custom fields (excludes system fields).
+          required: false
+          schema:
+            type: boolean
+        - name: is_advance_search
+          in: query
+          description: When set to <code>true</code>, returns fields available for advance search.
+          required: false
+          schema:
+            type: boolean
+        - name: data_type
+          in: query
+          description: Filter by data type of the field.
+          required: false
+          schema:
+            type: string
+        - name: field_ids
+          in: query
+          description: Comma-separated list of field IDs to fetch specific fields.
+          required: false
+          schema:
+            type: string
+        - name: last_modified_time
+          in: query
+          description: 'Fetch fields modified after this timestamp. Format: <code>yyyy-mm-ddTHH:MM:SSZ</code>.'
+          required: false
+          schema:
+            type: string
+        - name: skip_inactive_fields
+          in: query
+          description: When set to <code>true</code>, skips inactive fields from the response.
+          required: false
+          schema:
+            type: boolean
+        - name: related_entity
+          in: query
+          description: Filter by related entity for lookup fields.
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/list-custom-fields-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    post:
+      tags:
+        - custom-fields
+      operationId: create_custom_field
+      summary: Create a custom field
+      description: Create a new custom field for a specific entity.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/create-custom-field-request'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/create-custom-field-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /settings/fields/{field_id}:
+    put:
+      tags:
+        - custom-fields
+      operationId: update_custom_field
+      summary: Update a custom field
+      description: Update an existing custom field.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/update-custom-field-request'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/update-custom-field-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.UPDATE
+    delete:
+      tags:
+        - custom-fields
+      operationId: delete_custom_field
+      summary: Delete a custom field
+      description: Delete an existing custom field.
+      parameters:
+        - name: entity
+          in: query
+          description: Entity type of the custom field.
+          required: true
+          schema:
+            type: string
+          example: invoice
+        - name: force_delete
+          in: query
+          description: Force delete the field even if it is in use.
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/delete-custom-field-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.DELETE
+    parameters:
+      - name: field_id
+        in: path
+        required: true
+        description: Unique identifier of the custom field.
+        schema:
+          type: string
+        example: '982000000567001'
+      - $ref: '#/components/parameters/organization_id'
+  /settings/fields/reorder:
+    post:
+      tags:
+        - custom-fields
+      operationId: reorder_custom_fields
+      summary: Reorder custom fields
+      description: Reorder the display order of custom fields for a specific entity type.
+      parameters:
+        - name: entity_type
+          in: query
+          description: Entity type to reorder fields for.
+          required: true
+          schema:
+            type: string
+          example: invoice
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/reorder-fields-request'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/reorder-fields-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /settings/fields/{field_api_name}/status:
+    put:
+      tags:
+        - custom-fields
+      operationId: update_field_status
+      summary: Update field status
+      description: Activate or deactivate a custom field.
+      parameters:
+        - name: entity
+          in: query
+          description: Entity type of the custom field.
+          required: true
+          schema:
+            type: string
+          example: invoice
+        - name: active
+          in: query
+          description: Set to <code>true</code> to activate or <code>false</code> to deactivate the field.
+          required: true
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/update-field-status-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.UPDATE
+    parameters:
+      - name: field_api_name
+        in: path
+        required: true
+        description: API name of the field (e.g., <code>cf_accnumber</code>).
+        schema:
+          type: string
+        example: cf_accnumber
+      - $ref: '#/components/parameters/organization_id'
+  /settings/fields/{field_api_name}/dropdownoptions:
+    put:
+      tags:
+        - custom-fields
+      operationId: update_field_dropdown_options
+      summary: Update field dropdown options
+      description: Add, update, or remove dropdown options for a custom field.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/update-dropdown-options-request'
+      parameters:
+        - name: action
+          in: query
+          description: 'Action to perform. Allowed values: <code>add</code>, <code>remove</code> and <code>update</code>.'
+          required: true
+          schema:
+            type: string
+          example: add
+        - name: entity
+          in: query
+          description: Entity type of the custom field.
+          required: true
+          schema:
+            type: string
+          example: invoice
+        - name: is_active
+          in: query
+          description: Whether the option should be active.
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/update-dropdown-options-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.UPDATE
+    parameters:
+      - name: field_api_name
+        in: path
+        required: true
+        description: API name of the dropdown field.
+        schema:
+          type: string
+        example: cf_priority
+      - $ref: '#/components/parameters/organization_id'
+  /settings/fields/bulkfetch:
+    get:
+      tags:
+        - custom-fields
+      operationId: bulk_fetch_fields
+      summary: Bulk fetch fields
+      description: Fetch fields for one or more entities in a single request. Optionally filter by last modified time to get only updated fields.
+      parameters:
+        - name: entity
+          in: query
+          description: Entity type to fetch fields for.
+          required: false
+          schema:
+            type: string
+        - name: entities
+          in: query
+          description: Comma-separated list of entity types (max 10).
+          required: false
+          schema:
+            type: string
+          example: invoice,contact,bill
+        - name: last_modified_time
+          in: query
+          description: 'Fetch fields modified after this timestamp. Format: <code>yyyy-mm-ddTHH:MM:SSZ</code>.'
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/bulk-fetch-fields-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /settings/fields/{field_id}/usage:
+    get:
+      tags:
+        - custom-fields
+      operationId: get_field_usage
+      summary: Get custom field usage
+      description: Get the usage details of a custom field in custom reports and other configurations.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/get-field-usage-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - name: field_id
+        in: path
+        required: true
+        description: Unique identifier of the custom field.
+        schema:
+          type: string
+        example: '982000000567001'
+      - $ref: '#/components/parameters/organization_id'
+  /settings/fields/syntax:
+    post:
+      tags:
+        - custom-fields
+      operationId: check_formula_syntax
+      summary: Check formula syntax
+      description: Validate the syntax of a formula field expression.
+      parameters:
+        - name: formula
+          in: query
+          description: The formula expression to validate.
+          required: true
+          schema:
+            type: string
+          example: if(cf_quantity > 10, "bulk", "single")
+        - name: return_data_type
+          in: query
+          description: 'Expected return data type of the formula. Allowed values: <code>string</code>, <code>amount</code>, <code>number</code>, <code>date</code>, <code>decimal</code>, <code>check_box</code>, <code>email</code>, <code>url</code>, <code>phone</code>, <code>percent</code> and <code>multiline</code>.'
+          required: true
+          schema:
+            type: string
+          example: string
+        - name: entity
+          in: query
+          description: Entity type for which the formula is defined.
+          required: true
+          schema:
+            type: string
+          example: invoice
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/check-formula-syntax-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /settings/fields/lookupfields:
+    get:
+      tags:
+        - custom-fields
+      operationId: list_lookup_fields
+      summary: List lookup fields
+      description: List available lookup fields for a specific entity.
+      parameters:
+        - name: entity
+          in: query
+          description: Entity type to get lookup fields for.
+          required: true
+          schema:
+            type: string
+          example: invoice
+        - name: search_text
+          in: query
+          description: Search text to filter lookup fields.
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/list-lookup-fields-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /customfields:
+    get:
+      tags:
+        - custom-fields
+      operationId: list_custom_fields_simple
+      summary: List custom fields (simple)
+      description: List all custom fields for a specific entity type in a simplified format.
+      parameters:
+        - name: entity
+          in: query
+          description: Entity type to list custom fields for.
+          required: true
+          schema:
+            type: string
+          example: invoice
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/list-custom-fields-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /fields/meta:
+    get:
+      tags:
+        - custom-fields
+      operationId: get_fields_meta
+      summary: Get fields meta
+      description: Get field metadata for a specific entity type, including all available field types and configurations.
+      parameters:
+        - name: entity
+          in: query
+          description: Entity type to get field metadata for.
+          required: true
+          schema:
+            type: string
+          example: invoice
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/get-fields-meta-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /meta/fields:
+    get:
+      tags:
+        - custom-fields
+      operationId: get_entity_fields_meta
+      summary: Get entity fields meta
+      description: Fetch the complete fields metadata for an entity, including system and custom fields.
+      parameters:
+        - name: entity
+          in: query
+          description: Entity type to get fields for.
+          required: true
+          schema:
+            type: string
+          example: invoice
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/get-entity-fields-meta-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+components:
+  parameters:
+    organization_id:
+      name: organization_id
+      description: ID of the organization
+      in: query
+      required: true
+      schema:
+        type: string
+      example: '10234695'
+  schemas:
+    api_name:
+      description: API name of the custom field. Learn how to fetch the API name of the custom field by clicking <a target="_blank" href="https://www.zoho.com/in/books/help/settings/preferences.html#api-custom-field">here</a>.
+      type: string
+      example: cf_accnumber
+    value:
+      description: Value of the custom field.
+      type: string
+      example: GBGD078
+    custom_field:
+      type: object
+      properties:
+        field_id:
+          type: string
+          description: Unique identifier of the field.
+          example: '982000000567001'
+        label:
+          type: string
+          description: Display name of the field.
+          example: Account Number
+        api_name:
+          $ref: '#/components/schemas/api_name'
+        data_type:
+          type: string
+          description: Data type of the field (e.g., string, amount, number, date, dropdown, check_box, multiline, email, url, phone, percent, decimal, lookup, autonumber, formula, image, attachment).
+          example: string
+        entity:
+          type: string
+          description: Entity type this field belongs to.
+          example: invoice
+        is_active:
+          type: boolean
+          description: Whether the field is active.
+          example: true
+        is_mandatory:
+          type: boolean
+          description: Whether the field is mandatory.
+          example: false
+        show_on_pdf:
+          type: boolean
+          description: Whether the custom field is displayed on the PDF.
+          example: false
+        max_length:
+          type: integer
+          description: Maximum length of the field value.
+          example: 255
+        values:
+          type: array
+          description: List of dropdown options. Present when <code>data_type</code> is <code>dropdown</code>.
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                description: Display name of the dropdown option.
+                example: Option 1
+              id:
+                type: string
+                description: Unique identifier of the dropdown option.
+              order:
+                type: integer
+                description: Display order of the option.
+                example: 1
+              is_active:
+                type: boolean
+                description: Whether the option is active.
+                example: true
+        autonumber_prefix:
+          type: string
+          description: Prefix for auto-number fields. Present when <code>data_type</code> is <code>autonumber</code>.
+          example: INV-
+        autonumber_suffix:
+          type: string
+          description: Suffix for auto-number fields. Present when <code>data_type</code> is <code>autonumber</code>.
+          example: '-A'
+        autonumber_start:
+          type: integer
+          description: Starting number for auto-number fields. Present when <code>data_type</code> is <code>autonumber</code>.
+          example: 1
+    custom_fields:
+      type: array
+      items:
+        type: object
+        properties:
+          api_name:
+            $ref: '#/components/schemas/api_name'
+          value:
+            $ref: '#/components/schemas/value'
+    create-custom-field-request:
+      type: object
+      required:
+        - label
+        - data_type
+        - entity
+        - show_on_pdf
+      properties:
+        label:
+          type: string
+          description: Display name of the field.
+          example: Account Number
+        data_type:
+          type: string
+          description: 'Data type of the field. Allowed values: <code>string</code>, <code>number</code>, <code>decimal</code>, <code>amount</code>, <code>date</code>, <code>dropdown</code>, <code>check_box</code>, <code>multiline</code>, <code>email</code>, <code>url</code>, <code>phone</code>, <code>percent</code>, <code>lookup</code>, <code>autonumber</code>, <code>formula</code>, <code>image</code> and <code>attachment</code>.'
+          example: string
+        entity:
+          type: string
+          description: Entity type to create the field for (e.g., <code>invoice</code>, <code>contact</code>, <code>bill</code>, <code>expense</code>).
+          example: invoice
+        show_on_pdf:
+          type: boolean
+          description: Whether the custom field should be displayed on the PDF.
+          example: false
+        is_mandatory:
+          type: boolean
+          description: Whether the field is mandatory.
+          example: false
+        placeholder:
+          type: string
+          description: Placeholder text for the custom field.
+          example: Enter account number
+        default_value:
+          type: string
+          description: Default value for the field. <code>Max-length [36000]</code>
+          example: ''
+        value_length:
+          type: integer
+          description: Maximum allowed length for the field value.
+          example: 255
+        decimal_precision:
+          type: integer
+          description: Number of decimal places. Applicable when <code>data_type</code> is <code>decimal</code>.
+          example: 2
+        values:
+          type: array
+          description: List of dropdown options. Required when <code>data_type</code> is <code>dropdown</code>.
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                description: Display name of the dropdown option. <code>Max-length [200]</code>
+                example: Option 1
+              order:
+                type: integer
+                description: Display order of the option.
+                example: 1
+              is_active:
+                type: boolean
+                description: Whether the option is active.
+                example: true
+        autonumber_prefix:
+          type: string
+          description: Prefix for auto-number fields. Applicable when <code>data_type</code> is <code>autonumber</code>. <code>Max-length [50]</code>
+          example: INV-
+        autonumber_suffix:
+          type: string
+          description: Suffix for auto-number fields. Applicable when <code>data_type</code> is <code>autonumber</code>. <code>Max-length [50]</code>
+          example: '-A'
+        autonumber_start:
+          type: string
+          description: Starting number for auto-number fields. Required when <code>data_type</code> is <code>autonumber</code>.
+          example: '1'
+        is_basecurrency_amount:
+          type: boolean
+          description: Whether this amount field uses the base currency. Applicable when <code>data_type</code> is <code>amount</code>.
+          example: false
+        related_entity:
+          type: string
+          description: Related entity for lookup fields. Required when <code>data_type</code> is <code>lookup</code>.
+          example: contact
+        related_list_name:
+          type: string
+          description: Name of the related list for lookup fields. <code>Max-length [75]</code>
+          example: Related Invoices
+        formula:
+          type: string
+          description: Formula expression. Required when <code>data_type</code> is <code>formula</code>. <code>Max-length [1000]</code>
+          example: if(cf_quantity > 10, "bulk", "single")
+        return_data_type:
+          type: string
+          description: 'Return data type for formula fields. Required when <code>data_type</code> is <code>formula</code>. Allowed values: <code>string</code>, <code>amount</code>, <code>number</code>, <code>date</code>, <code>decimal</code>, <code>check_box</code>, <code>email</code>, <code>url</code>, <code>phone</code>, <code>percent</code> and <code>multiline</code>.'
+          example: string
+        pii_type:
+          type: string
+          description: Personally Identifiable Information type for the field.
+        is_unique:
+          type: boolean
+          description: Whether the field value must be unique across records.
+          example: false
+        help_text:
+          type: string
+          description: Help text displayed alongside the field. <code>Max-length [255]</code>
+          example: Enter the unique account number
+        edit_on_portal:
+          type: boolean
+          description: Whether the field is editable on the customer/vendor portal.
+          example: false
+        show_on_portal:
+          type: boolean
+          description: Whether the field is visible on the customer/vendor portal.
+          example: false
+        visibility:
+          type: string
+          description: Field visibility setting.
+    update-custom-field-request:
+      type: object
+      properties:
+        label:
+          type: string
+          description: Display name of the field.
+          example: Account Number
+        is_mandatory:
+          type: boolean
+          description: Whether the field is mandatory.
+          example: false
+        show_on_pdf:
+          type: boolean
+          description: Whether the custom field should be displayed on the PDF.
+          example: false
+        placeholder:
+          type: string
+          description: Placeholder text for the custom field.
+          example: Enter account number
+        default_value:
+          type: string
+          description: Default value for the field. <code>Max-length [36000]</code>
+          example: ''
+        value_length:
+          type: integer
+          description: Maximum allowed length for the field value.
+          example: 255
+        values:
+          type: array
+          description: List of dropdown options. Applicable when <code>data_type</code> is <code>dropdown</code>.
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                description: Display name of the dropdown option. <code>Max-length [200]</code>
+                example: Option 1
+              order:
+                type: integer
+                description: Display order of the option.
+                example: 1
+              id:
+                type: string
+                description: ID of an existing dropdown option (for updates).
+              is_active:
+                type: boolean
+                description: Whether the option is active.
+                example: true
+        edit_on_portal:
+          type: boolean
+          description: Whether the field is editable on the customer/vendor portal.
+          example: false
+        show_on_portal:
+          type: boolean
+          description: Whether the field is visible on the customer/vendor portal.
+          example: false
+        pii_type:
+          type: string
+          description: Personally Identifiable Information type for the field.
+        is_unique:
+          type: boolean
+          description: Whether the field value must be unique across records.
+          example: false
+        help_text:
+          type: string
+          description: Help text displayed alongside the field. <code>Max-length [255]</code>
+          example: Enter the unique account number
+        visibility:
+          type: string
+          description: Field visibility setting.
+        lock_type:
+          type: string
+          description: 'Lock type for the field. Allowed values: <code>error</code> and <code>none</code>.'
+        lock_reason:
+          type: string
+          description: Reason for locking the field. <code>Max-length [255]</code>
+    create-custom-field-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: The custom field has been created.
+        field:
+          $ref: '#/components/schemas/custom_field'
+    update-custom-field-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: The custom field has been updated.
+        field:
+          $ref: '#/components/schemas/custom_field'
+    list-custom-fields-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/custom_field'
+    delete-custom-field-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: The custom field has been deleted.
+    reorder-fields-request:
+      type: object
+      properties:
+        reorder_fields:
+          type: string
+          description: Comma-separated list of field IDs in the desired order. <code>Max-length [5000]</code>
+          example: 982000000567001,982000000567002,982000000567003
+    reorder-fields-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: The fields have been reordered.
+    update-field-status-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: The field status has been updated.
+    update-dropdown-options-request:
+      type: object
+      properties:
+        values:
+          type: array
+          description: List of dropdown options to add or update. Required when <code>action</code> is <code>add</code> or <code>update</code>.
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                description: Display name of the dropdown option. <code>Max-length [200]</code>
+                example: High Priority
+              order:
+                type: integer
+                description: Display order of the option.
+                example: 1
+              id:
+                type: string
+                description: ID of an existing dropdown option. Required for <code>update</code> action.
+              is_active:
+                type: boolean
+                description: Whether the option is active.
+                example: true
+        option_ids:
+          type: string
+          description: Comma-separated list of dropdown option IDs to remove. Required when <code>action</code> is <code>remove</code>.
+          example: 982000000567001,982000000567002
+    update-dropdown-options-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: The dropdown options have been updated.
+    bulk-fetch-fields-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/custom_field'
+    get-field-usage-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+    check-formula-syntax-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: The formula syntax is valid.
+    list-lookup-fields-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/custom_field'
+    get-fields-meta-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+    get-entity-fields-meta-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/custom_field'
+  securitySchemes:
+    Zoho_Auth:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://accounts.zoho.com/oauth/v2/auth
+          scopes:
+            ZohoBooks.settings.CREATE: Create Settings
+            ZohoBooks.settings.UPDATE: Update Settings
+            ZohoBooks.settings.READ: Read Settings
+            ZohoBooks.settings.DELETE: Delete Settings

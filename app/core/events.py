@@ -58,6 +58,12 @@ SUBSCRIPTION_CANCELLED = "subscription.cancelled"
 ALERT_CREATED = "alert.created"
 NOTIFICATION_SENT = "notification.sent"
 
+# Accounting sync events
+ACCOUNTING_INVOICE_CREATED = "accounting.invoice_created"
+ACCOUNTING_INVOICE_VOIDED = "accounting.invoice_voided"
+ACCOUNTING_CREDITNOTE_CREATED = "accounting.creditnote_created"
+ACCOUNTING_SYNC_COMPLETED = "accounting.sync_completed"
+
 
 @dataclass
 class DomainEvent:

@@ -1,0 +1,655 @@
+openapi: 3.0.0
+info:
+  title: Sales Receipt
+  description: A sales receipt is a document sent to customers when you sell them goods or services and record payment for it simultaneously. In a retail environment, this means that you only need to create one single transaction to record sales and collect payment. Sales receipts are commonly used in places where cash and sale is recorded instantly such as e-commerce websites and POS.
+  contact: {}
+  version: 1.0.0
+servers:
+  - url: https://www.zohoapis.com/books/v3
+    description: API Endpoint
+tags:
+  - name: sales-receipt
+    description: Sales Receipt Module
+paths:
+  /salesreceipts:
+    post:
+      tags:
+        - sales-receipt
+      operationId: create_sales_receipt
+      summary: Create a sales receipt
+      description: Create a sales receipt for immediate payment transactions.
+      parameters:
+        - name: ignore_auto_number_generation
+          in: query
+          description: Ignore auto sales receipt number generation for this sales receipt. This mandates the sales receipt number.
+          required: false
+          schema:
+            type: boolean
+          example: false
+        - name: can_send_in_mail
+          in: query
+          description: Send the sales receipt to customer via email.
+          required: false
+          schema:
+            type: boolean
+          example: true
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/create-a-sales-receipt-request'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/create-a-sales-receipt-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.invoices.CREATE
+    get:
+      tags:
+        - sales-receipt
+      operationId: list_sales_receipts
+      summary: List sales receipts
+      description: List all sales receipts.
+      parameters:
+        - name: receipt_number
+          in: query
+          description: Search receipt by receipt number. Filters receipts based on their unique identifier. Supports <code>receipt_number_startswith</code> and <code>receipt_number_contains</code> variants. Maximum length is 100 characters. Useful for finding specific receipts or receipts with similar numbering patterns.
+          required: false
+          schema:
+            type: string
+          example: INV-00003
+        - name: item_name
+          in: query
+          description: Search receipt by item name. Supports <code>item_name_startswith</code> and <code>item_name_contains</code> variants. Maximum length is 100 characters.
+          required: false
+          schema:
+            type: string
+          example: Hard Drive
+        - name: sort_column
+          in: query
+          description: Specify the column field for sorting sales receipt results. Available options include <code>customer_name</code>, <code>receipt_number</code>, <code>date</code>, <code>total</code>, and <code>created_time</code>.
+          required: false
+          schema:
+            type: string
+          example: created_time
+        - name: filter_by
+          in: query
+          description: 'Filter sales receipts by status. Allowed Values: <code>ThisWeek</code>, <code>ThisMonth</code>, <code>ThisQuarter</code>, <code>ThisYear</code>,<code>PreviousDay</code>, <code>PreviousWeek</code>, <code>PreviousMonth</code>, <code>PreviousQuarter</code>, <code>PreviousYear</code>, <code>Status.All</code>, <code>Status.Draft</code>, <code>Status.Sent</code>'
+          required: false
+          schema:
+            type: string
+          example: ''
+        - name: customer_id
+          in: query
+          description: Filter sales receipts by specific customer identifier.
+          required: false
+          schema:
+            type: string
+          example: '460000000017138'
+        - name: date
+          in: query
+          description: 'Filter sales receipts by date. Available variants include <code>date_start</code>, <code>date_end</code>, <code>date_before</code>, and <code>date_after</code>. Default date format: <code>yyyy-mm-dd</code>.'
+          required: false
+          schema:
+            type: string
+          example: '2014-07-28'
+        - name: total
+          in: query
+          description: Filter sales receipts by total amount using various range operators. Available variants include <code>total_start</code>, <code>total_end</code>, <code>total_less_than</code>, <code>total_greater_than</code>.
+          required: false
+          schema:
+            type: number
+            format: double
+          example: 1000
+        - name: page
+          in: query
+          description: Specify the page number for paginated results retrieval. Default value is 1 for the first page.
+          required: false
+          schema:
+            type: integer
+            default: 1
+          example: 1
+        - name: per_page
+          in: query
+          description: Specify the maximum number of sales receipt records to return per page.
+          required: false
+          schema:
+            type: integer
+            default: 10
+          example: 10
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/list-sales-receipts-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.invoices.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /salesreceipts/{sales_receipt_id}:
+    put:
+      tags:
+        - sales-receipt
+      operationId: update_sales_receipt
+      summary: Update a sales receipt
+      description: Update an existing sales receipt.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/update-a-sales-receipt-request'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/update-a-sales-receipt-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.invoices.UPDATE
+    get:
+      tags:
+        - sales-receipt
+      operationId: get_sales_receipt
+      summary: Get a sales receipt
+      description: Get the details of a sales receipt.
+      parameters:
+        - name: accept
+          in: query
+          description: 'Get the details of a particular sales receipt in formats such as json/ pdf/ html. Default format is json. Allowed Values: <code>json</code>, <code>pdf</code>, <code>html</code>.'
+          required: false
+          schema:
+            type: string
+          example: ''
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/get-a-sales-receipt-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.invoices.READ
+    delete:
+      tags:
+        - sales-receipt
+      operationId: delete_sales_receipt
+      summary: Delete a sales receipt
+      description: Delete an existing sales receipt.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/delete-a-sales-receipt-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.invoices.DELETE
+    parameters:
+      - name: sales_receipt_id
+        in: path
+        description: Unique identifier of the sales receipt.
+        required: true
+        schema:
+          type: string
+        example: '460000000039129'
+      - $ref: '#/components/parameters/organization_id'
+  /salesreceipts/{sales_receipt_id}/email:
+    post:
+      tags:
+        - sales-receipt
+      operationId: email_sales_receipt
+      summary: Email a sales receipt
+      description: Email a sales receipt to the customer.
+      parameters:
+        - name: attach_pdf
+          in: query
+          description: Send the sales receipt pdf with the email.
+          required: false
+          schema:
+            type: boolean
+          example: false
+        - name: sales_receipt_id
+          in: path
+          description: ID of the sales receipt to be emailed
+          required: true
+          schema:
+            type: string
+          example: '460000000039129'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/email-a-sales-receipt-request'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/email-a-sales-receipt-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.invoices.CREATE
+components:
+  parameters:
+    organization_id:
+      name: organization_id
+      description: ID of the organization
+      in: query
+      required: true
+      schema:
+        type: string
+      example: '10234695'
+  schemas:
+    salesreceipt-response:
+      type: object
+      properties:
+        sales_receipt_id:
+          description: ID of the Sales Receipt
+          type: string
+          example: '460000000039129'
+        receipt_number:
+          description: Unique alphanumeric identifier for the sales receipt. Required when automatic numbering is disabled in organization settings.
+          type: string
+          example: SR-00001
+        date:
+          description: Date when the sales receipt was created in YYYY-MM-DD format.
+          type: string
+          example: '2014-07-28'
+        status:
+          description: Status of the Sales Receipt
+          type: string
+          example: sent
+        payment_mode:
+          description: Mode through which payment was received
+          type: string
+          example: cash
+        customer_id:
+          description: Unique identifier for the customer
+          type: string
+          example: '460000000017138'
+        customer_name:
+          description: Name of the customer
+          type: string
+          example: Instruments Inc
+        currency_id:
+          description: Currency ID for the sales receipt
+          type: string
+          example: '460000000000097'
+        currency_code:
+          description: Currency code
+          type: string
+          example: USD
+        currency_symbol:
+          description: Currency symbol
+          type: string
+          example: $
+        exchange_rate:
+          description: Exchange rate for multi-currency transactions
+          type: number
+          format: double
+          example: 1
+        tags:
+          $ref: '#/components/schemas/tags_response'
+        line_items:
+          description: Line items of the sales receipt
+          type: array
+          items:
+            type: object
+            properties:
+              item_id:
+                description: ID of the item
+                type: string
+                example: '460000000017088'
+              name:
+                description: Name of the line item
+                type: string
+                example: Hard Drive
+              description:
+                description: Description of the line item
+                type: string
+                example: 500GB, USB 2.0 interface
+              rate:
+                description: Rate of the line item
+                type: number
+                format: double
+                example: 120
+              quantity:
+                description: Quantity of the line item
+                type: number
+                format: double
+                example: 2
+              unit:
+                description: Unit of the line item
+                type: string
+                example: Nos
+              item_total:
+                description: Total amount for the line item
+                type: number
+                format: double
+                example: 240
+              tax_id:
+                description: ID of the tax applied
+                type: string
+                example: '460000000017094'
+              tax_name:
+                description: Name of the tax
+                type: string
+                example: Sales Tax
+              tax_percentage:
+                description: Tax percentage
+                type: number
+                format: double
+                example: 10
+              tags:
+                $ref: '#/components/schemas/tags_response'
+        sub_total:
+          description: Sub total of the sales receipt
+          type: number
+          format: double
+          example: 240
+        tax_total:
+          description: Total tax amount
+          type: number
+          format: double
+          example: 24
+        total:
+          description: Total amount of the sales receipt
+          type: number
+          format: double
+          example: 264
+        notes:
+          description: Notes for the sales receipt
+          type: string
+          example: Thank you for your business
+        terms:
+          description: Terms and conditions
+          type: string
+          example: Payment received in full
+        created_time:
+          description: Creation time of the sales receipt
+          type: string
+          example: 2014-07-28T08:29:07+0530
+        last_modified_time:
+          description: Last modified time of the sales receipt
+          type: string
+          example: 2014-08-25T11:23:26+0530
+    create-a-sales-receipt-request:
+      required:
+        - customer_id
+        - payment_mode
+      type: object
+      properties:
+        customer_id:
+          description: Unique identifier for the customer
+          type: string
+          example: '460000000017138'
+        receipt_number:
+          description: Sales receipt number (required if auto-numbering is disabled)
+          type: string
+          example: SR-00001
+        date:
+          description: Date of the sales receipt
+          type: string
+          example: '2014-07-28'
+        payment_mode:
+          description: 'Mode through which payment was received. Allowed values: cash, check, credit_card, bank_transfer, etc.'
+          type: string
+          example: cash
+        line_items:
+          description: Line items for the sales receipt
+          type: array
+          items:
+            type: object
+            properties:
+              item_id:
+                description: ID of the item
+                type: string
+                example: '460000000017088'
+              rate:
+                description: Rate of the item
+                type: number
+                format: double
+                example: 120
+              quantity:
+                description: Quantity of the item
+                type: number
+                format: double
+                example: 2
+              tax_id:
+                description: ID of the tax to be applied
+                type: string
+                example: '460000000017094'
+              tags:
+                $ref: '#/components/schemas/tags'
+        notes:
+          description: Notes for the sales receipt
+          type: string
+          example: Thank you for your business
+        terms:
+          description: Terms and conditions
+          type: string
+          example: Payment received in full
+        tags:
+          $ref: '#/components/schemas/tags'
+    create-a-sales-receipt-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: Sales Receipt Created Successfully.
+          readOnly: true
+        salesreceipt:
+          $ref: '#/components/schemas/salesreceipt-response'
+    update-a-sales-receipt-request:
+      required:
+        - customer_id
+      type: object
+      properties:
+        customer_id:
+          description: Unique identifier for the customer
+          type: string
+          example: '460000000017138'
+        receipt_number:
+          description: Sales receipt number
+          type: string
+          example: SR-00001
+        date:
+          description: Date of the sales receipt
+          type: string
+          example: '2014-07-28'
+        payment_mode:
+          description: Mode through which payment was received
+          type: string
+          example: cash
+        line_items:
+          description: Line items for the sales receipt
+          type: array
+          items:
+            type: object
+            properties:
+              item_id:
+                description: ID of the item
+                type: string
+                example: '460000000017088'
+              rate:
+                description: Rate of the item
+                type: number
+                format: double
+                example: 120
+              quantity:
+                description: Quantity of the item
+                type: number
+                format: double
+                example: 2
+              tags:
+                $ref: '#/components/schemas/tags'
+        notes:
+          description: Notes for the sales receipt
+          type: string
+          example: Thank you for your business
+        tags:
+          $ref: '#/components/schemas/tags'
+    update-a-sales-receipt-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: Sales Receipt Updated Successfully.
+          readOnly: true
+        salesreceipt:
+          $ref: '#/components/schemas/salesreceipt-response'
+    list-sales-receipts-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        salesreceipts:
+          type: array
+          items:
+            $ref: '#/components/schemas/salesreceipt-response'
+    get-a-sales-receipt-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        salesreceipt:
+          $ref: '#/components/schemas/salesreceipt-response'
+    delete-a-sales-receipt-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: Sales Receipt Deleted Successfully.
+          readOnly: true
+    email-a-sales-receipt-request:
+      required:
+        - to_mail_ids
+        - subject
+        - body
+      type: object
+      properties:
+        to_mail_ids:
+          description: Array of email addresses of the recipients
+          type: array
+          items:
+            type: string
+          example:
+            - john@safinstruments.com
+        subject:
+          description: Subject of the mail
+          type: string
+          example: Sales Receipt from Zillium Inc
+        body:
+          description: Body of the mail
+          type: string
+          example: Please find the sales receipt attached.
+    email-a-sales-receipt-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: Your Sales Receipt has been sent.
+          readOnly: true
+    tag_id:
+      description: Tag's ID
+      type: string
+      example: '460000000000567'
+    tag_name:
+      description: Tag's Name
+      type: string
+      example: Business Unit
+    tag_option_id:
+      description: Tag Option's ID
+      type: string
+      example: '460000000014044'
+    tag_option_name:
+      description: Tag Option's Name
+      type: string
+      example: Sales
+    is_tag_mandatory:
+      description: Used to check if the tag is mandatory
+      type: boolean
+      example: false
+    tags:
+      description: Reporting tags help organize and filter data across reports and enable detailed business intelligence analysis.
+      type: array
+      items:
+        type: object
+        properties:
+          tag_id:
+            $ref: '#/components/schemas/tag_id'
+          tag_option_id:
+            $ref: '#/components/schemas/tag_option_id'
+    tags_response:
+      description: Reporting tags help organize and filter data across reports and enable detailed business intelligence analysis.
+      type: array
+      items:
+        type: object
+        properties:
+          tag_id:
+            $ref: '#/components/schemas/tag_id'
+          tag_name:
+            $ref: '#/components/schemas/tag_name'
+          tag_option_id:
+            $ref: '#/components/schemas/tag_option_id'
+          tag_option_name:
+            $ref: '#/components/schemas/tag_option_name'
+          is_tag_mandatory:
+            $ref: '#/components/schemas/is_tag_mandatory'
+  securitySchemes:
+    Zoho_Auth:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://accounts.zoho.com/oauth/v2/auth
+          scopes:
+            ZohoBooks.invoices.CREATE: Create Sales Receipts
+            ZohoBooks.invoices.UPDATE: Update Sales Receipts
+            ZohoBooks.invoices.READ: Read Sales Receipts
+            ZohoBooks.invoices.DELETE: Delete Sales Receipts

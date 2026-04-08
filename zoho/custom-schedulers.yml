@@ -1,0 +1,258 @@
+openapi: 3.0.0
+info:
+  title: Custom Schedulers
+  description: Custom schedulers allow you to schedule the execution of custom functions at defined intervals. Automate repetitive tasks by creating schedulers that run daily, weekly, monthly, or at custom intervals.
+  contact: {}
+  version: 1.0.0
+servers:
+  - url: https://www.zohoapis.com/books/v3
+    description: API Endpoint
+tags:
+  - name: custom-schedulers
+    description: Custom Schedulers Module
+paths:
+  /customschedulers:
+    get:
+      tags:
+        - custom-schedulers
+      operationId: list_custom_schedulers
+      summary: List custom schedulers
+      description: List all the custom schedulers configured for the organization.
+      parameters:
+        - name: page
+          in: query
+          description: Page number for pagination. Default is 1.
+          required: false
+          schema:
+            type: integer
+            default: 1
+          example: 1
+        - name: per_page
+          in: query
+          description: Number of records per page.
+          required: false
+          schema:
+            type: integer
+            default: 10
+          example: 10
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/list-custom-schedulers-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    post:
+      tags:
+        - custom-schedulers
+      operationId: create_custom_scheduler
+      summary: Create a custom scheduler
+      description: Create a new custom scheduler to run custom functions at scheduled intervals.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/create-custom-scheduler-request'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/create-custom-scheduler-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /customschedulers/{customscheduler_id}:
+    get:
+      tags:
+        - custom-schedulers
+      operationId: get_custom_scheduler
+      summary: Get a custom scheduler
+      description: Get the details of a specific custom scheduler.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/get-custom-scheduler-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    put:
+      tags:
+        - custom-schedulers
+      operationId: update_custom_scheduler
+      summary: Update a custom scheduler
+      description: Update an existing custom scheduler.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/update-custom-scheduler-request'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/update-custom-scheduler-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.UPDATE
+    delete:
+      tags:
+        - custom-schedulers
+      operationId: delete_custom_scheduler
+      summary: Delete a custom scheduler
+      description: Delete an existing custom scheduler.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/delete-custom-scheduler-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.DELETE
+    parameters:
+      - name: customscheduler_id
+        in: path
+        required: true
+        description: Unique identifier of the custom scheduler.
+        schema:
+          type: string
+        example: '982000000567001'
+      - $ref: '#/components/parameters/organization_id'
+components:
+  parameters:
+    organization_id:
+      name: organization_id
+      description: ID of the organization
+      in: query
+      required: true
+      schema:
+        type: string
+      example: '10234695'
+  schemas:
+    custom_scheduler:
+      type: object
+      properties:
+        customscheduler_id:
+          type: string
+          description: Unique identifier of the custom scheduler.
+          example: '982000000567001'
+        scheduler_name:
+          type: string
+          description: Name of the custom scheduler.
+          example: Daily Invoice Sync
+        frequency:
+          type: string
+          description: Frequency of execution.
+          example: daily
+        is_active:
+          type: boolean
+          description: Whether the scheduler is active.
+          example: true
+    create-custom-scheduler-request:
+      type: object
+      required:
+        - scheduler_name
+      properties:
+        scheduler_name:
+          type: string
+          description: Name of the custom scheduler.
+          example: Daily Invoice Sync
+        frequency:
+          type: string
+          description: Frequency of execution.
+          example: daily
+    update-custom-scheduler-request:
+      type: object
+      properties:
+        scheduler_name:
+          type: string
+          description: Name of the custom scheduler.
+          example: Daily Invoice Sync
+        frequency:
+          type: string
+          description: Frequency of execution.
+          example: daily
+    create-custom-scheduler-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: The custom scheduler has been created.
+        custom_scheduler:
+          $ref: '#/components/schemas/custom_scheduler'
+    update-custom-scheduler-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: The custom scheduler has been updated.
+        custom_scheduler:
+          $ref: '#/components/schemas/custom_scheduler'
+    get-custom-scheduler-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        custom_scheduler:
+          $ref: '#/components/schemas/custom_scheduler'
+    list-custom-schedulers-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        custom_schedulers:
+          type: array
+          items:
+            $ref: '#/components/schemas/custom_scheduler'
+    delete-custom-scheduler-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: The custom scheduler has been deleted.
+  securitySchemes:
+    Zoho_Auth:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://accounts.zoho.com/oauth/v2/auth
+          scopes:
+            ZohoBooks.settings.CREATE: Create Settings
+            ZohoBooks.settings.UPDATE: Update Settings
+            ZohoBooks.settings.READ: Read Settings
+            ZohoBooks.settings.DELETE: Delete Settings

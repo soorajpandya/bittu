@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ doc_title | default("Document") }}</title>
+<style>
+{% block extra_css %}{% endblock %}
+* { margin: 0; padding: 0; }
+body { font-family: Helvetica, Arial, sans-serif; color: #111827; font-size: 11px; line-height: 1.5; }
+.page { padding: 30px 40px; }
+@page { size: A4; margin: 1.5cm; }
+
+/* Header */
+.header { margin-bottom: 20px; border-bottom: 3px solid #2563eb; padding-bottom: 14px; }
+.header table { width: 100%; }
+.header td { vertical-align: top; }
+.org-info h1 { font-size: 20px; color: #2563eb; margin-bottom: 4px; }
+.org-info p { color: #6b7280; font-size: 10px; }
+.doc-badge { text-align: right; }
+.doc-badge h2 { font-size: 22px; text-transform: uppercase; color: #2563eb; letter-spacing: 2px; }
+.doc-badge .doc-number { font-size: 13px; color: #6b7280; margin-top: 4px; }
+.doc-badge .doc-status { display: inline-block; padding: 3px 10px; font-size: 10px; font-weight: bold; text-transform: uppercase; margin-top: 6px; border: 1px solid #6b7280; }
+
+/* Address blocks */
+.addresses { margin-bottom: 16px; }
+.addresses table { width: 100%; }
+.addresses td { vertical-align: top; width: 50%; padding-right: 20px; }
+.addr-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: #6b7280; font-weight: bold; margin-bottom: 4px; }
+.addr-name { font-weight: bold; font-size: 12px; margin-bottom: 2px; }
+.addr-detail { font-size: 10px; color: #6b7280; }
+
+/* Meta grid */
+.meta-grid { margin-bottom: 16px; padding: 10px; background-color: #eff6ff; }
+.meta-grid table { width: 100%; }
+.meta-grid td { padding: 4px 8px; vertical-align: top; }
+.meta-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; font-weight: bold; }
+.meta-value { font-size: 11px; font-weight: 500; }
+
+/* Table */
+.items-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+.items-table thead th { background-color: #2563eb; color: white; padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: bold; }
+.items-table tbody td { padding: 8px 10px; border-bottom: 1px solid #e5e7eb; font-size: 10px; }
+.items-table .num { text-align: center; width: 35px; color: #6b7280; }
+.items-table .qty, .items-table .rate, .items-table .tax, .items-table .amount { text-align: right; }
+
+/* Totals */
+.totals-section { margin-bottom: 20px; }
+.totals-section table { margin-left: auto; width: 260px; }
+.totals-section td { padding: 5px 0; font-size: 11px; }
+.totals-section td.label-col { color: #6b7280; }
+.totals-section td.value-col { text-align: right; font-weight: 500; }
+.grand-total td { font-size: 14px; font-weight: bold; color: #2563eb; border-top: 2px solid #2563eb; padding-top: 8px; }
+
+/* Notes / Terms */
+.notes-section { margin-bottom: 16px; }
+.notes-section h4 { font-size: 10px; text-transform: uppercase; color: #6b7280; letter-spacing: 0.5px; margin-bottom: 4px; }
+.notes-section p { font-size: 10px; color: #111827; }
+
+/* Footer */
+.footer { padding-top: 14px; border-top: 1px solid #e5e7eb; text-align: center; color: #6b7280; font-size: 9px; }
+</style>
+</head>
+<body>
+<div class="page">
+  {% block content %}{% endblock %}
+
+  <div class="footer">
+    <p>Generated on {{ generated_at | fdate }} &mdash; {{ org.name | default("") }}</p>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,848 @@
+openapi: 3.0.0
+info:
+  title: Webhooks
+  description: Webhooks allow you to configure HTTP callbacks that are triggered when specific events occur in your organization. When a workflow fires, the configured webhook sends an HTTP request to the specified URL with the relevant data.
+  contact: {}
+  version: 1.0.0
+servers:
+  - url: https://www.zohoapis.com/books/v3
+    description: API Endpoint
+tags:
+  - name: webhooks
+    description: Webhooks Module
+  - name: webhook-histories
+    description: Webhook Histories Module
+paths:
+  /settings/webhooks:
+    post:
+      tags:
+        - webhooks
+      operationId: create_webhook
+      summary: Create a webhook
+      description: Create a new webhook configuration for sending HTTP callbacks.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/create-webhook-request'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/webhook-detail-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    get:
+      tags:
+        - webhooks
+      operationId: list_webhooks
+      summary: List webhooks
+      description: Get a list of all webhook configurations in your organization.
+      parameters:
+        - name: filter_by
+          in: query
+          description: 'Filter webhooks by entity type. Allowed Values: <code>Entity.All</code>, <code>Entity.Invoice</code>, <code>Entity.Bill</code>, etc.'
+          required: false
+          schema:
+            type: string
+        - name: sort_column
+          in: query
+          description: 'Sort webhooks by column. Allowed Values: <code>webhook_name</code>, <code>created_time</code>'
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/list-webhooks-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /settings/webhooks/{webhook_id}:
+    get:
+      tags:
+        - webhooks
+      operationId: get_webhook
+      summary: Get a webhook
+      description: Get the details of a specific webhook configuration.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/webhook-detail-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    put:
+      tags:
+        - webhooks
+      operationId: update_webhook
+      summary: Update a webhook
+      description: Update an existing webhook configuration.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/create-webhook-request'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/webhook-detail-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.UPDATE
+    delete:
+      tags:
+        - webhooks
+      operationId: delete_webhook
+      summary: Delete a webhook
+      description: Delete an existing webhook configuration.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.DELETE
+    parameters:
+      - name: webhook_id
+        in: path
+        required: true
+        description: Unique identifier of the webhook.
+        schema:
+          type: string
+        example: '460000000040001'
+      - $ref: '#/components/parameters/organization_id'
+  /settings/webhooks/editpage:
+    get:
+      tags:
+        - webhooks
+      operationId: get_webhook_editpage
+      summary: Get webhook edit page data
+      description: Get the data needed to render the webhook edit page, including entities, fields, and connection link names.
+      parameters:
+        - name: entity
+          in: query
+          description: The entity type for the webhook.
+          required: false
+          schema:
+            type: string
+        - name: webhook_id
+          in: query
+          description: ID of the webhook to edit.
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/webhook-editpage-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /settings/webhooks/histories:
+    get:
+      tags:
+        - webhook-histories
+      operationId: list_webhook_histories
+      summary: List webhook execution histories
+      description: Get a list of webhook execution history records.
+      parameters:
+        - name: filter_by
+          in: query
+          description: Filter webhook histories by entity type.
+          required: false
+          schema:
+            type: string
+        - name: webhook_id
+          in: query
+          description: Filter histories by webhook ID.
+          required: false
+          schema:
+            type: string
+        - name: entity_id
+          in: query
+          description: Filter histories by entity ID.
+          required: false
+          schema:
+            type: string
+        - name: from_date
+          in: query
+          description: Start date for date range filter (yyyy-MM-dd).
+          required: false
+          schema:
+            type: string
+          example: '2025-01-01'
+        - name: to_date
+          in: query
+          description: End date for date range filter (yyyy-MM-dd).
+          required: false
+          schema:
+            type: string
+          example: '2025-12-31'
+        - name: start_time
+          in: query
+          description: Start time for time range filter.
+          required: false
+          schema:
+            type: string
+        - name: end_time
+          in: query
+          description: End time for time range filter.
+          required: false
+          schema:
+            type: string
+        - name: sort_column
+          in: query
+          description: 'Sort histories by column. Allowed Values: <code>event_time</code>, <code>event_id</code>, <code>notified_time</code>'
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/list-webhook-histories-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /settings/webhooks/histories/{history_id}:
+    get:
+      tags:
+        - webhook-histories
+      operationId: get_webhook_history
+      summary: Get a webhook history detail
+      description: Get the details of a specific webhook execution history entry.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/webhook-history-detail-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - name: history_id
+        in: path
+        required: true
+        description: Unique identifier of the webhook history entry.
+        schema:
+          type: string
+        example: '460000000045001'
+      - $ref: '#/components/parameters/organization_id'
+  /settings/webhooks/histories/{history_id}/resend:
+    post:
+      tags:
+        - webhook-histories
+      operationId: resend_webhook
+      summary: Resend a webhook
+      description: Resend a failed webhook execution.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    parameters:
+      - name: history_id
+        in: path
+        required: true
+        description: Unique identifier of the webhook history entry.
+        schema:
+          type: string
+        example: '460000000045001'
+      - $ref: '#/components/parameters/organization_id'
+  /settings/webhooks/histories/bulkresend:
+    post:
+      tags:
+        - webhook-histories
+      operationId: bulk_resend_webhooks
+      summary: Bulk resend webhooks
+      description: Resend multiple failed webhook executions at once.
+      parameters:
+        - name: history_ids
+          in: query
+          description: Comma-separated list of webhook history IDs to resend. Maximum 10 IDs.
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+components:
+  parameters:
+    organization_id:
+      name: organization_id
+      description: ID of the organization.
+      in: query
+      required: true
+      schema:
+        type: string
+      example: '10234695'
+    page:
+      name: page
+      in: query
+      description: Page number to be fetched. Default value is 1.
+      required: false
+      schema:
+        type: integer
+        default: 1
+      example: 1
+    per_page:
+      name: per_page
+      in: query
+      description: Number of records to be fetched per page.
+      required: false
+      schema:
+        type: integer
+        default: 10
+      example: 10
+  schemas:
+    webhook:
+      type: object
+      properties:
+        webhook_id:
+          description: Unique identifier of the webhook.
+          type: string
+          example: '460000000040001'
+        webhook_name:
+          description: Name of the webhook.
+          type: string
+          example: Invoice Webhook
+        description:
+          description: Description of the webhook.
+          type: string
+        placeholder:
+          description: Placeholder identifier of the webhook.
+          type: string
+        is_active:
+          description: Whether the webhook is active.
+          type: boolean
+          example: true
+        is_from_plugin:
+          description: Whether the webhook was created from a plugin.
+          type: boolean
+          example: false
+        url:
+          description: Target URL for the webhook callback.
+          type: string
+          example: https://example.com/webhook
+        entity:
+          description: The entity type this webhook applies to.
+          type: string
+          example: invoice
+        method:
+          description: 'HTTP method used for the webhook. Allowed Values: POST, PUT, DELETE.'
+          type: string
+          example: POST
+        created_time:
+          description: Timestamp when the webhook was created.
+          type: string
+        related_rules:
+          description: Workflow rules related to this webhook.
+          type: array
+          items:
+            type: object
+    webhook-detail:
+      type: object
+      properties:
+        webhook_id:
+          description: Unique identifier of the webhook.
+          type: string
+          example: '460000000040001'
+        webhook_name:
+          description: Name of the webhook.
+          type: string
+        placeholder:
+          description: Placeholder identifier of the webhook.
+          type: string
+        description:
+          description: Description of the webhook.
+          type: string
+        url:
+          description: Target URL for the webhook callback.
+          type: string
+        secret:
+          description: Secret key for webhook signature verification.
+          type: string
+        entity:
+          description: The entity type this webhook applies to.
+          type: string
+        method:
+          description: HTTP method used for the webhook.
+          type: string
+        entity_parameters:
+          description: Entity parameters to include in the webhook payload.
+          type: array
+          items:
+            type: object
+            properties:
+              param_name:
+                description: Name of the entity parameter.
+                type: string
+              param_value:
+                description: Value of the entity parameter.
+                type: string
+        additional_parameters:
+          description: Additional custom parameters.
+          type: array
+          items:
+            type: object
+            properties:
+              param_name:
+                description: Name of the additional parameter.
+                type: string
+              param_value:
+                description: Value of the additional parameter.
+                type: string
+        headers:
+          description: Custom HTTP headers for the webhook request.
+          type: array
+          items:
+            type: object
+            properties:
+              param_name:
+                description: Name of the HTTP header.
+                type: string
+              param_value:
+                description: Value of the HTTP header.
+                type: string
+        body_type:
+          description: Content type of the request body.
+          type: string
+        raw_data:
+          description: Raw data payload for the webhook.
+          type: string
+        form_data:
+          description: Form data parameters.
+          type: array
+          items:
+            type: object
+            properties:
+              param_name:
+                description: Name of the form data parameter.
+                type: string
+              param_value:
+                description: Value of the form data parameter.
+                type: string
+        query_parameters:
+          description: Query string parameters for the webhook URL.
+          type: array
+          items:
+            type: object
+            properties:
+              param_name:
+                description: Name of the query parameter.
+                type: string
+              param_value:
+                description: Value of the query parameter.
+                type: string
+        user_defined_format_name:
+          description: Name of the user-defined format.
+          type: string
+        user_defined_format_value:
+          description: Value of the user-defined format.
+          type: string
+        connection_link_name:
+          description: Connection link name for authenticated webhooks.
+          type: string
+        lock_type:
+          description: Type of lock on the webhook.
+          type: string
+        lock_reason:
+          description: Reason for locking the webhook.
+          type: string
+        is_new_response_format:
+          description: Whether the webhook uses the new response format.
+          type: boolean
+    webhook-history:
+      type: object
+      properties:
+        history_id:
+          description: Unique identifier of the history entry.
+          type: string
+        webhook_url_id:
+          description: ID of the webhook URL configuration.
+          type: string
+        webhook_name:
+          description: Name of the webhook.
+          type: string
+        entity_type:
+          description: Entity type associated with the execution.
+          type: string
+        entity_id:
+          description: Entity ID associated with the execution.
+          type: string
+        entity_name:
+          description: Name of the entity.
+          type: string
+        response_message:
+          description: Response message from the webhook target.
+          type: string
+        response_code:
+          description: HTTP response code from the webhook target.
+          type: integer
+        response_status:
+          description: Status of the webhook execution.
+          type: string
+        status:
+          description: Execution status.
+          type: string
+        retry_count:
+          description: Number of retries attempted.
+          type: integer
+        last_execution_time:
+          description: Timestamp of the last execution.
+          type: string
+        next_retry_time:
+          description: Timestamp of the next scheduled retry.
+          type: string
+        history_time:
+          description: Timestamp of the history entry.
+          type: string
+        webhook_url:
+          description: URL that was called.
+          type: string
+    create-webhook-request:
+      type: object
+      required:
+        - url
+      properties:
+        entity:
+          description: The entity type for the webhook.
+          type: string
+          example: invoice
+        webhook_name:
+          description: Name of the webhook. Max-len [50]
+          type: string
+          example: Invoice Webhook
+        description:
+          description: Description of the webhook. Max-len [100]
+          type: string
+        method:
+          description: 'HTTP method for the webhook. Allowed Values: <code>POST</code>, <code>PUT</code>, <code>DELETE</code>'
+          type: string
+          enum:
+            - POST
+            - PUT
+            - DELETE
+          example: POST
+        url:
+          description: Target URL for the webhook callback. Max-len [5000]
+          type: string
+          example: https://example.com/webhook
+        entity_parameters:
+          description: Entity parameters to include in the webhook payload.
+          type: array
+          items:
+            type: object
+            properties:
+              param_name:
+                type: string
+                description: Name of the entity parameter.
+              param_value:
+                type: string
+                description: Value of the entity parameter.
+        additional_parameters:
+          description: Additional custom parameters.
+          type: array
+          items:
+            type: object
+            properties:
+              param_name:
+                type: string
+                description: Name of the additional parameter.
+              param_value:
+                type: string
+                description: Value of the additional parameter.
+        headers:
+          description: Custom HTTP headers for the webhook request.
+          type: array
+          items:
+            type: object
+            properties:
+              param_name:
+                type: string
+                description: Name of the HTTP header.
+              param_value:
+                type: string
+                description: Value of the HTTP header.
+        user_defined_format_name:
+          description: Name of the user-defined format. Max-len [100000]
+          type: string
+        user_defined_format_value:
+          description: Value of the user-defined format. Max-len [100000]
+          type: string
+        secret:
+          description: Secret key for webhook signature verification. Min-len [12], Max-len [50], alphanumeric only.
+          type: string
+        body_type:
+          description: Content type of the request body.
+          type: string
+        raw_data:
+          description: Raw data payload for the webhook. Max-len [100000]
+          type: string
+        form_data:
+          description: Form data parameters.
+          type: array
+          items:
+            type: object
+            properties:
+              param_name:
+                type: string
+                description: Name of the form data parameter.
+              param_value:
+                type: string
+                description: Value of the form data parameter.
+        query_parameters:
+          description: Query string parameters for the webhook URL.
+          type: array
+          items:
+            type: object
+            properties:
+              param_name:
+                type: string
+                description: Name of the query parameter.
+              param_value:
+                type: string
+                description: Value of the query parameter.
+        connection_link_name:
+          description: Connection link name for authenticated webhooks. Max-len [100]
+          type: string
+        events:
+          description: List of events that trigger this webhook.
+          type: array
+          items:
+            type: string
+        is_new_response_format:
+          description: Whether to use the new response format.
+          type: boolean
+        placeholder:
+          description: Placeholder for the webhook.
+          type: string
+        is_hidden:
+          description: Whether the webhook is hidden.
+          type: boolean
+        lock_type:
+          description: 'Type of lock. Allowed Values: <code>error</code>, <code>none</code>'
+          type: string
+        lock_reason:
+          description: Reason for locking the webhook. Max-len [255]
+          type: string
+    success-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+    list-webhooks-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        webhooks:
+          type: array
+          items:
+            $ref: '#/components/schemas/webhook'
+    webhook-detail-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        webhook:
+          $ref: '#/components/schemas/webhook-detail'
+    webhook-editpage-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        entities:
+          type: array
+          items:
+            type: object
+        entity_fields:
+          type: array
+          items:
+            type: object
+        connection_link_names:
+          type: array
+          items:
+            type: object
+        webhook:
+          $ref: '#/components/schemas/webhook-detail'
+    list-webhook-histories-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        histories:
+          type: array
+          items:
+            $ref: '#/components/schemas/webhook-history'
+    webhook-history-detail-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        history:
+          type: object
+          properties:
+            history_id:
+              type: string
+            entity:
+              type: string
+            entity_type:
+              type: string
+            url_value:
+              type: string
+            response_message:
+              type: string
+            response_headers:
+              type: string
+            response_status:
+              type: string
+            status:
+              type: string
+            entity_id:
+              type: string
+            entity_details:
+              type: object
+            webhook_url_id:
+              type: string
+            retry_count:
+              type: integer
+            last_execution_time:
+              type: string
+            next_retry_time:
+              type: string
+            webhook_name:
+              type: string
+            response_code:
+              type: integer
+            history_time:
+              type: string
+            workflow_id:
+              type: string
+            request_method:
+              type: string
+            request_headers:
+              type: string
+            versions:
+              type: array
+              items:
+                type: object
+                properties:
+                  history_version_id:
+                    type: string
+                  response_message:
+                    type: string
+                  response_headers:
+                    type: string
+                  response_code:
+                    type: integer
+                  response_status:
+                    type: string
+                  status:
+                    type: string
+                  history_time:
+                    type: string
+  securitySchemes:
+    Zoho_Auth:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://accounts.zoho.com/oauth/v2/auth
+          scopes:
+            ZohoBooks.settings.CREATE: Create Settings
+            ZohoBooks.settings.UPDATE: Update Settings
+            ZohoBooks.settings.READ: Read Settings
+            ZohoBooks.settings.DELETE: Delete Settings

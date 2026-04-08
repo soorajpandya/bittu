@@ -1,0 +1,2060 @@
+openapi: 3.0.0
+info:
+  title: Workflows
+  description: Workflows allow you to automate actions in your organization based on specific triggers. You can configure rules that execute actions like sending alerts, updating fields, triggering webhooks, or running custom functions when certain events occur.
+  contact: {}
+  version: 1.0.0
+servers:
+  - url: https://www.zohoapis.com/books/v3
+    description: API Endpoint
+tags:
+  - name: workflows
+    description: Workflows Module
+  - name: custom-triggers
+    description: Custom Triggers Module
+  - name: retry-policies
+    description: Retry Policies Module
+  - name: workflow-logs
+    description: Workflow Logs Module
+  - name: workflow-reports
+    description: Workflow Reports Module
+paths:
+  /settings/workflows:
+    post:
+      tags:
+        - workflows
+      operationId: create_workflow
+      summary: Create a workflow
+      description: Create a new workflow rule for automating actions based on triggers.
+      parameters:
+        - name: template_id
+          in: query
+          description: ID of the template to use for creating the workflow.
+          required: false
+          schema:
+            type: string
+        - name: entity_type
+          in: query
+          description: The entity type for the workflow.
+          required: false
+          schema:
+            type: string
+        - name: template_inputs
+          in: query
+          description: Template user input values when creating a workflow from a template. Pass as a JSON array.
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/template-input'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/create-workflow-request'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/workflow-detail-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    get:
+      tags:
+        - workflows
+      operationId: list_workflows
+      summary: List workflows
+      description: Get a list of all workflow rules configured in your organization.
+      parameters:
+        - name: filter_by
+          in: query
+          description: 'Filter workflows by entity type. Allowed Values: <code>Entity.All</code>, <code>Entity.Invoice</code>, <code>Entity.Bill</code>, etc.'
+          required: false
+          schema:
+            type: string
+        - name: is_summary
+          in: query
+          description: Return summary information only. Allowed values <code>true</code> and <code>false</code>.
+          required: false
+          schema:
+            type: boolean
+        - name: is_record_level
+          in: query
+          description: Filter record-level workflows. Allowed values <code>true</code> and <code>false</code>.
+          required: false
+          schema:
+            type: boolean
+        - name: entity_id
+          in: query
+          description: Filter workflows by entity ID.
+          required: false
+          schema:
+            type: string
+        - name: sort_column
+          in: query
+          description: 'Sort workflows by column. Allowed Values: <code>workflow_name</code>, <code>created_time</code>'
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+        - $ref: '#/components/parameters/sort_order'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/list-workflows-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /settings/workflows/{workflow_id}:
+    get:
+      tags:
+        - workflows
+      operationId: get_workflow
+      summary: Get a workflow
+      description: Get the details of a specific workflow rule.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/workflow-detail-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    put:
+      tags:
+        - workflows
+      operationId: update_workflow
+      summary: Update a workflow
+      description: Update an existing workflow rule.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/create-workflow-request'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/workflow-detail-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.UPDATE
+    delete:
+      tags:
+        - workflows
+      operationId: delete_workflow
+      summary: Delete a workflow
+      description: Delete an existing workflow rule.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.DELETE
+    parameters:
+      - name: workflow_id
+        in: path
+        required: true
+        description: Unique identifier of the workflow.
+        schema:
+          type: string
+        example: '460000000038001'
+      - $ref: '#/components/parameters/organization_id'
+  /settings/workflows/{workflow_id}/active:
+    post:
+      tags:
+        - workflows
+      operationId: activate_workflow
+      summary: Activate a workflow
+      description: Mark an existing workflow as active.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    parameters:
+      - name: workflow_id
+        in: path
+        required: true
+        description: Unique identifier of the workflow.
+        schema:
+          type: string
+        example: '460000000038001'
+      - $ref: '#/components/parameters/organization_id'
+  /settings/workflows/{workflow_id}/inactive:
+    post:
+      tags:
+        - workflows
+      operationId: deactivate_workflow
+      summary: Deactivate a workflow
+      description: Mark an existing workflow as inactive.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    parameters:
+      - name: workflow_id
+        in: path
+        required: true
+        description: Unique identifier of the workflow.
+        schema:
+          type: string
+        example: '460000000038001'
+      - $ref: '#/components/parameters/organization_id'
+  /settings/workflows/reorder:
+    post:
+      tags:
+        - workflows
+      operationId: reorder_workflows
+      summary: Reorder workflows
+      description: Change the execution order of workflow rules.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/reorder-workflow-request'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /settings/workflows/editpage:
+    get:
+      tags:
+        - workflows
+      operationId: get_workflow_editpage
+      summary: Get workflow edit page data
+      description: Get the data needed to render the workflow edit page, including entities, fields, actions, and related configurations.
+      parameters:
+        - name: entity
+          in: query
+          description: The entity type for the workflow.
+          required: false
+          schema:
+            type: string
+        - name: rule_id
+          in: query
+          description: ID of the workflow rule to edit.
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/workflow-editpage-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /settings/automation/modulefilters:
+    get:
+      tags:
+        - workflows
+      operationId: get_module_filters
+      summary: Get module filters
+      description: Get the list of module filters available for workflow configuration.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                    readOnly: true
+                  message:
+                    type: string
+                    example: success
+                    readOnly: true
+                  module_filters:
+                    type: object
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /workflows/{workflow_id}/trigger:
+    post:
+      tags:
+        - workflows
+      operationId: trigger_workflow
+      summary: Trigger a workflow
+      description: Manually trigger a workflow for a specific entity.
+      parameters:
+        - name: entity_id
+          in: query
+          description: ID of the entity to trigger the workflow for.
+          required: false
+          schema:
+            type: string
+        - name: trigger_for_all_entities
+          in: query
+          description: Trigger the workflow for all matching entities. Allowed values <code>true</code> and <code>false</code>.
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    parameters:
+      - name: workflow_id
+        in: path
+        required: true
+        description: Unique identifier of the workflow.
+        schema:
+          type: string
+        example: '460000000038001'
+      - $ref: '#/components/parameters/organization_id'
+  /workflows/{workflow_id}/triggeraction:
+    post:
+      tags:
+        - workflows
+      operationId: trigger_workflow_action
+      summary: Trigger a workflow action
+      description: Manually trigger time-based actions of a workflow for a specific entity.
+      parameters:
+        - name: entity_id
+          in: query
+          description: ID of the entity to trigger the action for.
+          required: false
+          schema:
+            type: string
+        - name: trigger_for_all_entities
+          in: query
+          description: Trigger the action for all matching entities. Allowed values <code>true</code> and <code>false</code>.
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    parameters:
+      - name: workflow_id
+        in: path
+        required: true
+        description: Unique identifier of the workflow.
+        schema:
+          type: string
+        example: '460000000038001'
+      - $ref: '#/components/parameters/organization_id'
+  /settings/customtriggers:
+    post:
+      tags:
+        - custom-triggers
+      operationId: create_custom_trigger
+      summary: Create a custom trigger
+      description: Create a new custom trigger that can be used to invoke workflows via API.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/create-custom-trigger-request'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    get:
+      tags:
+        - custom-triggers
+      operationId: list_custom_triggers
+      summary: List custom triggers
+      description: Get a list of all custom triggers configured in your organization.
+      parameters:
+        - name: filter_by
+          in: query
+          description: Filter custom triggers by entity type.
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/list-custom-triggers-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /settings/customtriggers/editpage:
+    get:
+      tags:
+        - custom-triggers
+      operationId: get_custom_trigger_editpage
+      summary: Get custom trigger edit page data
+      description: Get the data needed to render the custom trigger edit page.
+      parameters:
+        - name: trigger_id
+          in: query
+          description: ID of the custom trigger to edit.
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                    readOnly: true
+                  message:
+                    type: string
+                    example: success
+                    readOnly: true
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /settings/customtriggers/{trigger_id}:
+    put:
+      tags:
+        - custom-triggers
+      operationId: update_custom_trigger
+      summary: Update a custom trigger
+      description: Update an existing custom trigger.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/create-custom-trigger-request'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.UPDATE
+    delete:
+      tags:
+        - custom-triggers
+      operationId: delete_custom_trigger
+      summary: Delete a custom trigger
+      description: Delete an existing custom trigger.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.DELETE
+    parameters:
+      - name: trigger_id
+        in: path
+        required: true
+        description: Unique identifier of the custom trigger.
+        schema:
+          type: string
+        example: '460000000050001'
+      - $ref: '#/components/parameters/organization_id'
+  /settings/customtriggers/{trigger_id}/regenerate:
+    put:
+      tags:
+        - custom-triggers
+      operationId: regenerate_custom_trigger_apikey
+      summary: Regenerate API key
+      description: Regenerate the API key for a custom trigger.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.UPDATE
+    parameters:
+      - name: trigger_id
+        in: path
+        required: true
+        description: Unique identifier of the custom trigger.
+        schema:
+          type: string
+        example: '460000000050001'
+      - $ref: '#/components/parameters/organization_id'
+  /settings/customtriggers/{customtrigger_ph}/execute:
+    post:
+      tags:
+        - custom-triggers
+      operationId: execute_custom_trigger
+      summary: Execute a custom trigger
+      description: Execute a custom trigger for a specific entity using OAuth or ZAPI key authentication.
+      parameters:
+        - name: entity_id
+          in: query
+          description: ID of the entity to execute the trigger for.
+          required: true
+          schema:
+            type: string
+        - name: is_debug
+          in: query
+          description: Enable debug mode for the execution. Allowed values <code>true</code> and <code>false</code>.
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.customtriggers.CREATE
+    parameters:
+      - name: customtrigger_ph
+        in: path
+        required: true
+        description: Placeholder identifier of the custom trigger (e.g., ct_xxxxx).
+        schema:
+          type: string
+        example: ct_abc123
+      - $ref: '#/components/parameters/organization_id'
+  /settings/customtriggers/{customtrigger_ph}/url/fetch:
+    get:
+      tags:
+        - custom-triggers
+      operationId: get_custom_trigger_url
+      summary: Get custom trigger URL
+      description: Get the ZAPI key URL for a custom trigger.
+      parameters:
+        - name: name_space
+          in: query
+          description: Namespace for the custom trigger URL.
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                    readOnly: true
+                  message:
+                    type: string
+                    example: success
+                    readOnly: true
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - name: customtrigger_ph
+        in: path
+        required: true
+        description: Placeholder identifier of the custom trigger (e.g., ct_xxxxx).
+        schema:
+          type: string
+        example: ct_abc123
+      - $ref: '#/components/parameters/organization_id'
+  /retrypolicies:
+    post:
+      tags:
+        - retry-policies
+      operationId: create_retry_policy
+      summary: Create a retry policy
+      description: Create a new retry policy for webhook or custom function actions.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/create-retry-policy-request'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/retry-policy-detail-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.CREATE
+    get:
+      tags:
+        - retry-policies
+      operationId: list_retry_policies
+      summary: List retry policies
+      description: Get a list of all retry policies configured in your organization.
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+        - name: sort_column
+          in: query
+          description: 'Sort retry policies by column. Allowed Values: <code>created_time</code>'
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/sort_order'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/list-retry-policies-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /retrypolicies/{policy_id}:
+    get:
+      tags:
+        - retry-policies
+      operationId: get_retry_policy
+      summary: Get a retry policy
+      description: Get the details of a specific retry policy.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/retry-policy-detail-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    put:
+      tags:
+        - retry-policies
+      operationId: update_retry_policy
+      summary: Update a retry policy
+      description: Update an existing retry policy.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/create-retry-policy-request'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/retry-policy-detail-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.UPDATE
+    delete:
+      tags:
+        - retry-policies
+      operationId: delete_retry_policy
+      summary: Delete a retry policy
+      description: Delete an existing retry policy.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/success-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.DELETE
+    parameters:
+      - name: policy_id
+        in: path
+        required: true
+        description: Unique identifier of the retry policy.
+        schema:
+          type: string
+        example: '460000000060001'
+      - $ref: '#/components/parameters/organization_id'
+  /reports/workflowlogs:
+    get:
+      tags:
+        - workflow-logs
+      operationId: list_workflow_logs
+      summary: List workflow logs
+      description: Get a list of workflow execution logs.
+      parameters:
+        - name: entity_type
+          in: query
+          description: Filter logs by entity type.
+          required: false
+          schema:
+            type: string
+        - name: workflow_id
+          in: query
+          description: Filter logs by workflow ID.
+          required: false
+          schema:
+            type: string
+        - name: triggered_by
+          in: query
+          description: Filter logs by the user who triggered the workflow.
+          required: false
+          schema:
+            type: string
+        - name: entity_ids
+          in: query
+          description: Comma-separated list of entity IDs to filter logs.
+          required: false
+          schema:
+            type: string
+        - name: user_action
+          in: query
+          description: 'Filter logs by user action. Allowed Values: <code>created</code>, <code>edited</code>, <code>deleted</code>, <code>system</code>'
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: 'Filter logs by execution status. Allowed Values: <code>executed</code>, <code>scheduled</code>, <code>skipped</code>'
+          required: false
+          schema:
+            type: string
+        - name: filter_by
+          in: query
+          description: 'Filter logs by date range. Allowed Values: <code>TransactionDate.Today</code>, <code>TransactionDate.ThisWeek</code>, <code>TransactionDate.ThisMonth</code>, <code>TransactionDate.ThisQuarter</code>, <code>TransactionDate.ThisYear</code>, <code>TransactionDate.CustomDate</code>, etc.'
+          required: false
+          schema:
+            type: string
+        - name: from_date
+          in: query
+          description: Start date for custom date filter (yyyy-MM-dd).
+          required: false
+          schema:
+            type: string
+          example: '2025-01-01'
+        - name: to_date
+          in: query
+          description: End date for custom date filter (yyyy-MM-dd).
+          required: false
+          schema:
+            type: string
+          example: '2025-12-31'
+        - name: sort_column
+          in: query
+          description: 'Sort logs by column. Allowed Values: <code>date</code>, <code>workflow_name</code>, <code>timestamp_formatted</code>'
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+        - $ref: '#/components/parameters/sort_order'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                    readOnly: true
+                  message:
+                    type: string
+                    example: success
+                    readOnly: true
+                  workflow_logs_details:
+                    type: array
+                    items:
+                      type: object
+                  page_context:
+                    type: object
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /workflowlogs/details:
+    get:
+      tags:
+        - workflow-logs
+      operationId: get_workflow_log_details
+      summary: Get workflow log details
+      description: Get the detailed execution log of a specific workflow run.
+      parameters:
+        - name: workflow_history_id
+          in: query
+          description: ID of the workflow history entry.
+          required: true
+          schema:
+            type: string
+        - name: timestamp
+          in: query
+          description: Timestamp of the workflow execution.
+          required: true
+          schema:
+            type: string
+        - name: triggered_by
+          in: query
+          description: ID of the user who triggered the workflow.
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                    readOnly: true
+                  message:
+                    type: string
+                    example: success
+                    readOnly: true
+                  workflow_logs_details:
+                    type: array
+                    items:
+                      type: object
+                  entity_fields:
+                    type: object
+                  meta_details:
+                    type: object
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.settings.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /reports/upcomingworkflows:
+    get:
+      tags:
+        - workflow-reports
+      operationId: list_upcoming_workflows
+      summary: List upcoming workflows
+      description: Get a report of upcoming time-based workflow executions.
+      parameters:
+        - name: entity_ids
+          in: query
+          description: Comma-separated list of entity IDs to filter.
+          required: false
+          schema:
+            type: string
+        - name: entity_type
+          in: query
+          description: Filter by entity type (e.g., invoice, bill).
+          required: false
+          schema:
+            type: string
+          example: invoice
+        - name: workflow_id
+          in: query
+          description: Filter by workflow ID.
+          required: false
+          schema:
+            type: string
+        - name: workflow_name
+          in: query
+          description: Filter by workflow name.
+          required: false
+          schema:
+            type: string
+        - name: filter_by
+          in: query
+          description: 'Filter by date range. Allowed Values: <code>TransactionDate.Today</code>, <code>TransactionDate.ThisWeek</code>, <code>TransactionDate.ThisMonth</code>, <code>TransactionDate.ThisQuarter</code>, <code>TransactionDate.ThisYear</code>, <code>TransactionDate.Tomorrow</code>, <code>TransactionDate.NextWeek</code>, <code>TransactionDate.NextMonth</code>, <code>TransactionDate.CustomDate</code>'
+          required: false
+          schema:
+            type: string
+        - name: sort_column
+          in: query
+          description: 'Sort by column. Allowed Values: <code>execution_date</code>, <code>workflow_name</code>'
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+        - $ref: '#/components/parameters/sort_order'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/upcoming-workflows-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.reports.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /reports/upcomingactions:
+    get:
+      tags:
+        - workflow-reports
+      operationId: list_upcoming_actions
+      summary: List upcoming actions
+      description: Get a report of upcoming time-based workflow action executions.
+      parameters:
+        - name: entity_ids
+          in: query
+          description: Comma-separated list of entity IDs to filter.
+          required: false
+          schema:
+            type: string
+        - name: entity_type
+          in: query
+          description: Filter by entity type (e.g., invoice, bill).
+          required: false
+          schema:
+            type: string
+          example: invoice
+        - name: workflow_id
+          in: query
+          description: Filter by workflow ID.
+          required: false
+          schema:
+            type: string
+        - name: workflow_name
+          in: query
+          description: Filter by workflow name.
+          required: false
+          schema:
+            type: string
+        - name: action_type
+          in: query
+          description: Filter by action type (e.g., alert, webhook, customfunction).
+          required: false
+          schema:
+            type: string
+        - name: action_ids
+          in: query
+          description: Comma-separated list of action IDs to filter.
+          required: false
+          schema:
+            type: string
+        - name: filter_by
+          in: query
+          description: 'Filter by date range. Allowed Values: <code>TransactionDate.Today</code>, <code>TransactionDate.ThisWeek</code>, <code>TransactionDate.ThisMonth</code>, <code>TransactionDate.CustomDate</code>, etc.'
+          required: false
+          schema:
+            type: string
+        - name: sort_column
+          in: query
+          description: 'Sort by column. Allowed Values: <code>execution_date</code>, <code>workflow_name</code>'
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+        - $ref: '#/components/parameters/sort_order'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/upcoming-actions-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.reports.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /reports/failedworkflows:
+    get:
+      tags:
+        - workflow-reports
+      operationId: list_failed_workflows
+      summary: List failed workflows
+      description: Get a report of failed workflow executions.
+      parameters:
+        - name: entity_ids
+          in: query
+          description: Comma-separated list of entity IDs to filter.
+          required: false
+          schema:
+            type: string
+        - name: entity_type
+          in: query
+          description: Filter by entity type.
+          required: false
+          schema:
+            type: string
+        - name: workflow_id
+          in: query
+          description: Filter by workflow ID.
+          required: false
+          schema:
+            type: string
+        - name: show_failed_only
+          in: query
+          description: Show only failed workflows. Allowed values <code>true</code> and <code>false</code>.
+          required: false
+          schema:
+            type: boolean
+        - name: filter_by
+          in: query
+          description: Filter by date range.
+          required: false
+          schema:
+            type: string
+        - name: sort_column
+          in: query
+          description: 'Sort by column. Allowed Values: <code>execution_time</code>, <code>workflow_name</code>'
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+        - $ref: '#/components/parameters/sort_order'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/upcoming-workflows-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.reports.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+  /reports/failedworkflowactions:
+    get:
+      tags:
+        - workflow-reports
+      operationId: list_failed_workflow_actions
+      summary: List failed workflow actions
+      description: Get a report of failed workflow action executions.
+      parameters:
+        - name: entity_ids
+          in: query
+          description: Comma-separated list of entity IDs to filter.
+          required: false
+          schema:
+            type: string
+        - name: entity_type
+          in: query
+          description: Filter by entity type.
+          required: false
+          schema:
+            type: string
+        - name: workflow_id
+          in: query
+          description: Filter by workflow ID.
+          required: false
+          schema:
+            type: string
+        - name: action_type
+          in: query
+          description: Filter by action type.
+          required: false
+          schema:
+            type: string
+        - name: action_ids
+          in: query
+          description: Comma-separated list of action IDs to filter.
+          required: false
+          schema:
+            type: string
+        - name: show_failed_only
+          in: query
+          description: Show only failed actions. Allowed values <code>true</code> and <code>false</code>.
+          required: false
+          schema:
+            type: boolean
+        - name: filter_by
+          in: query
+          description: Filter by date range.
+          required: false
+          schema:
+            type: string
+        - name: sort_column
+          in: query
+          description: 'Sort by column. Allowed Values: <code>execution_time</code>, <code>workflow_name</code>'
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/per_page'
+        - $ref: '#/components/parameters/sort_order'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/upcoming-actions-response'
+      deprecated: false
+      security:
+        - Zoho_Auth:
+            - ZohoBooks.reports.READ
+    parameters:
+      - $ref: '#/components/parameters/organization_id'
+components:
+  parameters:
+    organization_id:
+      name: organization_id
+      description: ID of the organization.
+      in: query
+      required: true
+      schema:
+        type: string
+      example: '10234695'
+    page:
+      name: page
+      in: query
+      description: Page number to be fetched. Default value is 1.
+      required: false
+      schema:
+        type: integer
+        default: 1
+      example: 1
+    per_page:
+      name: per_page
+      in: query
+      description: Number of records to be fetched per page.
+      required: false
+      schema:
+        type: integer
+        default: 10
+      example: 10
+    sort_order:
+      name: sort_order
+      in: query
+      description: 'Sort order. Allowed Values: <code>A</code> (Ascending), <code>D</code> (Descending)'
+      required: false
+      schema:
+        type: string
+        enum:
+          - A
+          - D
+  schemas:
+    workflow:
+      type: object
+      properties:
+        workflow_id:
+          description: Unique identifier of the workflow.
+          type: string
+          example: '460000000038001'
+        workflow_name:
+          description: Name of the workflow rule.
+          type: string
+          example: Send reminder on due date
+        placeholder:
+          description: Placeholder identifier of the workflow.
+          type: string
+        entity:
+          description: The entity type this workflow applies to.
+          type: string
+          example: invoice
+        sub_entities:
+          description: Sub-entity types for the workflow.
+          type: string
+        rule_type:
+          description: The trigger type for the workflow.
+          type: string
+          example: add
+        description:
+          description: Description of the workflow.
+          type: string
+        is_active:
+          description: Whether the workflow is currently active.
+          type: boolean
+          example: true
+        is_from_plugin:
+          description: Whether the workflow was created from a plugin.
+          type: boolean
+          example: false
+        created_time:
+          description: Timestamp when the workflow was created.
+          type: string
+          example: 2025-01-15T10:30:00+0530
+        is_locked:
+          description: Whether the workflow is locked.
+          type: boolean
+          example: false
+        lock_reason:
+          description: Reason for locking the workflow.
+          type: string
+    custom-trigger:
+      type: object
+      properties:
+        customtrigger_id:
+          description: Unique identifier of the custom trigger.
+          type: string
+          example: '460000000050001'
+        name:
+          description: Name of the custom trigger.
+          type: string
+          example: Invoice Custom Trigger
+        placeholder:
+          description: Placeholder identifier of the custom trigger.
+          type: string
+        entity:
+          description: The entity type this trigger applies to.
+          type: string
+          example: invoice
+        created_time:
+          description: Timestamp when the trigger was created.
+          type: string
+        is_from_plugin:
+          description: Whether the trigger was created from a plugin.
+          type: boolean
+          example: false
+        service_name:
+          description: Name of the service associated with the trigger.
+          type: string
+        related_rules:
+          description: Workflow rules related to this trigger.
+          type: array
+          items:
+            type: object
+        zapikey_url:
+          description: ZAPI key URL for the trigger.
+          type: string
+        oauth_url:
+          description: OAuth URL for the trigger.
+          type: string
+    retry-policy:
+      type: object
+      properties:
+        policy_id:
+          description: Unique identifier of the retry policy.
+          type: string
+          example: '460000000060001'
+        policy_name:
+          description: Name of the retry policy.
+          type: string
+          example: Default Retry Policy
+        retry_type:
+          description: Type of retry strategy.
+          type: string
+          enum:
+            - fixed
+            - varying_linear
+            - varying_exponential
+            - honor_retry_after
+          example: fixed
+        base_interval:
+          description: Base interval between retries.
+          type: integer
+          example: 5
+        base_interval_unit:
+          description: Unit for the base interval.
+          type: string
+          enum:
+            - minutes
+            - hours
+          example: minutes
+        interval_modifier:
+          description: Modifier applied to the interval between retries.
+          type: integer
+        retry_count:
+          description: Maximum number of retry attempts (1-20).
+          type: integer
+          example: 3
+        created_time:
+          description: Timestamp when the policy was created.
+          type: string
+    retry-policy-detail:
+      type: object
+      properties:
+        policy_id:
+          description: Unique identifier of the retry policy.
+          type: string
+          example: '460000000060001'
+        policy_name:
+          description: Name of the retry policy.
+          type: string
+        action_type:
+          description: Type of action the policy applies to.
+          type: string
+          enum:
+            - webhook
+            - custom_function
+        retry_type:
+          description: Type of retry strategy.
+          type: string
+          enum:
+            - fixed
+            - varying_linear
+            - varying_exponential
+            - honor_retry_after
+        base_interval:
+          description: Base interval between retries.
+          type: integer
+        base_interval_unit:
+          description: Unit for the base interval.
+          type: string
+          enum:
+            - minutes
+            - hours
+        interval_modifier:
+          description: Modifier applied to the interval between retries.
+          type: integer
+        retry_count:
+          description: Maximum number of retry attempts (1-20).
+          type: integer
+    create-workflow-request:
+      type: object
+      required:
+        - workflow_name
+        - entity
+        - rule_type
+      properties:
+        workflow_name:
+          description: Name of the workflow rule.
+          type: string
+          example: Send reminder on due date
+        description:
+          description: Description of the workflow. Max-len [1000]
+          type: string
+        rule_type:
+          description: Trigger type for the workflow.
+          type: string
+          enum:
+            - add
+            - edit
+            - add_edit
+            - delete
+            - once
+            - monthly
+            - yearly
+            - custom_trigger
+            - weekly
+            - daily
+            - submit
+            - approve
+            - recall
+            - reimburse
+            - reject
+            - approved_and_forwarded
+            - undo_reimburse
+            - close
+            - trip_cancel
+            - trip_option_added
+            - trip_option_selected
+            - trip_option_approved
+            - trip_option_booked
+            - trip_option_rejected
+            - trip_option_cancelled
+            - trip_option_revision_required
+            - trip_option_rescheduled
+            - trip_itinerary_rescheduled
+            - trip_itinerary_cancelled
+            - trip_itinerary_added
+            - request_assigned
+            - request_onhold
+            - request_closed
+            - onhold
+            - processed
+            - paid
+            - advance_void
+            - draft
+            - submitted_for_approval
+            - approved
+            - recalled
+            - rejected
+            - completed
+            - payment_initiated
+            - payment_initiation_failed
+            - failed
+            - combined
+            - purchase_request_cancelled
+          example: add
+        placeholder:
+          description: Placeholder identifier of the workflow.
+          type: string
+        entity:
+          description: The entity type this workflow applies to (e.g., invoice, bill, contact).
+          type: string
+          example: invoice
+        sub_entities:
+          description: Sub-entity types for the workflow.
+          type: array
+          items:
+            type: object
+        field_update:
+          description: 'Field update conditions for the workflow trigger. Max items: 1000.'
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+        field_update_comparator:
+          description: 'Comparator for field update conditions. Allowed Values: <code>and</code>, <code>or</code>, <code>any</code>, <code>except_or</code>, <code>except_and</code>'
+          type: string
+        date_field:
+          description: Date field for time-based workflows.
+          type: string
+        time:
+          description: Execution time for time-based workflows.
+          type: string
+        day_difference:
+          description: Number of days/hours before or after the date field.
+          type: integer
+        day_difference_type:
+          description: 'Whether the difference is before or after. Allowed Values: <code>before</code>, <code>after</code>'
+          type: string
+        day_difference_unit:
+          description: 'Unit for day difference. Allowed Values: <code>hours</code>, <code>days</code>'
+          type: string
+        apply_rule_always:
+          description: Whether to apply the rule every time the trigger condition is met.
+          type: boolean
+        rule:
+          description: Criteria rule for the workflow.
+          type: object
+        events:
+          description: 'Event bindings for the workflow. Max items: 1000.'
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+        instant_actions:
+          description: 'List of instant actions to execute when the workflow triggers. Max items: 1000.'
+          type: array
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/workflow-action'
+        time_based_actions:
+          description: 'List of time-based actions for the workflow. Max items: 1000.'
+          type: array
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/workflow-time-based-action'
+        sub_rules:
+          description: 'Sub-rules with their own criteria and actions. Max items: 1000.'
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+        is_locked:
+          description: Whether the workflow is locked.
+          type: boolean
+        lock_type:
+          description: 'Type of lock. Allowed Values: <code>error</code>, <code>none</code>'
+          type: string
+        lock_reason:
+          description: Reason for locking the workflow. Max-len [255]
+          type: string
+        is_hidden:
+          description: Whether the workflow is hidden.
+          type: boolean
+        allowed_apps:
+          description: Comma-separated list of allowed apps. Maximum 6 apps.
+          type: string
+          example: app1,app2
+        is_draft:
+          description: Whether the workflow is in draft mode.
+          type: boolean
+        trigger_id:
+          description: ID of the custom trigger associated with this workflow.
+          type: string
+        trigger_ph:
+          description: Placeholder of the custom trigger. Max-len [255]
+          type: string
+        entity_id:
+          description: Entity ID for record-level workflows.
+          type: string
+        execution_timezone:
+          description: 'Timezone for workflow execution. Allowed Values: <code>customer</code>, <code>default</code>'
+          type: string
+        is_custom_execution_time:
+          description: Whether execution time is custom.
+          type: boolean
+    workflow-action:
+      type: object
+      properties:
+        action_id:
+          description: ID of the action.
+          type: string
+        action_type:
+          description: 'Type of the action. Allowed Values: <code>alert</code>, <code>fieldupdate</code>, <code>webhook</code>, <code>customfunction</code>, <code>pushnotification</code>. Also supports custom action connector types matching the pattern <code>cac_&lt;connector_name&gt;</code>.'
+          type: string
+        action_ph:
+          description: Placeholder of the action.
+          type: string
+        entity:
+          description: Entity type for the action.
+          type: string
+        message_content:
+          description: Message content for alert actions. Max-len [255]
+          type: string
+        alert_name:
+          description: Name of the alert action.
+          type: string
+        pushnotification_name:
+          description: Name of the push notification action.
+          type: string
+        email_template_id:
+          description: ID of the email template for alert actions.
+          type: string
+        email_template_ph:
+          description: Placeholder of the email template.
+          type: string
+        email_template:
+          description: Inline email template details for alert actions.
+          type: object
+          properties:
+            name:
+              description: Name of the email template. Max-len [50]
+              type: string
+            from_address_id:
+              description: ID of the from address.
+              type: string
+            placeholder:
+              description: Placeholder of the email template.
+              type: string
+            type:
+              description: Type of the email template.
+              type: string
+            from_address:
+              description: From address ID.
+              type: string
+            body:
+              description: Body content of the email. Max-len [64000]
+              type: string
+            subject:
+              description: Subject of the email. Max-len [500]
+              type: string
+            is_default:
+              description: Whether this is the default template.
+              type: boolean
+            cc_mail_ids:
+              description: CC email addresses.
+              type: array
+              maxItems: 3
+              items:
+                type: object
+            bcc_mail_ids:
+              description: BCC email addresses.
+              type: array
+              maxItems: 3
+              items:
+                type: object
+        recipients:
+          description: List of recipients for alert actions.
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+        additional_recipients:
+          description: Additional email recipients for alert actions.
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+        fieldupdate_name:
+          description: Name of the field update action. Max-len [100]
+          type: string
+        field_name:
+          description: Name of the field to update.
+          type: string
+        field_value:
+          description: Value to set for the field. Max-len [100]
+          type: string
+        webhook_name:
+          description: Name of the webhook action. Max-len [50]
+          type: string
+        method:
+          description: 'HTTP method for webhook actions. Allowed Values: <code>POST</code>, <code>PUT</code>, <code>DELETE</code>'
+          type: string
+          enum:
+            - POST
+            - PUT
+            - DELETE
+        url:
+          description: URL for the webhook action. Max-len [5000]
+          type: string
+        entity_parameters:
+          description: Entity parameters for webhook actions.
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+        query_parameters:
+          description: Query parameters for webhook actions.
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+        form_data:
+          description: Form data for webhook actions.
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+        body_type:
+          description: Content type of the webhook request body.
+          type: string
+        additional_parameters:
+          description: Additional parameters for webhook actions.
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+        secret:
+          description: Secret key for webhook signature verification. Min-len [12], Max-len [50]
+          type: string
+        headers:
+          description: Custom headers for webhook actions.
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+        raw_data:
+          description: Raw data body for webhook actions.
+          type: string
+        is_new_response_format:
+          description: Whether to use the new response format for webhooks.
+          type: boolean
+        user_defined_format_name:
+          description: User-defined format name for webhook payload. Max-len [100000]
+          type: string
+        user_defined_format_value:
+          description: User-defined format value for webhook payload. Max-len [100000]
+          type: string
+        script:
+          description: Script code for custom function actions.
+          type: string
+        function_name:
+          description: Name of the custom function. Max-len [50]
+          type: string
+        description:
+          description: Description of the custom function action. Max-len [100]
+          type: string
+        function_param:
+          description: Parameters for the custom function.
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+        is_execute:
+          description: Whether to execute the custom function immediately.
+          type: boolean
+        include_orgvariables_params:
+          description: Whether to include organization variable parameters in the custom function.
+          type: boolean
+        connection_link_name:
+          description: Connection link name for the custom function. Max-len [100]
+          type: string
+    template-input:
+      type: object
+      properties:
+        uri:
+          description: URI identifier for the template input. Max-len [200]
+          type: string
+        value:
+          description: Value for the template input. Max-len [36000]
+          type: string
+    workflow-time-based-action:
+      type: object
+      properties:
+        timetrigger_id:
+          description: ID of the time trigger.
+          type: string
+        name:
+          description: Name of the time-based action group.
+          type: string
+        field_type:
+          description: Date field for the time trigger.
+          type: string
+        delay:
+          description: Delay value.
+          type: integer
+        delay_unit:
+          description: 'Unit for delay. Allowed Values: <code>hours</code>, <code>days</code>'
+          type: string
+        delay_type:
+          description: 'Whether delay is before or after. Allowed Values: <code>before</code>, <code>after</code>'
+          type: string
+        actions:
+          description: 'List of actions to execute. Max items: 1000.'
+          type: array
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/workflow-action'
+    reorder-workflow-request:
+      type: object
+      required:
+        - entity_type
+        - execution_order
+      properties:
+        entity_type:
+          description: The entity type for which to reorder workflows.
+          type: string
+          example: invoice
+        execution_order:
+          description: Array of workflow IDs in desired execution order.
+          type: array
+          items:
+            type: string
+        entity_id:
+          description: Entity ID for record-level workflow reordering.
+          type: string
+    create-custom-trigger-request:
+      type: object
+      required:
+        - entity
+      properties:
+        name:
+          description: Name of the custom trigger.
+          type: string
+          example: Invoice Custom Trigger
+        description:
+          description: Description of the custom trigger.
+          type: string
+        entity:
+          description: The entity type for the custom trigger.
+          type: string
+          example: invoice
+        placeholder:
+          description: Placeholder for the custom trigger.
+          type: string
+    create-retry-policy-request:
+      type: object
+      required:
+        - retry_type
+        - action_type
+        - retry_count
+      properties:
+        policy_name:
+          description: Name of the retry policy.
+          type: string
+          example: Default Retry Policy
+        retry_type:
+          description: 'Type of retry strategy. Allowed Values: <code>fixed</code>, <code>varying_linear</code>, <code>varying_exponential</code>, <code>honor_retry_after</code>'
+          type: string
+          enum:
+            - fixed
+            - varying_linear
+            - varying_exponential
+            - honor_retry_after
+        action_type:
+          description: 'Type of action the policy applies to. Allowed Values: <code>webhook</code>, <code>custom_function</code>'
+          type: string
+          enum:
+            - webhook
+            - custom_function
+        base_interval:
+          description: Base interval between retries.
+          type: integer
+        base_interval_unit:
+          description: 'Unit for the base interval. Allowed Values: <code>minutes</code>, <code>hours</code>'
+          type: string
+          enum:
+            - minutes
+            - hours
+        interval_modifier:
+          description: Modifier applied to the interval between retries.
+          type: integer
+        retry_count:
+          description: Maximum number of retry attempts (1-20).
+          type: integer
+          example: 3
+    success-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+    list-workflows-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        workflows:
+          type: array
+          items:
+            $ref: '#/components/schemas/workflow'
+    workflow-detail-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        workflow:
+          type: object
+    workflow-editpage-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        entities:
+          type: array
+          items:
+            type: object
+        entity_fields:
+          type: array
+          items:
+            type: object
+        supported_actions:
+          type: array
+          items:
+            type: object
+        entity:
+          type: string
+        workflow:
+          type: object
+    list-custom-triggers-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        customtriggers:
+          type: array
+          items:
+            $ref: '#/components/schemas/custom-trigger'
+    list-retry-policies-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        retrypolicies:
+          type: array
+          items:
+            $ref: '#/components/schemas/retry-policy'
+    retry-policy-detail-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        retry_policy:
+          $ref: '#/components/schemas/retry-policy-detail'
+    upcoming-workflows-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        upcoming_workflows_details:
+          type: array
+          items:
+            type: object
+            properties:
+              upcoming_workflows:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    entity_id:
+                      type: string
+                    entity:
+                      type: string
+                    entity_name:
+                      type: string
+                    execution_time:
+                      type: string
+                    execution_date:
+                      type: string
+                    workflow_id:
+                      type: string
+                    workflow_name:
+                      type: string
+              group_name:
+                type: string
+    upcoming-actions-response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+          readOnly: true
+        message:
+          type: string
+          example: success
+          readOnly: true
+        upcoming_actions_details:
+          type: array
+          items:
+            type: object
+            properties:
+              upcoming_actions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    entity_id:
+                      type: string
+                    entity:
+                      type: string
+                    entity_name:
+                      type: string
+                    execution_time:
+                      type: string
+                    execution_date:
+                      type: string
+                    workflow_id:
+                      type: string
+                    workflow_name:
+                      type: string
+                    action_id:
+                      type: string
+                    action_name:
+                      type: string
+                    action_type:
+                      type: string
+              group_name:
+                type: string
+  securitySchemes:
+    Zoho_Auth:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://accounts.zoho.com/oauth/v2/auth
+          scopes:
+            ZohoBooks.settings.CREATE: Create Settings
+            ZohoBooks.settings.UPDATE: Update Settings
+            ZohoBooks.settings.READ: Read Settings
+            ZohoBooks.settings.DELETE: Delete Settings
+            ZohoBooks.reports.READ: Read Reports
+            ZohoBooks.customtriggers.CREATE: Execute Custom Triggers

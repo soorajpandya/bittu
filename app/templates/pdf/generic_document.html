@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% set doc_title = label | default("Document") %}
+
+{% block content %}
+<!-- Header -->
+<div class="header">
+  <table><tr>
+    <td class="org-info">
+      <h1>{{ org.name | default("Organization") }}</h1>
+      {% if org_address %}
+      <p>
+        {% if org_address.street %}{{ org_address.street }}<br>{% endif %}
+        {% if org_address.city %}{{ org_address.city }}{% endif %}
+        {% if org_address.state %}, {{ org_address.state }}{% endif %}
+        {% if org_address.zip %} {{ org_address.zip }}{% endif %}
+        {% if org_address.country %}<br>{{ org_address.country }}{% endif %}
+      </p>
+      {% endif %}
+      {% if org.phone %}<p>Tel: {{ org.phone }}</p>{% endif %}
+      {% if org.email %}<p>{{ org.email }}</p>{% endif %}
+      {% if org.tax_id_label and org.tax_id_value %}<p>{{ org.tax_id_label }}: {{ org.tax_id_value }}</p>{% endif %}
+    </td>
+    <td class="doc-badge">
+      <h2>{{ label | default("Document") }}</h2>
+      <div class="doc-number"># {{ doc.get(number_field, '') }}</div>
+      {% if doc.status %}
+      <span class="doc-status">{{ doc.status }}</span>
+      {% endif %}
+    </td>
+  </tr></table>
+</div>
+
+<!-- Addresses -->
+<div class="addresses">
+  <table><tr>
+    <td>
+      <div class="addr-label">{{ contact_label | default("Bill To") }}</div>
+      {% if contact %}
+      <div class="addr-name">{{ contact.get("contact_name", contact.get("company_name", "")) }}</div>
+      {% set ba = doc.get("billing_address") or {} %}
+      <div class="addr-detail">
+        {% if ba.get("street") %}{{ ba.street }}<br>{% endif %}
+        {% if ba.get("city") %}{{ ba.city }}{% endif %}
+        {% if ba.get("state") %}, {{ ba.state }}{% endif %}
+        {% if ba.get("zip") %} {{ ba.zip }}{% endif %}
+        {% if ba.get("country") %}<br>{{ ba.country }}{% endif %}
+      </div>
+      {% if contact.get("email") %}<div class="addr-detail">{{ contact.email }}</div>{% endif %}
+      {% if contact.get("phone") %}<div class="addr-detail">{{ contact.phone }}</div>{% endif %}
+      {% endif %}
+    </td>
+    {% set sa = doc.get("shipping_address") or {} %}
+    {% if sa %}
+    <td>
+      <div class="addr-label">Ship To</div>
+      <div class="addr-detail">
+        {% if sa.get("street") %}{{ sa.street }}<br>{% endif %}
+        {% if sa.get("city") %}{{ sa.city }}{% endif %}
+        {% if sa.get("state") %}, {{ sa.state }}{% endif %}
+        {% if sa.get("zip") %} {{ sa.zip }}{% endif %}
+        {% if sa.get("country") %}<br>{{ sa.country }}{% endif %}
+      </div>
+    </td>
+    {% endif %}
+  </tr></table>
+</div>
+
+<!-- Meta info -->
+<div class="meta-grid">
+  <table><tr>
+  {% if doc.get("date") %}
+  <td><div class="meta-label">Date</div><div class="meta-value">{{ doc.date | fdate }}</div></td>
+  {% endif %}
+  {% if doc.get("due_date") %}
+  <td><div class="meta-label">Due Date</div><div class="meta-value">{{ doc.due_date | fdate }}</div></td>
+  {% endif %}
+  {% if doc.get("expiry_date") %}
+  <td><div class="meta-label">Expiry Date</div><div class="meta-value">{{ doc.expiry_date | fdate }}</div></td>
+  {% endif %}
+  {% if doc.get("reference_number") %}
+  <td><div class="meta-label">Reference</div><div class="meta-value">{{ doc.reference_number }}</div></td>
+  {% endif %}
+  {% if doc.get("payment_terms_label") %}
+  <td><div class="meta-label">Payment Terms</div><div class="meta-value">{{ doc.payment_terms_label }}</div></td>
+  {% endif %}
+  {% if doc.get("salesperson_name") %}
+  <td><div class="meta-label">Salesperson</div><div class="meta-value">{{ doc.salesperson_name }}</div></td>
+  {% endif %}
+  {% if doc.get("place_of_supply") %}
+  <td><div class="meta-label">Place of Supply</div><div class="meta-value">{{ doc.place_of_supply }}</div></td>
+  {% endif %}
+  </tr></table>
+</div>
+
+<!-- Line Items -->
+{% if line_items %}
+<table class="items-table">
+  <thead>
+    <tr>
+      <th class="num">#</th>
+      <th>Item &amp; Description</th>
+      <th class="qty">Qty</th>
+      <th class="rate">Rate</th>
+      <th class="tax">Tax</th>
+      <th class="amount">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for li in line_items %}
+    <tr>
+      <td class="num">{{ loop.index }}</td>
+      <td>
+        <strong>{{ li.name or li.get("item_name", "") }}</strong>
+        {% if li.description %}<br><span style="color:#6b7280;font-size:9px;">{{ li.description }}</span>{% endif %}
+        {% if li.hsn_or_sac %}<br><span style="color:#6b7280;font-size:9px;">HSN/SAC: {{ li.hsn_or_sac }}</span>{% endif %}
+      </td>
+      <td class="qty">{{ li.quantity }}{% if li.unit %} {{ li.unit }}{% endif %}</td>
+      <td class="rate">{{ li.rate | currency(currency_symbol, precision) }}</td>
+      <td class="tax">
+        {% if li.tax_percentage %}{{ li.tax_percentage }}%{% endif %}
+        {% if li.tax_name %}<br><span style="font-size:9px;">{{ li.tax_name }}</span>{% endif %}
+      </td>
+      <td class="amount">{{ ((li.rate * li.quantity) - (li.discount_amount or 0)) | currency(currency_symbol, precision) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<!-- Totals -->
+<div class="totals-section">
+  <table>
+    <tr>
+      <td class="label-col">Sub Total</td>
+      <td class="value-col">{{ doc.get("sub_total", 0) | currency(currency_symbol, precision) }}</td>
+    </tr>
+    {% if doc.get("discount") and doc.discount != 0 %}
+    <tr>
+      <td class="label-col">Discount</td>
+      <td class="value-col">-{{ doc.discount | currency(currency_symbol, precision) }}</td>
+    </tr>
+    {% endif %}
+    {% if doc.get("tax_total") and doc.tax_total != 0 %}
+    <tr>
+      <td class="label-col">Tax</td>
+      <td class="value-col">{{ doc.tax_total | currency(currency_symbol, precision) }}</td>
+    </tr>
+    {% endif %}
+    {% if doc.get("adjustment") and doc.adjustment != 0 %}
+    <tr>
+      <td class="label-col">Adjustment</td>
+      <td class="value-col">{{ doc.adjustment | currency(currency_symbol, precision) }}</td>
+    </tr>
+    {% endif %}
+    <tr class="grand-total">
+      <td>Total</td>
+      <td style="text-align:right;">{{ doc.get("total", 0) | currency(currency_symbol, precision) }}</td>
+    </tr>
+    {% if doc.get("balance") is not none and doc.get("balance") != doc.get("total") %}
+    <tr>
+      <td class="label-col">Balance Due</td>
+      <td class="value-col"><strong>{{ doc.balance | currency(currency_symbol, precision) }}</strong></td>
+    </tr>
+    {% endif %}
+    {% if doc.get("payment_made") %}
+    <tr>
+      <td class="label-col">Payment Made</td>
+      <td class="value-col">{{ doc.payment_made | currency(currency_symbol, precision) }}</td>
+    </tr>
+    {% endif %}
+  </table>
+</div>
+
+<!-- Notes & Terms -->
+{% if doc.get("notes") %}
+<div class="notes-section">
+  <h4>Notes</h4>
+  <p>{{ doc.notes }}</p>
+</div>
+{% endif %}
+{% if doc.get("terms") %}
+<div class="notes-section">
+  <h4>Terms &amp; Conditions</h4>
+  <p>{{ doc.terms }}</p>
+</div>
+{% endif %}
+{% endblock %}
