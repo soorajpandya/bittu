@@ -65,12 +65,56 @@ async def _get_org(user: UserContext) -> dict:
                 "SELECT * FROM acc_organizations WHERE user_id = $1 LIMIT 1",
                 uid,
             )
-        return dict(row) if row else {
-            "name": "My Organization",
-            "currency_symbol": "₹",
-            "price_precision": 2,
-            "address": {},
-        }
+
+        org = dict(row) if row else {}
+
+        # Fetch restaurant details to fill in missing org info
+        rest = await conn.fetchrow(
+            """SELECT r.name, r.phone, r.email, r.address, r.city, r.state,
+                      r.pincode, r.logo_url, r.gst_number, r.fssai_number
+               FROM restaurants r WHERE r.owner_id = $1 LIMIT 1""",
+            uid,
+        )
+        rest = dict(rest) if rest else {}
+
+        # Use restaurant name if org name is missing or default
+        org_name = org.get("name") or ""
+        if not org_name or org_name == "My Organization":
+            org["name"] = rest.get("name") or org_name or "My Organization"
+
+        # Fill other fields from restaurant if org doesn't have them
+        if not org.get("phone") and rest.get("phone"):
+            org["phone"] = rest["phone"]
+        if not org.get("email") and rest.get("email"):
+            org["email"] = rest["email"]
+        if not org.get("logo_url") and rest.get("logo_url"):
+            org["logo_url"] = rest["logo_url"]
+
+        # Build address from restaurant if org address is empty
+        org_addr = org.get("address")
+        if not org_addr or org_addr == {} or org_addr == "{}":
+            org["address"] = {
+                "street": rest.get("address") or "",
+                "city": rest.get("city") or "",
+                "state": rest.get("state") or "",
+                "zip": rest.get("pincode") or "",
+            }
+
+        # GST info
+        if not org.get("tax_id_value") and rest.get("gst_number"):
+            org["tax_id_label"] = "GSTIN"
+            org["tax_id_value"] = rest["gst_number"]
+
+        # FSSAI
+        if rest.get("fssai_number"):
+            org["fssai_number"] = rest["fssai_number"]
+
+        # Defaults
+        org.setdefault("currency_symbol", "₹")
+        org.setdefault("price_precision", 2)
+        org.setdefault("address", {})
+
+        return org
 
 
 async def _get_contact(contact_id: UUID, user: UserContext) -> dict:

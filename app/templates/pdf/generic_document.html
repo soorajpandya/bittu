@@ -5,30 +5,43 @@
 <!-- Header -->
 <div class="header">
   <table><tr>
-    <td class="org-info">
+    <td class="org-info" style="width:65%;">
+      {% if org.get("logo_url") %}
+      <img src="{{ org.logo_url }}" class="org-logo" alt="Logo">
+      {% endif %}
       <h1>{{ org.name | default("Organization") }}</h1>
       {% if org_address %}
       <p>
-        {% if org_address.street %}{{ org_address.street }}<br>{% endif %}
-        {% if org_address.city %}{{ org_address.city }}{% endif %}
-        {% if org_address.state %}, {{ org_address.state }}{% endif %}
-        {% if org_address.zip %} {{ org_address.zip }}{% endif %}
-        {% if org_address.country %}<br>{{ org_address.country }}{% endif %}
+        {% if org_address.get("street") %}{{ org_address.street }}{% endif %}
+        {% if org_address.get("city") %}{% if org_address.get("street") %}, {% endif %}{{ org_address.city }}{% endif %}
+        {% if org_address.get("state") %}, {{ org_address.state }}{% endif %}
+        {% if org_address.get("zip") %} - {{ org_address.zip }}{% endif %}
+        {% if org_address.get("country") %}, {{ org_address.country }}{% endif %}
       </p>
       {% endif %}
-      {% if org.phone %}<p>Tel: {{ org.phone }}</p>{% endif %}
-      {% if org.email %}<p>{{ org.email }}</p>{% endif %}
-      {% if org.tax_id_label and org.tax_id_value %}<p>{{ org.tax_id_label }}: {{ org.tax_id_value }}</p>{% endif %}
+      {% if org.get("phone") %}<p>Tel: {{ org.phone }}</p>{% endif %}
+      {% if org.get("email") %}<p>{{ org.email }}</p>{% endif %}
+      {% if org.get("tax_id_label") and org.get("tax_id_value") %}<p><strong>{{ org.tax_id_label }}:</strong> {{ org.tax_id_value }}</p>{% endif %}
+      {% if org.get("fssai_number") %}<p><strong>FSSAI:</strong> {{ org.fssai_number }}</p>{% endif %}
     </td>
     <td class="doc-badge">
       <h2>{{ label | default("Document") }}</h2>
-      <div class="doc-number"># {{ doc.get(number_field, '') }}</div>
-      {% if doc.status %}
-      <span class="doc-status">{{ doc.status }}</span>
+      {% set num = doc.get(number_field, '') %}
+      {% if num %}
+      <div class="doc-number"># {{ num }}</div>
+      {% endif %}
+      {% if doc.get("status") %}
+      {% set st = doc.status | lower %}
+      <br>
+      <span class="doc-status {% if st == 'draft' %}status-draft{% elif st == 'sent' %}status-sent{% elif st == 'paid' %}status-paid{% elif st == 'overdue' %}status-overdue{% elif st == 'void' %}status-void{% else %}status-default{% endif %}">
+        {{ doc.status }}
+      </span>
       {% endif %}
     </td>
   </tr></table>
 </div>
+
+<div class="divider-accent"></div>
 
 <!-- Addresses -->
 <div class="addresses">
@@ -42,22 +55,23 @@
         {% if ba.get("street") %}{{ ba.street }}<br>{% endif %}
         {% if ba.get("city") %}{{ ba.city }}{% endif %}
         {% if ba.get("state") %}, {{ ba.state }}{% endif %}
-        {% if ba.get("zip") %} {{ ba.zip }}{% endif %}
+        {% if ba.get("zip") %} - {{ ba.zip }}{% endif %}
         {% if ba.get("country") %}<br>{{ ba.country }}{% endif %}
       </div>
       {% if contact.get("email") %}<div class="addr-detail">{{ contact.email }}</div>{% endif %}
-      {% if contact.get("phone") %}<div class="addr-detail">{{ contact.phone }}</div>{% endif %}
+      {% if contact.get("phone") %}<div class="addr-detail">Tel: {{ contact.phone }}</div>{% endif %}
+      {% if contact.get("gst_no") %}<div class="addr-detail"><strong>GSTIN:</strong> {{ contact.gst_no }}</div>{% endif %}
       {% endif %}
     </td>
     {% set sa = doc.get("shipping_address") or {} %}
-    {% if sa %}
+    {% if sa and (sa.get("street") or sa.get("city")) %}
     <td>
       <div class="addr-label">Ship To</div>
       <div class="addr-detail">
         {% if sa.get("street") %}{{ sa.street }}<br>{% endif %}
         {% if sa.get("city") %}{{ sa.city }}{% endif %}
         {% if sa.get("state") %}, {{ sa.state }}{% endif %}
-        {% if sa.get("zip") %} {{ sa.zip }}{% endif %}
+        {% if sa.get("zip") %} - {{ sa.zip }}{% endif %}
         {% if sa.get("country") %}<br>{{ sa.country }}{% endif %}
       </div>
     </td>
@@ -99,27 +113,32 @@
     <tr>
       <th class="num">#</th>
       <th>Item &amp; Description</th>
+      {% if line_items[0].get("hsn_or_sac") is not none %}<th style="width:70px;">HSN/SAC</th>{% endif %}
       <th class="qty">Qty</th>
       <th class="rate">Rate</th>
-      <th class="tax">Tax</th>
+      {% if line_items | selectattr("tax_percentage") | list %}<th class="tax">Tax</th>{% endif %}
       <th class="amount">Amount</th>
     </tr>
   </thead>
   <tbody>
+    {% set has_hsn = line_items[0].get("hsn_or_sac") is not none %}
+    {% set has_tax = line_items | selectattr("tax_percentage") | list | length > 0 %}
     {% for li in line_items %}
     <tr>
       <td class="num">{{ loop.index }}</td>
       <td>
-        <strong>{{ li.name or li.get("item_name", "") }}</strong>
-        {% if li.description %}<br><span style="color:#6b7280;font-size:9px;">{{ li.description }}</span>{% endif %}
-        {% if li.hsn_or_sac %}<br><span style="color:#6b7280;font-size:9px;">HSN/SAC: {{ li.hsn_or_sac }}</span>{% endif %}
+        <span class="item-name">{{ li.name or li.get("item_name", "") }}</span>
+        {% if li.description %}<br><span class="item-desc">{{ li.description }}</span>{% endif %}
       </td>
+      {% if has_hsn %}<td style="font-size:9px;color:#6B7280;">{{ li.hsn_or_sac or "" }}</td>{% endif %}
       <td class="qty">{{ li.quantity }}{% if li.unit %} {{ li.unit }}{% endif %}</td>
       <td class="rate">{{ li.rate | currency(currency_symbol, precision) }}</td>
+      {% if has_tax %}
       <td class="tax">
         {% if li.tax_percentage %}{{ li.tax_percentage }}%{% endif %}
-        {% if li.tax_name %}<br><span style="font-size:9px;">{{ li.tax_name }}</span>{% endif %}
+        {% if li.tax_name %}<br><span style="font-size:8px;color:#94A3B8;">{{ li.tax_name }}</span>{% endif %}
       </td>
+      {% endif %}
       <td class="amount">{{ ((li.rate * li.quantity) - (li.discount_amount or 0)) | currency(currency_symbol, precision) }}</td>
     </tr>
     {% endfor %}
@@ -137,7 +156,7 @@
     {% if doc.get("discount") and doc.discount != 0 %}
     <tr>
       <td class="label-col">Discount</td>
-      <td class="value-col">-{{ doc.discount | currency(currency_symbol, precision) }}</td>
+      <td class="value-col" style="color:#059669;">-{{ doc.discount | currency(currency_symbol, precision) }}</td>
     </tr>
     {% endif %}
     {% if doc.get("tax_total") and doc.tax_total != 0 %}
@@ -156,16 +175,16 @@
       <td>Total</td>
       <td style="text-align:right;">{{ doc.get("total", 0) | currency(currency_symbol, precision) }}</td>
     </tr>
-    {% if doc.get("balance") is not none and doc.get("balance") != doc.get("total") %}
-    <tr>
-      <td class="label-col">Balance Due</td>
-      <td class="value-col"><strong>{{ doc.balance | currency(currency_symbol, precision) }}</strong></td>
-    </tr>
-    {% endif %}
-    {% if doc.get("payment_made") %}
+    {% if doc.get("payment_made") and doc.payment_made != 0 %}
     <tr>
       <td class="label-col">Payment Made</td>
-      <td class="value-col">{{ doc.payment_made | currency(currency_symbol, precision) }}</td>
+      <td class="value-col" style="color:#059669;">(-) {{ doc.payment_made | currency(currency_symbol, precision) }}</td>
+    </tr>
+    {% endif %}
+    {% if doc.get("balance") is not none and doc.get("balance") != doc.get("total") %}
+    <tr class="balance-due">
+      <td>Balance Due</td>
+      <td style="text-align:right;">{{ doc.balance | currency(currency_symbol, precision) }}</td>
     </tr>
     {% endif %}
   </table>
@@ -184,4 +203,15 @@
   <p>{{ doc.terms }}</p>
 </div>
 {% endif %}
+
+<!-- Signature -->
+<div class="signature-area">
+  <table><tr>
+    <td style="width:50%;"></td>
+    <td style="text-align:right;">
+      <div class="signature-line" style="margin-left:auto;"></div>
+      <div class="signature-label">Authorized Signatory</div>
+    </td>
+  </tr></table>
+</div>
 {% endblock %}
