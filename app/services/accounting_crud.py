@@ -289,23 +289,30 @@ async def acc_line_items_get(
 # ── Comments ────────────────────────────────────────────────────
 
 async def acc_comments_list(
-    table: str, pk_col: str, pk_val: Any, user: UserContext,
+    table: str, pk_col: str, pk_val: Any, user: UserContext, label: str = "Record",
 ) -> list[dict]:
     """List comments for a parent record stored as JSONB array."""
-    rec = await acc_get(table, pk_col, pk_val, user)
-    return rec.get("comments") or []
+    import json as _json
+    rec = await acc_get(table, pk_col, pk_val, user, label)
+    raw = rec.get("comments") or []
+    if isinstance(raw, str):
+        raw = _json.loads(raw)
+    return raw
 
 
 async def acc_comment_add(
     table: str, pk_col: str, pk_val: Any,
-    comment_text: str, user: UserContext, label: str = "Record",
+    comment_text, user: UserContext, label: str = "Record",
 ) -> dict:
     import json, uuid, datetime
     rec = await acc_get(table, pk_col, pk_val, user, label)
-    comments = rec.get("comments") or []
+    raw = rec.get("comments") or []
+    comments = json.loads(raw) if isinstance(raw, str) else raw
+    # Accept either a plain string or a dict with "description" key
+    text = comment_text.get("description", "") if isinstance(comment_text, dict) else comment_text
     entry = {
         "comment_id": str(uuid.uuid4()),
-        "description": comment_text,
+        "description": text,
         "commented_by": str(user.user_id),
         "date": datetime.datetime.utcnow().isoformat(),
     }
@@ -316,14 +323,17 @@ async def acc_comment_add(
 
 async def acc_comment_update(
     table: str, pk_col: str, pk_val: Any,
-    comment_id: str, comment_text: str, user: UserContext, label: str = "Record",
+    comment_id, comment_text, user: UserContext, label: str = "Record",
 ) -> dict:
     import json
     rec = await acc_get(table, pk_col, pk_val, user, label)
-    comments = rec.get("comments") or []
+    raw = rec.get("comments") or []
+    comments = json.loads(raw) if isinstance(raw, str) else raw
+    cid = str(comment_id)
+    text = comment_text.get("description", "") if isinstance(comment_text, dict) else comment_text
     for c in comments:
-        if c.get("comment_id") == comment_id:
-            c["description"] = comment_text
+        if c.get("comment_id") == cid:
+            c["description"] = text
             await acc_update(table, pk_col, pk_val, {"comments": json.dumps(comments)}, user, label)
             return c
     raise HTTPException(status_code=404, detail="Comment not found")
@@ -331,12 +341,14 @@ async def acc_comment_update(
 
 async def acc_comment_delete(
     table: str, pk_col: str, pk_val: Any,
-    comment_id: str, user: UserContext, label: str = "Record",
+    comment_id, user: UserContext, label: str = "Record",
 ) -> dict:
     import json
     rec = await acc_get(table, pk_col, pk_val, user, label)
-    comments = rec.get("comments") or []
-    new = [c for c in comments if c.get("comment_id") != comment_id]
+    raw = rec.get("comments") or []
+    comments = json.loads(raw) if isinstance(raw, str) else raw
+    cid = str(comment_id)
+    new = [c for c in comments if c.get("comment_id") != cid]
     if len(new) == len(comments):
         raise HTTPException(status_code=404, detail="Comment not found")
     await acc_update(table, pk_col, pk_val, {"comments": json.dumps(new)}, user, label)
@@ -407,7 +419,8 @@ async def acc_email_send(
     """Record an email event (actual sending delegated to email service)."""
     import json, datetime
     rec = await acc_get(table, pk_col, pk_val, user, label)
-    history = rec.get("email_history") or []
+    raw = rec.get("email_history") or []
+    history = json.loads(raw) if isinstance(raw, str) else raw
     entry = {
         "to": email_data.get("to_mail_ids", []),
         "cc": email_data.get("cc_mail_ids", []),
@@ -423,8 +436,10 @@ async def acc_email_send(
 async def acc_email_history(
     table: str, pk_col: str, pk_val: Any, user: UserContext, label: str = "Record",
 ) -> list[dict]:
+    import json as _json
     rec = await acc_get(table, pk_col, pk_val, user, label)
-    return rec.get("email_history") or []
+    raw = rec.get("email_history") or []
+    return _json.loads(raw) if isinstance(raw, str) else raw
 
 
 # ── Address updates ─────────────────────────────────────────────

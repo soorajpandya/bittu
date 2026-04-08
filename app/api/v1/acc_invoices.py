@@ -505,11 +505,30 @@ async def list_payments(invoice_id: UUID, user: UserContext = Depends(_auth)):
 
 
 # ---------------------------------------------------------------------------
+# 23b. Apply payment to invoice
+# ---------------------------------------------------------------------------
+
+@router.post("/{invoice_id}/payments", status_code=201)
+async def apply_payment(invoice_id: UUID, body: dict, user: UserContext = Depends(_auth)):
+    body["invoice_id"] = str(invoice_id)
+    return await acc_sub_create("acc_invoice_payments", "invoice_id", invoice_id, body, user)
+
+
+# ---------------------------------------------------------------------------
 # 24. List credits applied
 # ---------------------------------------------------------------------------
 
 @router.get("/{invoice_id}/credits")
 async def list_credits(invoice_id: UUID, user: UserContext = Depends(_auth)):
+    return await acc_sub_list("acc_invoice_credits", "invoice_id", invoice_id, user)
+
+
+# ---------------------------------------------------------------------------
+# 24b. List credits applied (alias for frontend /creditsapplied)
+# ---------------------------------------------------------------------------
+
+@router.get("/{invoice_id}/creditsapplied")
+async def list_credits_applied(invoice_id: UUID, user: UserContext = Depends(_auth)):
     return await acc_sub_list("acc_invoice_credits", "invoice_id", invoice_id, user)
 
 
@@ -521,7 +540,7 @@ async def list_credits(invoice_id: UUID, user: UserContext = Depends(_auth)):
 async def apply_credit(invoice_id: UUID, body: CreditInput, user: UserContext = Depends(_auth)):
     data = body.model_dump(exclude_none=True)
     data["invoice_id"] = str(invoice_id)
-    return await acc_sub_create("acc_invoice_credits", data, user)
+    return await acc_sub_create("acc_invoice_credits", "invoice_id", invoice_id, data, user)
 
 
 # ---------------------------------------------------------------------------
@@ -611,7 +630,7 @@ async def list_comments(invoice_id: UUID, user: UserContext = Depends(_auth)):
 
 @router.post("/{invoice_id}/comments", status_code=201)
 async def add_comment(invoice_id: UUID, body: CommentInput, user: UserContext = Depends(_auth)):
-    return await acc_comment_add(TABLE, PK, invoice_id, body.model_dump(exclude_none=True), user, LABEL)
+    return await acc_comment_add(TABLE, PK, invoice_id, body.description, user, LABEL)
 
 
 # ---------------------------------------------------------------------------
@@ -620,7 +639,7 @@ async def add_comment(invoice_id: UUID, body: CommentInput, user: UserContext = 
 
 @router.put("/{invoice_id}/comments/{comment_id}")
 async def update_comment(invoice_id: UUID, comment_id: UUID, body: CommentInput, user: UserContext = Depends(_auth)):
-    return await acc_comment_update(TABLE, PK, invoice_id, comment_id, body.model_dump(exclude_none=True), user, LABEL)
+    return await acc_comment_update(TABLE, PK, invoice_id, str(comment_id), body.description, user, LABEL)
 
 
 # ---------------------------------------------------------------------------
@@ -629,7 +648,7 @@ async def update_comment(invoice_id: UUID, comment_id: UUID, body: CommentInput,
 
 @router.delete("/{invoice_id}/comments/{comment_id}")
 async def delete_comment(invoice_id: UUID, comment_id: UUID, user: UserContext = Depends(_auth)):
-    return await acc_comment_delete(TABLE, PK, invoice_id, comment_id, user, LABEL)
+    return await acc_comment_delete(TABLE, PK, invoice_id, str(comment_id), user, LABEL)
 
 
 # ---------------------------------------------------------------------------
