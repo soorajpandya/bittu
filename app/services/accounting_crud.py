@@ -3,6 +3,8 @@
 Provides reusable functions for list / get / create / update / delete
 that follow the project's existing pattern (asyncpg raw SQL + tenant isolation).
 """
+import re
+from datetime import date, datetime
 from typing import Any, Optional
 from uuid import UUID
 from fastapi import HTTPException
@@ -10,6 +12,26 @@ from pydantic import BaseModel
 
 from app.core.auth import UserContext
 from app.core.database import get_connection
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
+
+
+def _coerce_dates(data: dict) -> dict:
+    """Convert date/datetime strings to proper Python objects for asyncpg."""
+    for key, val in data.items():
+        if isinstance(val, str):
+            if _DATE_RE.match(val):
+                try:
+                    data[key] = date.fromisoformat(val)
+                except ValueError:
+                    pass
+            elif _DATETIME_RE.match(val):
+                try:
+                    data[key] = datetime.fromisoformat(val)
+                except ValueError:
+                    pass
+    return data
 
 
 async def acc_list(
@@ -37,6 +59,7 @@ async def acc_list(
 
     # Extra filters
     if filters:
+        _coerce_dates(filters)
         for col, val in filters.items():
             if val is not None:
                 params.append(val)
@@ -107,6 +130,7 @@ async def acc_create(
     if user.branch_id:
         data["branch_id"] = user.branch_id
 
+    _coerce_dates(data)
     cols = list(data.keys())
     vals = list(data.values())
     placeholders = ", ".join(f"${i+1}" for i in range(len(vals)))
@@ -129,6 +153,7 @@ async def acc_update(
     label: str = "Record",
 ) -> dict:
     """Update a record by primary key."""
+    _coerce_dates(data)
     updates = []
     params: list[Any] = []
     for col, val in data.items():
