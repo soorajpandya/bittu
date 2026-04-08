@@ -26,7 +26,7 @@ _env = Environment(
 )
 
 
-def _fmt_currency(value: Any, symbol: str = "₹", precision: int = 2) -> str:
+def _fmt_currency(value: Any, symbol: str = "Rs.", precision: int = 2) -> str:
     try:
         return f"{symbol}{float(value):,.{precision}f}"
     except (TypeError, ValueError):
@@ -110,7 +110,7 @@ async def _get_org(user: UserContext) -> dict:
             org["fssai_number"] = rest["fssai_number"]
 
         # Defaults
-        org.setdefault("currency_symbol", "₹")
+        org.setdefault("currency_symbol", "Rs.")
         org.setdefault("price_precision", 2)
         org.setdefault("address", {})
 
