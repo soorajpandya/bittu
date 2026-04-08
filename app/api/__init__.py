@@ -123,6 +123,8 @@ from app.api.v1 import (
     acc_web_tabs,
     # ── Accounting / Sync (restaurant ↔ accounting bridge) ──
     acc_sync,
+    # ── Accounting / Reports ──
+    acc_reports,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -249,3 +251,5 @@ router.include_router(acc_sandbox.router)
 router.include_router(acc_web_tabs.router)
 # ── Accounting / Sync (restaurant ↔ accounting bridge) ──
 router.include_router(acc_sync.router)
+# ── Accounting / Reports ──
+router.include_router(acc_reports.router)
