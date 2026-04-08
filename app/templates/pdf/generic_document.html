@@ -2,108 +2,294 @@
 {% set doc_title = label | default("Document") %}
 
 {% block content %}
-<!-- Document title + Logo row -->
+<style>
+  .invoice-container {
+    max-width: 900px;
+    margin: auto;
+    padding: 24px;
+    font-family: 'DM Sans', sans-serif;
+    color: #222;
+  }
+
+  .header table {
+    width: 100%;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 12px;
+  }
+
+  .doc-title {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+  }
+
+  .org-logo {
+    max-height: 60px;
+    width: auto;
+    object-fit: contain;
+  }
+
+  .doc-meta-row {
+    margin-top: 20px;
+  }
+
+  .doc-meta-row table {
+    width: 100%;
+  }
+
+  .meta-label {
+    font-size: 11px;
+    color: #777;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .meta-value,
+  .meta-value-bold {
+    font-size: 14px;
+    margin-top: 2px;
+  }
+
+  .meta-value-bold {
+    font-weight: 600;
+  }
+
+  .doc-status {
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .status-paid { background: #e6f4ea; color: #2e7d32; }
+  .status-draft { background: #f5f5f5; color: #666; }
+  .status-sent { background: #e3f2fd; color: #1565c0; }
+  .status-overdue { background: #fdecea; color: #c62828; }
+
+  .addresses {
+    margin-top: 28px;
+  }
+
+  .addresses table {
+    width: 100%;
+  }
+
+  .addr-label {
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+
+  .addr-name {
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .addr-detail {
+    font-size: 13px;
+    color: #555;
+    line-height: 1.5;
+  }
+
+  .divider {
+    height: 1px;
+    background: #eee;
+    margin: 24px 0;
+  }
+
+  .items-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .items-table th {
+    text-align: left;
+    font-size: 12px;
+    text-transform: uppercase;
+    color: #666;
+    border-bottom: 1px solid #ddd;
+    padding: 10px 6px;
+  }
+
+  .items-table td {
+    padding: 12px 6px;
+    border-bottom: 1px solid #f2f2f2;
+    font-size: 14px;
+  }
+
+  .items-table .rate,
+  .items-table .qty,
+  .items-table .amount {
+    text-align: right;
+  }
+
+  .item-name {
+    font-weight: 500;
+  }
+
+  .item-desc {
+    font-size: 12px;
+    color: #777;
+  }
+
+  .item-hsn {
+    font-size: 11px;
+    color: #999;
+  }
+
+  .totals-section {
+    margin-top: 20px;
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .totals-section table {
+    width: 300px;
+  }
+
+  .label-col {
+    font-size: 13px;
+    color: #555;
+    padding: 6px 0;
+  }
+
+  .value-col {
+    text-align: right;
+    font-weight: 500;
+  }
+
+  .bottom-divider {
+    height: 2px;
+    background: #000;
+    margin: 24px 0;
+  }
+
+  .bottom-section table {
+    width: 100%;
+  }
+
+  .terms-label {
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+
+  .terms-text {
+    font-size: 13px;
+    color: #555;
+    line-height: 1.5;
+  }
+
+  .notes-section {
+    margin-top: 16px;
+  }
+
+  .notes-section h4 {
+    margin-bottom: 4px;
+    font-size: 13px;
+  }
+
+  .invoice-total-label {
+    font-size: 12px;
+    color: #777;
+    text-transform: uppercase;
+  }
+
+  .invoice-total-value {
+    font-size: 26px;
+    font-weight: 700;
+    margin-top: 4px;
+  }
+</style>
+
+<div class="invoice-container">
+
+<!-- HEADER -->
 <div class="header">
-  <table><tr>
-    <td>
-      <div class="doc-title">{{ label | default("Document") }}</div>
-    </td>
-    <td style="text-align:right; width:80px;">
-      {% if org.get("logo_url") %}
-      <img src="{{ org.logo_url }}" class="org-logo" alt="Logo">
-      {% endif %}
-    </td>
-  </tr></table>
+  <table>
+    <tr>
+      <td>
+        <div class="doc-title">{{ label | default("Document") }}</div>
+      </td>
+      <td style="text-align:right;">
+        {% if org.get("logo_url") %}
+        <img src="{{ org.logo_url }}" class="org-logo" alt="Logo">
+        {% endif %}
+      </td>
+    </tr>
+  </table>
 </div>
 
-<!-- Invoice number + date meta row -->
+<!-- META -->
 <div class="doc-meta-row">
-  <table><tr>
-    {% set num = doc.get(number_field, '') %}
-    {% if num %}
-    <td style="width:33%;">
-      <div class="meta-label">{{ label | default("Document") }} Number</div>
-      <div class="meta-value-bold">{{ num }}</div>
-    </td>
-    {% endif %}
-    {% if doc.get("date") %}
-    <td style="width:33%;">
-      <div class="meta-label">Date of Issue</div>
-      <div class="meta-value">{{ doc.date | fdate }}</div>
-    </td>
-    {% endif %}
-    {% if doc.get("due_date") %}
-    <td style="width:33%;">
-      <div class="meta-label">Due Date</div>
-      <div class="meta-value">{{ doc.due_date | fdate }}</div>
-    </td>
-    {% endif %}
-    {% if doc.get("expiry_date") %}
-    <td style="width:33%;">
-      <div class="meta-label">Expiry Date</div>
-      <div class="meta-value">{{ doc.expiry_date | fdate }}</div>
-    </td>
-    {% endif %}
-    {% if doc.get("status") %}
-    <td style="text-align:right;">
-      {% set st = doc.status | lower %}
-      <span class="doc-status {% if st == 'draft' %}status-draft{% elif st == 'sent' %}status-sent{% elif st == 'paid' %}status-paid{% elif st == 'overdue' %}status-overdue{% elif st == 'void' %}status-void{% else %}status-default{% endif %}">
-        {{ doc.status }}
-      </span>
-    </td>
-    {% endif %}
-  </tr></table>
-</div>
-
-<!-- Addresses: Bill To | Your Company | Contact -->
-<div class="addresses">
-  <table><tr>
-    <td style="width:33%;">
-      <div class="addr-label">{{ contact_label | default("Bill To") }}</div>
-      {% if contact %}
-      <div class="addr-name">{{ contact.get("contact_name", contact.get("company_name", "")) }}</div>
-      {% set ba = doc.get("billing_address") or {} %}
-      <div class="addr-detail">
-        {% if ba.get("street") %}{{ ba.street }}<br>{% endif %}
-        {% if ba.get("city") %}{{ ba.city }}{% endif %}
-        {% if ba.get("state") %}, {{ ba.state }}{% endif %}
-        {% if ba.get("zip") %} - {{ ba.zip }}{% endif %}
-        {% if ba.get("country") %}<br>{{ ba.country }}{% endif %}
-      </div>
-      {% if contact.get("phone") %}<div class="addr-detail">{{ contact.phone }}</div>{% endif %}
+  <table>
+    <tr>
+      {% set num = doc.get(number_field, '') %}
+      {% if num %}
+      <td>
+        <div class="meta-label">Number</div>
+        <div class="meta-value-bold">{{ num }}</div>
+      </td>
       {% endif %}
-    </td>
-    <td style="width:33%;">
-      <div class="addr-label">{{ org.name | default("Your Company") }}</div>
-      <div class="addr-detail">
-        {% if org_address.get("street") %}{{ org_address.street }}<br>{% endif %}
-        {% if org_address.get("city") %}{{ org_address.city }}{% endif %}
-        {% if org_address.get("state") %}, {{ org_address.state }}{% endif %}
-        {% if org_address.get("zip") %} - {{ org_address.zip }}{% endif %}
-        {% if org_address.get("country") %}<br>{{ org_address.country }}{% endif %}
-      </div>
-    </td>
-    <td style="width:33%;">
-      {% if org.get("phone") %}<div class="addr-detail">{{ org.phone }}</div>{% endif %}
-      {% if org.get("email") %}<div class="addr-detail">{{ org.email }}</div>{% endif %}
-      {% if org.get("tax_id_label") and org.get("tax_id_value") %}<div class="addr-detail">{{ org.tax_id_label }}: {{ org.tax_id_value }}</div>{% endif %}
-      {% if org.get("fssai_number") %}<div class="addr-detail">FSSAI: {{ org.fssai_number }}</div>{% endif %}
-      {% if contact.get("gst_no") %}<div class="addr-detail" style="margin-top:6px;">Customer GSTIN: {{ contact.gst_no }}</div>{% endif %}
-    </td>
-  </tr></table>
+
+      {% if doc.get("date") %}
+      <td>
+        <div class="meta-label">Issue Date</div>
+        <div class="meta-value">{{ doc.date | fdate }}</div>
+      </td>
+      {% endif %}
+
+      {% if doc.get("due_date") %}
+      <td>
+        <div class="meta-label">Due Date</div>
+        <div class="meta-value">{{ doc.due_date | fdate }}</div>
+      </td>
+      {% endif %}
+
+      {% if doc.get("status") %}
+      <td style="text-align:right;">
+        <span class="doc-status status-{{ doc.status | lower }}">
+          {{ doc.status }}
+        </span>
+      </td>
+      {% endif %}
+    </tr>
+  </table>
 </div>
 
-<!-- Accent divider before items -->
+<!-- ADDRESSES -->
+<div class="addresses">
+  <table>
+    <tr>
+      <td>
+        <div class="addr-label">{{ contact_label | default("Bill To") }}</div>
+        {% if contact %}
+        <div class="addr-name">{{ contact.get("contact_name", contact.get("company_name", "")) }}</div>
+        {% endif %}
+      </td>
+
+      <td>
+        <div class="addr-label">{{ org.name | default("Your Company") }}</div>
+      </td>
+
+      <td style="text-align:right;">
+        {% if org.get("email") %}
+        <div class="addr-detail">{{ org.email }}</div>
+        {% endif %}
+      </td>
+    </tr>
+  </table>
+</div>
+
 <div class="divider"></div>
 
-<!-- Line Items -->
+<!-- ITEMS -->
 {% if line_items %}
 <table class="items-table">
   <thead>
     <tr>
       <th>Description</th>
-      <th class="rate">Unit Cost</th>
-      <th class="qty">QTY/HR Rate</th>
+      <th class="rate">Rate</th>
+      <th class="qty">Qty</th>
       <th class="amount">Amount</th>
     </tr>
   </thead>
@@ -112,77 +298,50 @@
     <tr>
       <td>
         <span class="item-name">{{ li.name or li.get("item_name", "") }}</span>
-        {% if li.description %}<br><span class="item-desc">{{ li.description }}</span>{% endif %}
-        {% if li.hsn_or_sac %}<br><span class="item-hsn">HSN: {{ li.hsn_or_sac }}</span>{% endif %}
       </td>
       <td class="rate">{{ li.rate | currency(currency_symbol, precision) }}</td>
-      <td class="qty">{{ li.quantity }}{% if li.unit %} {{ li.unit }}{% endif %}</td>
-      <td class="amount">{{ ((li.rate * li.quantity) - (li.discount_amount or 0)) | currency(currency_symbol, precision) }}</td>
+      <td class="qty">{{ li.quantity }}</td>
+      <td class="amount">
+        {{ ((li.rate * li.quantity) - (li.discount_amount or 0)) | currency(currency_symbol, precision) }}
+      </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 {% endif %}
 
-<!-- Divider after items -->
 <div class="divider"></div>
 
-<!-- Totals (right-aligned) -->
+<!-- TOTALS -->
 <div class="totals-section">
   <table>
     <tr>
       <td class="label-col">Subtotal</td>
       <td class="value-col">{{ doc.get("sub_total", 0) | currency(currency_symbol, precision) }}</td>
     </tr>
-    {% if doc.get("discount") is not none %}
-    <tr>
-      <td class="label-col">Discount</td>
-      <td class="value-col">{{ doc.get("discount", 0) | currency(currency_symbol, precision) }}</td>
-    </tr>
-    {% endif %}
-    {% if doc.get("tax_total") is not none %}
     <tr>
       <td class="label-col">Tax</td>
       <td class="value-col">{{ doc.get("tax_total", 0) | currency(currency_symbol, precision) }}</td>
     </tr>
-    {% endif %}
-    {% if doc.get("payment_made") and doc.payment_made != 0 %}
-    <tr>
-      <td class="label-col">Payment Made</td>
-      <td class="value-col">(-) {{ doc.payment_made | currency(currency_symbol, precision) }}</td>
-    </tr>
-    {% endif %}
   </table>
 </div>
 
-<!-- Bottom divider -->
 <div class="bottom-divider"></div>
 
-<!-- Bottom section: Terms (left) + Invoice Total (right) -->
+<!-- TOTAL -->
 <div class="bottom-section">
-  <table><tr>
-    <td style="width:55%; vertical-align:top;">
-      {% if doc.get("terms") %}
-      <div class="terms-label">Terms</div>
-      <div class="terms-text">{{ doc.terms }}</div>
-      {% endif %}
-      {% if doc.get("notes") %}
-      <div class="notes-section">
-        <h4>Notes</h4>
-        <p>{{ doc.notes }}</p>
-      </div>
-      {% endif %}
-    </td>
-    <td style="width:45%; text-align:right; vertical-align:top;">
-      <div class="invoice-total-label">{{ label | default("Document") }} Total</div>
-      <div class="invoice-total-value">{{ doc.get("total", 0) | currency(currency_symbol, precision) }}</div>
-      {% if doc.get("balance") is not none and doc.get("balance") != doc.get("total") %}
-      <div style="margin-top:6px;">
-        <div class="meta-label">Balance Due</div>
-        <div style="font-size:16px; font-weight:700; color:#C62828;">{{ doc.balance | currency(currency_symbol, precision) }}</div>
-      </div>
-      {% endif %}
-    </td>
-  </tr></table>
+  <table>
+    <tr>
+      <td></td>
+      <td style="text-align:right;">
+        <div class="invoice-total-label">Total</div>
+        <div class="invoice-total-value">
+          {{ doc.get("total", 0) | currency(currency_symbol, precision) }}
+        </div>
+      </td>
+    </tr>
+  </table>
+</div>
+
 </div>
 {% endblock %}
