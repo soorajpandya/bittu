@@ -7,7 +7,7 @@ debit notes, bills, retainer invoices, vendor credits, sales receipts.
 import io
 import json
 import zipfile
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Optional
 from uuid import UUID
@@ -43,7 +43,7 @@ def _fmt_date(value: Any, fmt: str = "%d %b %Y") -> str:
             except ValueError:
                 continue
         return value
-    if isinstance(value, datetime):
+    if isinstance(value, (datetime, date)):
         return value.strftime(fmt)
     return str(value)
 
@@ -127,7 +127,7 @@ async def _get_contact(contact_id: UUID, user: UserContext) -> dict:
         return dict(row) if row else {}
 
 
-async def _get_line_items(parent_table: str, parent_pk: str, parent_id: UUID, user: UserContext) -> list[dict]:
+async def _get_line_items(parent_table: str, parent_pk: str, parent_id: UUID, line_type: str, user: UserContext) -> list[dict]:
     uid = user.owner_id if user.is_branch_user else user.user_id
     async with get_connection() as conn:
         rows = await conn.fetch(
@@ -135,7 +135,7 @@ async def _get_line_items(parent_table: str, parent_pk: str, parent_id: UUID, us
                 JOIN {parent_table} p ON p.{parent_pk} = li.parent_id
                 WHERE li.parent_id = $1 AND li.parent_type = $2 AND p.user_id = $3
                 ORDER BY li.item_order, li.created_at""",
-            parent_id, parent_table, uid,
+            parent_id, line_type, uid,
         )
         return [dict(r) for r in rows]
 
@@ -161,6 +161,7 @@ DOC_CONFIG = {
         "number_field": "invoice_number",
         "label": "Invoice",
         "template": "invoice.html",
+        "line_type": "invoice",
     },
     "estimate": {
         "table": "acc_estimates",
@@ -169,6 +170,7 @@ DOC_CONFIG = {
         "number_field": "estimate_number",
         "label": "Estimate",
         "template": "estimate.html",
+        "line_type": "estimate",
     },
     "salesorder": {
         "table": "acc_sales_orders",
@@ -177,6 +179,7 @@ DOC_CONFIG = {
         "number_field": "salesorder_number",
         "label": "Sales Order",
         "template": "salesorder.html",
+        "line_type": "sales_order",
     },
     "purchaseorder": {
         "table": "acc_purchase_orders",
@@ -185,6 +188,7 @@ DOC_CONFIG = {
         "number_field": "purchaseorder_number",
         "label": "Purchase Order",
         "template": "purchaseorder.html",
+        "line_type": "purchase_order",
     },
     "creditnote": {
         "table": "acc_credit_notes",
@@ -193,6 +197,7 @@ DOC_CONFIG = {
         "number_field": "creditnote_number",
         "label": "Credit Note",
         "template": "creditnote.html",
+        "line_type": "credit_note",
     },
     "debitnote": {
         "table": "acc_debit_notes",
@@ -201,6 +206,7 @@ DOC_CONFIG = {
         "number_field": "debitnote_number",
         "label": "Debit Note",
         "template": "debitnote.html",
+        "line_type": "debit_note",
     },
     "bill": {
         "table": "acc_bills",
@@ -209,6 +215,7 @@ DOC_CONFIG = {
         "number_field": "bill_number",
         "label": "Bill",
         "template": "bill.html",
+        "line_type": "bill",
     },
     "retainerinvoice": {
         "table": "acc_retainer_invoices",
@@ -217,6 +224,7 @@ DOC_CONFIG = {
         "number_field": "retainerinvoice_number",
         "label": "Retainer Invoice",
         "template": "retainerinvoice.html",
+        "line_type": "retainer_invoice",
     },
     "vendorcredit": {
         "table": "acc_vendor_credits",
@@ -225,6 +233,7 @@ DOC_CONFIG = {
         "number_field": "vendorcredit_number",
         "label": "Vendor Credit",
         "template": "vendorcredit.html",
+        "line_type": "vendor_credit",
     },
     "salesreceipt": {
         "table": "acc_sales_receipts",
@@ -233,6 +242,7 @@ DOC_CONFIG = {
         "number_field": "salesreceipt_number",
         "label": "Sales Receipt",
         "template": "salesreceipt.html",
+        "line_type": "sales_receipt",
     },
 }
 
@@ -269,7 +279,7 @@ async def generate_document_pdf(
         contact = await _get_contact(contact_id, user)
 
     # Fetch line items
-    line_items = await _get_line_items(cfg["table"], cfg["pk"], doc_id, user)
+    line_items = await _get_line_items(cfg["table"], cfg["pk"], doc_id, cfg["line_type"], user)
 
     # Parse JSONB fields
     for field in ("billing_address", "shipping_address", "custom_fields", "tags"):
