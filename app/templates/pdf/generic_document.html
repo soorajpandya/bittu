@@ -2,51 +2,63 @@
 {% set doc_title = label | default("Document") %}
 
 {% block content %}
-<!-- Header -->
+<!-- Document title + Logo row -->
 <div class="header">
   <table><tr>
-    <td class="org-info" style="width:65%;">
+    <td>
+      <div class="doc-title">{{ label | default("Document") }}</div>
+    </td>
+    <td style="text-align:right; width:80px;">
       {% if org.get("logo_url") %}
       <img src="{{ org.logo_url }}" class="org-logo" alt="Logo">
-      {% endif %}
-      <h1>{{ org.name | default("Organization") }}</h1>
-      {% if org_address %}
-      <p>
-        {% if org_address.get("street") %}{{ org_address.street }}{% endif %}
-        {% if org_address.get("city") %}{% if org_address.get("street") %}, {% endif %}{{ org_address.city }}{% endif %}
-        {% if org_address.get("state") %}, {{ org_address.state }}{% endif %}
-        {% if org_address.get("zip") %} - {{ org_address.zip }}{% endif %}
-        {% if org_address.get("country") %}, {{ org_address.country }}{% endif %}
-      </p>
-      {% endif %}
-      {% if org.get("phone") %}<p>Tel: {{ org.phone }}</p>{% endif %}
-      {% if org.get("email") %}<p>{{ org.email }}</p>{% endif %}
-      {% if org.get("tax_id_label") and org.get("tax_id_value") %}<p><strong>{{ org.tax_id_label }}:</strong> {{ org.tax_id_value }}</p>{% endif %}
-      {% if org.get("fssai_number") %}<p><strong>FSSAI:</strong> {{ org.fssai_number }}</p>{% endif %}
-    </td>
-    <td class="doc-badge">
-      <h2>{{ label | default("Document") }}</h2>
-      {% set num = doc.get(number_field, '') %}
-      {% if num %}
-      <div class="doc-number"># {{ num }}</div>
-      {% endif %}
-      {% if doc.get("status") %}
-      {% set st = doc.status | lower %}
-      <br>
-      <span class="doc-status {% if st == 'draft' %}status-draft{% elif st == 'sent' %}status-sent{% elif st == 'paid' %}status-paid{% elif st == 'overdue' %}status-overdue{% elif st == 'void' %}status-void{% else %}status-default{% endif %}">
-        {{ doc.status }}
-      </span>
       {% endif %}
     </td>
   </tr></table>
 </div>
 
-<div class="divider-accent"></div>
+<!-- Invoice number + date meta row -->
+<div class="doc-meta-row">
+  <table><tr>
+    {% set num = doc.get(number_field, '') %}
+    {% if num %}
+    <td style="width:33%;">
+      <div class="meta-label">{{ label | default("Document") }} Number</div>
+      <div class="meta-value-bold">{{ num }}</div>
+    </td>
+    {% endif %}
+    {% if doc.get("date") %}
+    <td style="width:33%;">
+      <div class="meta-label">Date of Issue</div>
+      <div class="meta-value">{{ doc.date | fdate }}</div>
+    </td>
+    {% endif %}
+    {% if doc.get("due_date") %}
+    <td style="width:33%;">
+      <div class="meta-label">Due Date</div>
+      <div class="meta-value">{{ doc.due_date | fdate }}</div>
+    </td>
+    {% endif %}
+    {% if doc.get("expiry_date") %}
+    <td style="width:33%;">
+      <div class="meta-label">Expiry Date</div>
+      <div class="meta-value">{{ doc.expiry_date | fdate }}</div>
+    </td>
+    {% endif %}
+    {% if doc.get("status") %}
+    <td style="text-align:right;">
+      {% set st = doc.status | lower %}
+      <span class="doc-status {% if st == 'draft' %}status-draft{% elif st == 'sent' %}status-sent{% elif st == 'paid' %}status-paid{% elif st == 'overdue' %}status-overdue{% elif st == 'void' %}status-void{% else %}status-default{% endif %}">
+        {{ doc.status }}
+      </span>
+    </td>
+    {% endif %}
+  </tr></table>
+</div>
 
-<!-- Addresses -->
+<!-- Addresses: Bill To | Your Company | Contact -->
 <div class="addresses">
   <table><tr>
-    <td>
+    <td style="width:33%;">
       <div class="addr-label">{{ contact_label | default("Bill To") }}</div>
       {% if contact %}
       <div class="addr-name">{{ contact.get("contact_name", contact.get("company_name", "")) }}</div>
@@ -58,87 +70,53 @@
         {% if ba.get("zip") %} - {{ ba.zip }}{% endif %}
         {% if ba.get("country") %}<br>{{ ba.country }}{% endif %}
       </div>
-      {% if contact.get("email") %}<div class="addr-detail">{{ contact.email }}</div>{% endif %}
-      {% if contact.get("phone") %}<div class="addr-detail">Tel: {{ contact.phone }}</div>{% endif %}
-      {% if contact.get("gst_no") %}<div class="addr-detail"><strong>GSTIN:</strong> {{ contact.gst_no }}</div>{% endif %}
+      {% if contact.get("phone") %}<div class="addr-detail">{{ contact.phone }}</div>{% endif %}
       {% endif %}
     </td>
-    {% set sa = doc.get("shipping_address") or {} %}
-    {% if sa and (sa.get("street") or sa.get("city")) %}
-    <td>
-      <div class="addr-label">Ship To</div>
+    <td style="width:33%;">
+      <div class="addr-label">{{ org.name | default("Your Company") }}</div>
       <div class="addr-detail">
-        {% if sa.get("street") %}{{ sa.street }}<br>{% endif %}
-        {% if sa.get("city") %}{{ sa.city }}{% endif %}
-        {% if sa.get("state") %}, {{ sa.state }}{% endif %}
-        {% if sa.get("zip") %} - {{ sa.zip }}{% endif %}
-        {% if sa.get("country") %}<br>{{ sa.country }}{% endif %}
+        {% if org_address.get("street") %}{{ org_address.street }}<br>{% endif %}
+        {% if org_address.get("city") %}{{ org_address.city }}{% endif %}
+        {% if org_address.get("state") %}, {{ org_address.state }}{% endif %}
+        {% if org_address.get("zip") %} - {{ org_address.zip }}{% endif %}
+        {% if org_address.get("country") %}<br>{{ org_address.country }}{% endif %}
       </div>
     </td>
-    {% endif %}
+    <td style="width:33%;">
+      {% if org.get("phone") %}<div class="addr-detail">{{ org.phone }}</div>{% endif %}
+      {% if org.get("email") %}<div class="addr-detail">{{ org.email }}</div>{% endif %}
+      {% if org.get("tax_id_label") and org.get("tax_id_value") %}<div class="addr-detail">{{ org.tax_id_label }}: {{ org.tax_id_value }}</div>{% endif %}
+      {% if org.get("fssai_number") %}<div class="addr-detail">FSSAI: {{ org.fssai_number }}</div>{% endif %}
+      {% if contact.get("gst_no") %}<div class="addr-detail" style="margin-top:6px;">Customer GSTIN: {{ contact.gst_no }}</div>{% endif %}
+    </td>
   </tr></table>
 </div>
 
-<!-- Meta info -->
-<div class="meta-grid">
-  <table><tr>
-  {% if doc.get("date") %}
-  <td><div class="meta-label">Date</div><div class="meta-value">{{ doc.date | fdate }}</div></td>
-  {% endif %}
-  {% if doc.get("due_date") %}
-  <td><div class="meta-label">Due Date</div><div class="meta-value">{{ doc.due_date | fdate }}</div></td>
-  {% endif %}
-  {% if doc.get("expiry_date") %}
-  <td><div class="meta-label">Expiry Date</div><div class="meta-value">{{ doc.expiry_date | fdate }}</div></td>
-  {% endif %}
-  {% if doc.get("reference_number") %}
-  <td><div class="meta-label">Reference</div><div class="meta-value">{{ doc.reference_number }}</div></td>
-  {% endif %}
-  {% if doc.get("payment_terms_label") %}
-  <td><div class="meta-label">Payment Terms</div><div class="meta-value">{{ doc.payment_terms_label }}</div></td>
-  {% endif %}
-  {% if doc.get("salesperson_name") %}
-  <td><div class="meta-label">Salesperson</div><div class="meta-value">{{ doc.salesperson_name }}</div></td>
-  {% endif %}
-  {% if doc.get("place_of_supply") %}
-  <td><div class="meta-label">Place of Supply</div><div class="meta-value">{{ doc.place_of_supply }}</div></td>
-  {% endif %}
-  </tr></table>
-</div>
+<!-- Accent divider before items -->
+<div class="divider"></div>
 
 <!-- Line Items -->
 {% if line_items %}
 <table class="items-table">
   <thead>
     <tr>
-      <th class="num">#</th>
-      <th>Item &amp; Description</th>
-      {% if line_items[0].get("hsn_or_sac") is not none %}<th style="width:70px;">HSN/SAC</th>{% endif %}
-      <th class="qty">Qty</th>
-      <th class="rate">Rate</th>
-      {% if line_items | selectattr("tax_percentage") | list %}<th class="tax">Tax</th>{% endif %}
+      <th>Description</th>
+      <th class="rate">Unit Cost</th>
+      <th class="qty">QTY/HR Rate</th>
       <th class="amount">Amount</th>
     </tr>
   </thead>
   <tbody>
-    {% set has_hsn = line_items[0].get("hsn_or_sac") is not none %}
-    {% set has_tax = line_items | selectattr("tax_percentage") | list | length > 0 %}
     {% for li in line_items %}
     <tr>
-      <td class="num">{{ loop.index }}</td>
       <td>
         <span class="item-name">{{ li.name or li.get("item_name", "") }}</span>
         {% if li.description %}<br><span class="item-desc">{{ li.description }}</span>{% endif %}
+        {% if li.hsn_or_sac %}<br><span class="item-hsn">HSN: {{ li.hsn_or_sac }}</span>{% endif %}
       </td>
-      {% if has_hsn %}<td style="font-size:9px;color:#6B7280;">{{ li.hsn_or_sac or "" }}</td>{% endif %}
-      <td class="qty">{{ li.quantity }}{% if li.unit %} {{ li.unit }}{% endif %}</td>
       <td class="rate">{{ li.rate | currency(currency_symbol, precision) }}</td>
-      {% if has_tax %}
-      <td class="tax">
-        {% if li.tax_percentage %}{{ li.tax_percentage }}%{% endif %}
-        {% if li.tax_name %}<br><span style="font-size:8px;color:#94A3B8;">{{ li.tax_name }}</span>{% endif %}
-      </td>
-      {% endif %}
+      <td class="qty">{{ li.quantity }}{% if li.unit %} {{ li.unit }}{% endif %}</td>
       <td class="amount">{{ ((li.rate * li.quantity) - (li.discount_amount or 0)) | currency(currency_symbol, precision) }}</td>
     </tr>
     {% endfor %}
@@ -146,71 +124,64 @@
 </table>
 {% endif %}
 
-<!-- Totals -->
+<!-- Divider after items -->
+<div class="divider"></div>
+
+<!-- Totals (right-aligned) -->
 <div class="totals-section">
   <table>
     <tr>
-      <td class="label-col">Sub Total</td>
+      <td class="label-col">Subtotal</td>
       <td class="value-col">{{ doc.get("sub_total", 0) | currency(currency_symbol, precision) }}</td>
     </tr>
-    {% if doc.get("discount") and doc.discount != 0 %}
+    {% if doc.get("discount") is not none %}
     <tr>
       <td class="label-col">Discount</td>
-      <td class="value-col" style="color:#059669;">-{{ doc.discount | currency(currency_symbol, precision) }}</td>
+      <td class="value-col">{{ doc.get("discount", 0) | currency(currency_symbol, precision) }}</td>
     </tr>
     {% endif %}
-    {% if doc.get("tax_total") and doc.tax_total != 0 %}
+    {% if doc.get("tax_total") is not none %}
     <tr>
       <td class="label-col">Tax</td>
-      <td class="value-col">{{ doc.tax_total | currency(currency_symbol, precision) }}</td>
+      <td class="value-col">{{ doc.get("tax_total", 0) | currency(currency_symbol, precision) }}</td>
     </tr>
     {% endif %}
-    {% if doc.get("adjustment") and doc.adjustment != 0 %}
-    <tr>
-      <td class="label-col">Adjustment</td>
-      <td class="value-col">{{ doc.adjustment | currency(currency_symbol, precision) }}</td>
-    </tr>
-    {% endif %}
-    <tr class="grand-total">
-      <td>Total</td>
-      <td style="text-align:right;">{{ doc.get("total", 0) | currency(currency_symbol, precision) }}</td>
-    </tr>
     {% if doc.get("payment_made") and doc.payment_made != 0 %}
     <tr>
       <td class="label-col">Payment Made</td>
-      <td class="value-col" style="color:#059669;">(-) {{ doc.payment_made | currency(currency_symbol, precision) }}</td>
-    </tr>
-    {% endif %}
-    {% if doc.get("balance") is not none and doc.get("balance") != doc.get("total") %}
-    <tr class="balance-due">
-      <td>Balance Due</td>
-      <td style="text-align:right;">{{ doc.balance | currency(currency_symbol, precision) }}</td>
+      <td class="value-col">(-) {{ doc.payment_made | currency(currency_symbol, precision) }}</td>
     </tr>
     {% endif %}
   </table>
 </div>
 
-<!-- Notes & Terms -->
-{% if doc.get("notes") %}
-<div class="notes-section">
-  <h4>Notes</h4>
-  <p>{{ doc.notes }}</p>
-</div>
-{% endif %}
-{% if doc.get("terms") %}
-<div class="notes-section">
-  <h4>Terms &amp; Conditions</h4>
-  <p>{{ doc.terms }}</p>
-</div>
-{% endif %}
+<!-- Bottom divider -->
+<div class="bottom-divider"></div>
 
-<!-- Signature -->
-<div class="signature-area">
+<!-- Bottom section: Terms (left) + Invoice Total (right) -->
+<div class="bottom-section">
   <table><tr>
-    <td style="width:50%;"></td>
-    <td style="text-align:right;">
-      <div class="signature-line" style="margin-left:auto;"></div>
-      <div class="signature-label">Authorized Signatory</div>
+    <td style="width:55%; vertical-align:top;">
+      {% if doc.get("terms") %}
+      <div class="terms-label">Terms</div>
+      <div class="terms-text">{{ doc.terms }}</div>
+      {% endif %}
+      {% if doc.get("notes") %}
+      <div class="notes-section">
+        <h4>Notes</h4>
+        <p>{{ doc.notes }}</p>
+      </div>
+      {% endif %}
+    </td>
+    <td style="width:45%; text-align:right; vertical-align:top;">
+      <div class="invoice-total-label">{{ label | default("Document") }} Total</div>
+      <div class="invoice-total-value">{{ doc.get("total", 0) | currency(currency_symbol, precision) }}</div>
+      {% if doc.get("balance") is not none and doc.get("balance") != doc.get("total") %}
+      <div style="margin-top:6px;">
+        <div class="meta-label">Balance Due</div>
+        <div style="font-size:16px; font-weight:700; color:#C62828;">{{ doc.balance | currency(currency_symbol, precision) }}</div>
+      </div>
+      {% endif %}
     </td>
   </tr></table>
 </div>

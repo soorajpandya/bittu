@@ -6,120 +6,116 @@
 <style>
 {% block extra_css %}{% endblock %}
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: Helvetica, Arial, sans-serif; color: #333333; font-size: 10px; line-height: 1.5; }
-.page { padding: 0; }
-@page { size: A4; margin: 0; }
+body { font-family: Helvetica, Arial, sans-serif; color: #2D2D2D; font-size: 10px; line-height: 1.5; background: #F5F5F5; }
+@page { size: A4; margin: 12mm; }
+.page { background: #FFFFFF; padding: 40px 44px 30px 44px; }
 
-/* Color accent bar at top */
-.accent-bar { height: 6px; background: linear-gradient(90deg, #0B5ED7 0%, #3B82F6 100%); }
+/* ── Top accent line ── */
+.accent-line { height: 3px; background: #E8DCDC; margin-bottom: 30px; }
 
-.content-wrap { padding: 28px 36px 20px 36px; }
-
-/* Header */
-.header { margin-bottom: 20px; }
+/* ── Header area ── */
+.header { margin-bottom: 6px; }
 .header table { width: 100%; }
 .header td { vertical-align: top; }
-.org-logo { width: 56px; height: 56px; border-radius: 6px; object-fit: cover; margin-bottom: 6px; }
-.org-info { }
-.org-info h1 { font-size: 18px; color: #0B5ED7; margin-bottom: 2px; font-weight: 700; letter-spacing: 0.3px; }
-.org-info p { color: #666666; font-size: 9px; line-height: 1.5; }
-.doc-badge { text-align: right; }
-.doc-badge h2 { font-size: 22px; text-transform: uppercase; color: #0B5ED7; letter-spacing: 1.5px; font-weight: 700; }
-.doc-badge .doc-number { font-size: 12px; color: #555555; margin-top: 4px; font-weight: 500; }
-.doc-badge .doc-status {
-    display: inline-block; padding: 3px 12px; font-size: 9px; font-weight: 700;
-    text-transform: uppercase; margin-top: 8px; border-radius: 3px;
-    letter-spacing: 0.5px;
-}
-.status-draft { background: #FEF3C7; color: #92400E; border: 1px solid #F59E0B; }
-.status-sent { background: #DBEAFE; color: #1E40AF; border: 1px solid #3B82F6; }
-.status-paid { background: #D1FAE5; color: #065F46; border: 1px solid #10B981; }
-.status-overdue { background: #FEE2E2; color: #991B1B; border: 1px solid #EF4444; }
-.status-void { background: #F3F4F6; color: #6B7280; border: 1px solid #9CA3AF; }
-.status-default { background: #EFF6FF; color: #1D4ED8; border: 1px solid #93C5FD; }
 
-/* Divider */
-.divider { height: 1px; background: #E5E7EB; margin: 16px 0; }
-.divider-accent { height: 2px; background: #0B5ED7; margin: 16px 0; }
+.doc-title { font-size: 28px; font-style: italic; color: #2D2D2D; font-weight: 400; margin-bottom: 14px; }
 
-/* Address blocks */
-.addresses { margin-bottom: 16px; }
+.doc-meta-row { margin-bottom: 20px; }
+.doc-meta-row table { width: 100%; }
+.doc-meta-row td { vertical-align: top; }
+.meta-label { font-size: 7.5px; text-transform: uppercase; letter-spacing: 1px; color: #999999; font-weight: 700; margin-bottom: 3px; }
+.meta-value { font-size: 10px; font-weight: 400; color: #2D2D2D; }
+.meta-value-bold { font-size: 10px; font-weight: 700; color: #2D2D2D; }
+
+.org-logo { width: 60px; height: 60px; object-fit: contain; }
+
+/* ── Address blocks ── */
+.addresses { margin-bottom: 22px; }
 .addresses table { width: 100%; }
-.addresses td { vertical-align: top; width: 50%; }
-.addr-label { font-size: 8px; text-transform: uppercase; letter-spacing: 1.2px; color: #0B5ED7; font-weight: 700; margin-bottom: 5px; }
-.addr-name { font-weight: 700; font-size: 12px; color: #111827; margin-bottom: 2px; }
-.addr-detail { font-size: 9.5px; color: #555555; line-height: 1.6; }
+.addresses td { vertical-align: top; padding-right: 14px; }
+.addr-label { font-size: 7.5px; text-transform: uppercase; letter-spacing: 1px; color: #999999; font-weight: 700; margin-bottom: 6px; }
+.addr-name { font-weight: 700; font-size: 10.5px; color: #2D2D2D; margin-bottom: 2px; }
+.addr-detail { font-size: 9.5px; color: #555555; line-height: 1.7; }
 
-/* Meta grid */
-.meta-grid { margin-bottom: 16px; padding: 10px 14px; background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 4px; }
-.meta-grid table { width: 100%; }
-.meta-grid td { padding: 4px 10px; vertical-align: top; }
-.meta-label { font-size: 8px; text-transform: uppercase; letter-spacing: 0.8px; color: #94A3B8; font-weight: 700; }
-.meta-value { font-size: 10.5px; font-weight: 600; color: #1E293B; }
+/* ── Divider ── */
+.divider { height: 1px; background: #E8DCDC; margin: 4px 0 16px 0; }
+.divider-light { height: 1px; background: #EEEEEE; margin: 0; }
 
-/* Table */
-.items-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+/* ── Items table ── */
+.items-table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
 .items-table thead th {
-    background-color: #0B5ED7; color: white; padding: 9px 10px; text-align: left;
-    font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 700;
+    padding: 10px 8px; text-align: left;
+    font-size: 8px; text-transform: uppercase; letter-spacing: 0.6px;
+    font-weight: 700; color: #555555;
+    border-bottom: 2px solid #E8DCDC;
 }
-.items-table thead th:first-child { border-radius: 4px 0 0 0; }
-.items-table thead th:last-child { border-radius: 0 4px 0 0; }
-.items-table tbody td { padding: 9px 10px; border-bottom: 1px solid #F1F5F9; font-size: 9.5px; color: #374151; }
-.items-table tbody tr:nth-child(even) { background-color: #F8FAFC; }
-.items-table .num { text-align: center; width: 30px; color: #94A3B8; font-weight: 600; }
-.items-table .item-name { font-weight: 600; color: #111827; }
-.items-table .item-desc { color: #6B7280; font-size: 8.5px; }
-.items-table .item-hsn { color: #94A3B8; font-size: 8px; }
+.items-table tbody td {
+    padding: 12px 8px; font-size: 10px; color: #2D2D2D;
+    border-bottom: 1px solid #F0F0F0;
+}
+.items-table tbody tr:last-child td { border-bottom: none; }
+.items-table .item-name { font-weight: 400; color: #2D2D2D; }
+.items-table .item-desc { color: #888888; font-size: 8.5px; }
+.items-table .item-hsn { color: #AAAAAA; font-size: 8px; }
 .items-table .qty, .items-table .rate, .items-table .tax, .items-table .amount { text-align: right; }
-.items-table .amount { font-weight: 600; }
+.items-table thead th.qty, .items-table thead th.rate,
+.items-table thead th.tax, .items-table thead th.amount { text-align: right; }
 
-/* Totals */
-.totals-section { margin-bottom: 18px; }
-.totals-section table { margin-left: auto; width: 280px; }
-.totals-section td { padding: 5px 0; font-size: 10px; }
-.totals-section td.label-col { color: #6B7280; font-weight: 500; }
-.totals-section td.value-col { text-align: right; font-weight: 600; color: #374151; }
-.grand-total td {
-    font-size: 14px; font-weight: 700; color: #0B5ED7;
-    border-top: 2px solid #0B5ED7; padding-top: 10px;
-}
-.balance-due td { font-size: 12px; font-weight: 700; color: #DC2626; }
+/* ── Totals ── */
+.totals-section { margin-top: 4px; margin-bottom: 10px; }
+.totals-section table { margin-left: auto; width: 240px; }
+.totals-section td { padding: 4px 0; font-size: 10px; }
+.totals-section td.label-col { color: #777777; font-weight: 400; }
+.totals-section td.value-col { text-align: right; font-weight: 400; color: #2D2D2D; }
 
-/* Amount in words */
-.amount-words { font-size: 9px; color: #6B7280; font-style: italic; margin-bottom: 16px; text-align: right; }
+/* ── Footer section: terms + total ── */
+.bottom-divider { height: 1px; background: #E8DCDC; margin: 16px 0; }
 
-/* Notes / Terms */
-.notes-section { margin-bottom: 14px; padding: 10px 14px; background: #F8FAFC; border-left: 3px solid #0B5ED7; border-radius: 0 4px 4px 0; }
-.notes-section h4 { font-size: 9px; text-transform: uppercase; color: #0B5ED7; letter-spacing: 0.8px; margin-bottom: 4px; font-weight: 700; }
-.notes-section p { font-size: 9.5px; color: #374151; line-height: 1.6; }
+.bottom-section { margin-top: 0; }
+.bottom-section table { width: 100%; }
+.bottom-section td { vertical-align: top; }
 
-/* Footer */
+.terms-block {}
+.terms-label { font-size: 7.5px; text-transform: uppercase; letter-spacing: 1px; color: #999999; font-weight: 700; margin-bottom: 4px; }
+.terms-text { font-size: 9px; color: #777777; line-height: 1.6; }
+
+.invoice-total-block { text-align: right; }
+.invoice-total-label { font-size: 7.5px; text-transform: uppercase; letter-spacing: 1px; color: #999999; font-weight: 700; margin-bottom: 4px; }
+.invoice-total-value { font-size: 22px; font-weight: 700; color: #2D2D2D; }
+
+/* ── Notes ── */
+.notes-section { margin-top: 14px; }
+.notes-section h4 { font-size: 7.5px; text-transform: uppercase; letter-spacing: 1px; color: #999999; font-weight: 700; margin-bottom: 4px; }
+.notes-section p { font-size: 9px; color: #777777; line-height: 1.6; }
+
+/* ── Footer bar ── */
 .footer {
-    padding: 12px 36px; border-top: 1px solid #E5E7EB;
-    text-align: center; color: #94A3B8; font-size: 8px;
-    background: #F8FAFC;
+    margin-top: 30px; padding-top: 12px;
+    border-top: 1px solid #EEEEEE;
+    text-align: center; color: #BBBBBB; font-size: 7.5px;
 }
-.footer .org-name { color: #0B5ED7; font-weight: 600; }
+.footer .org-name { color: #777777; font-weight: 600; }
 
-/* Signature area */
-.signature-area { margin-top: 24px; margin-bottom: 8px; }
-.signature-area table { width: 100%; }
-.signature-area td { vertical-align: bottom; }
-.signature-line { border-top: 1px solid #CBD5E1; width: 180px; margin-top: 40px; }
-.signature-label { font-size: 8px; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+/* ── Status badges ── */
+.doc-status {
+    display: inline-block; padding: 2px 10px; font-size: 8px; font-weight: 700;
+    text-transform: uppercase; border-radius: 2px; letter-spacing: 0.5px; margin-top: 4px;
+}
+.status-draft { background: #FFF8E1; color: #B8860B; }
+.status-sent { background: #E3F2FD; color: #1565C0; }
+.status-paid { background: #E8F5E9; color: #2E7D32; }
+.status-overdue { background: #FFEBEE; color: #C62828; }
+.status-void { background: #F5F5F5; color: #757575; }
+.status-default { background: #F5F5F5; color: #555555; }
 </style>
 </head>
 <body>
 <div class="page">
-  <div class="accent-bar"></div>
-  <div class="content-wrap">
-    {% block content %}{% endblock %}
-  </div>
+  <div class="accent-line"></div>
+  {% block content %}{% endblock %}
   <div class="footer">
-    <p>Generated on {{ generated_at | fdate }} &nbsp;|&nbsp; <span class="org-name">{{ org.name | default("") }}</span>
-    {% if org.get("fssai_number") %} &nbsp;|&nbsp; FSSAI: {{ org.fssai_number }}{% endif %}
-    </p>
+    <span class="org-name">{{ org.name | default("") }}</span>
+    {% if org.get("fssai_number") %} &nbsp;&middot;&nbsp; FSSAI: {{ org.fssai_number }}{% endif %}
   </div>
 </div>
 </body>
