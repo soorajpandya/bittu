@@ -17,6 +17,21 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
 
 
+def _add_id_alias(item: dict) -> dict:
+    """Add a generic 'id' field from the first module-specific _id column.
+
+    The PK is always the first column in each accounting table.
+    We take the first *_id column that isn't user_id/branch_id.
+    """
+    if "id" in item:
+        return item
+    for key in item:
+        if key.endswith("_id") and key not in ("user_id", "branch_id") and item[key]:
+            item["id"] = str(item[key])
+            return item
+    return item
+
+
 def _coerce_dates(data: dict) -> dict:
     """Convert date/datetime strings to proper Python objects for asyncpg."""
     for key, val in data.items():
@@ -86,7 +101,7 @@ async def acc_list(
             *params,
         )
         return {
-            "items": [dict(r) for r in rows],
+            "items": [_add_id_alias(dict(r)) for r in rows],
             "page": page,
             "per_page": per_page,
             "total": count,
@@ -118,7 +133,7 @@ async def acc_get(
         )
         if not row:
             raise HTTPException(status_code=404, detail=f"{label} not found")
-        return dict(row)
+        return _add_id_alias(dict(row))
 
 
 async def acc_create(
@@ -142,7 +157,7 @@ async def acc_create(
             f"INSERT INTO {table} ({col_str}) VALUES ({placeholders}) RETURNING *",
             *vals,
         )
-        return dict(row)
+        return _add_id_alias(dict(row))
 
 
 async def acc_update(
@@ -182,7 +197,7 @@ async def acc_update(
         )
         if not row:
             raise HTTPException(status_code=404, detail=f"{label} not found")
-        return dict(row)
+        return _add_id_alias(dict(row))
 
 
 async def acc_delete(
