@@ -115,7 +115,6 @@ body { font-family: Helvetica, Arial, sans-serif; color: #2D2D2D; font-size: 10p
   {% block content %}{% endblock %}
   <div class="footer">
     <span class="org-name">{{ org.name | default("") }}</span>
-    {% if org.get("fssai_number") %} &nbsp;&middot;&nbsp; FSSAI: {{ org.fssai_number }}{% endif %}
   </div>
 </div>
 </body>
