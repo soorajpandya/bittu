@@ -111,7 +111,7 @@ def create_app() -> FastAPI:
     # even on error responses from ErrorHandlerMiddleware.
     app.add_middleware(ErrorHandlerMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
-    app.add_middleware(SubscriptionCheckMiddleware)
+    # app.add_middleware(SubscriptionCheckMiddleware)  # Disabled — no subscription check
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(RequestIdMiddleware)
