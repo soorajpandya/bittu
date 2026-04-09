@@ -59,8 +59,9 @@ async def lifespan(app: FastAPI):
         subscriber_task = asyncio.create_task(redis_subscriber())
 
     # Register accounting sync handlers (bridge restaurant → accounting)
-    from app.services.accounting_sync_service import register_accounting_handlers
-    register_accounting_handlers()
+    # TODO: create accounting_sync_service module
+    # from app.services.accounting_sync_service import register_accounting_handlers
+    # register_accounting_handlers()
 
     logger.info("startup_complete", db=db_ok, redis=redis_ok)
     yield
