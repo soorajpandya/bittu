@@ -107,7 +107,7 @@ class DigiLockerService:
         verification_id: str,
         documents: list[str],
         redirect_url: str,
-        user_flow: str = "REDIRECT",
+        user_flow: str = "signin",
     ) -> dict:
         """
         Create a DigiLocker verification URL.

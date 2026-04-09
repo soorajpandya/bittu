@@ -18,7 +18,7 @@ class CreateURLIn(BaseModel):
     documents: list[str] = ["AADHAAR", "PAN", "DRIVING_LICENSE"]
     redirect_url: Optional[str] = None
     redirect_to: Optional[str] = None  # Flutter sends this alias
-    user_flow: str = "REDIRECT"
+    user_flow: str = "signin"
 
     @model_validator(mode="after")
     def _fill_defaults(self):
