@@ -108,6 +108,36 @@ async def create_restaurant(
     body: CreateRestaurantIn = CreateRestaurantIn(),
     user: UserContext = Depends(get_current_user),
 ):
-    """Create / initialize a restaurant for the current user (idempotent)."""
+    """Create a new restaurant for the current user.
+
+    If a name is provided, creates a restaurant with that name and a default
+    'Main' branch.  Otherwise falls back to the idempotent initialisation
+    logic (one restaurant per user).
+    """
+    if body.name:
+        owner_id = user.owner_id if user.is_branch_user else user.user_id
+        restaurant_id = str(_uuid.uuid4())
+        branch_id = str(_uuid.uuid4())
+        async with get_connection() as conn:
+            await conn.execute(
+                """
+                INSERT INTO restaurants (id, owner_id, name, is_active, created_at)
+                VALUES ($1, $2, $3, true, NOW())
+                """,
+                restaurant_id, owner_id, body.name,
+            )
+            await conn.execute(
+                """
+                INSERT INTO sub_branches (id, restaurant_id, owner_id, name, is_main_branch, is_active, created_at)
+                VALUES ($1, $2, $3, 'Main', true, true, NOW())
+                """,
+                branch_id, restaurant_id, owner_id,
+            )
+            row = await conn.fetchrow(
+                "SELECT * FROM restaurants WHERE id = $1", restaurant_id,
+            )
+        return dict(row)
+
+    # Fallback: idempotent single-restaurant init
     result = await _initialize_restaurant_and_branch(user.user_id, email=user.email)
     return result

@@ -1,6 +1,8 @@
 """Kitchen Stations endpoints."""
+import uuid as _uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 
 from app.core.auth import UserContext, require_role
 from app.core.database import get_connection
@@ -8,6 +10,10 @@ from app.core.logging import get_logger
 
 router = APIRouter(prefix="/kitchen-stations", tags=["Kitchen Stations"])
 logger = get_logger(__name__)
+
+
+class CreateKitchenStationIn(BaseModel):
+    name: str
 
 
 @router.get("")
@@ -33,3 +39,25 @@ async def list_kitchen_stations(
     except Exception as e:
         logger.warning("list_kitchen_stations_failed", error=str(e), user_id=user.user_id)
         return []
+
+
+@router.post("", status_code=201)
+async def create_kitchen_station(
+    body: CreateKitchenStationIn,
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    """Create a new kitchen station."""
+    owner_id = user.owner_id if user.is_branch_user else user.user_id
+    station_id = str(_uuid.uuid4())
+    async with get_connection() as conn:
+        await conn.execute(
+            """
+            INSERT INTO kitchen_stations (id, user_id, name, is_active, created_at)
+            VALUES ($1, $2, $3, true, NOW())
+            """,
+            station_id, owner_id, body.name,
+        )
+        row = await conn.fetchrow(
+            "SELECT * FROM kitchen_stations WHERE id = $1", station_id,
+        )
+    return dict(row)
