@@ -1,6 +1,7 @@
 """Cashfree DigiLocker KYC endpoints."""
 import uuid
-from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, model_validator
 from typing import Optional
 
@@ -113,3 +114,46 @@ async def digilocker_webhook(request: Request):
                 logger.exception("webhook_save_kyc_failed", verification_id=verification_id)
 
     return {"status": "ok"}
+
+
+@router.get("/callback")
+async def digilocker_callback(verification_id: str = Query(...)):
+    """
+    Redirect endpoint after DigiLocker flow completes.
+    Cashfree redirects the user here with ?verification_id=...
+    Fetches status and shows a result page / deep-links back to the app.
+    """
+    try:
+        status_data = await _svc.get_status(verification_id)
+        status = status_data.get("status", "UNKNOWN")
+    except Exception:
+        logger.exception("callback_status_check_failed", verification_id=verification_id)
+        status = "ERROR"
+
+    # Deep-link back to the Flutter app
+    deep_link = f"bittu://kyc/result?verification_id={verification_id}&status={status}"
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>KYC Verification</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{{font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;
+min-height:100vh;margin:0;background:#f8f9fa;text-align:center}}
+.card{{background:#fff;border-radius:12px;padding:2rem;box-shadow:0 2px 12px rgba(0,0,0,.08);max-width:400px}}
+.status{{font-size:1.3rem;font-weight:600;margin:1rem 0}}
+.success{{color:#16a34a}}.pending{{color:#d97706}}.error{{color:#dc2626}}
+a{{display:inline-block;margin-top:1rem;padding:.75rem 1.5rem;background:#2563eb;color:#fff;
+border-radius:8px;text-decoration:none;font-weight:500}}</style></head>
+<body><div class="card">
+<h2>DigiLocker Verification</h2>
+<p class="status {"success" if status == "VERIFIED" else "pending" if status == "PENDING" else "error"}">{
+    "Verified Successfully ✓" if status == "VERIFIED" else
+    "Verification Pending..." if status == "PENDING" else
+    f"Status: {status}"
+}</p>
+<p>Verification ID: <code>{verification_id[:8]}...</code></p>
+<a href="{deep_link}">Open Bittu App</a>
+</div>
+<script>setTimeout(function(){{window.location.href="{deep_link}"}},2000)</script>
+</body></html>"""
+
+    return HTMLResponse(content=html)

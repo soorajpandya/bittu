@@ -99,6 +99,13 @@ router.include_router(google_business.router)
 # ── KYC / Verification ──
 router.include_router(kyc.router)
 router.include_router(digilocker.router)
+# ── Onboard alias (Flutter sends redirect_to /onboard/callback) ──
+router.add_api_route(
+    "/onboard/callback",
+    digilocker.digilocker_callback,
+    methods=["GET"],
+    tags=["DigiLocker KYC"],
+)
 # ── AI / Voice ──
 router.include_router(voice.router)
 router.include_router(menu_scan.router)
