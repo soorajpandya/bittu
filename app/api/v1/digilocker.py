@@ -146,8 +146,11 @@ async def digilocker_callback(verification_id: str = Query(...)):
         css_class = "error"
         label = f"Status: {status}"
 
-    # Deep-link back to the Flutter app
-    deep_link = f"bittu://kyc/result?verification_id={verification_id}&status={app_status}"
+    # Intent-based deep link for Android (works without registered scheme)
+    intent_link = (
+        f"intent://kyc/result?verification_id={verification_id}&status={app_status}"
+        f"#Intent;scheme=bittu;package=com.bittu.admin;end"
+    )
 
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>KYC Verification</title>
@@ -157,15 +160,28 @@ min-height:100vh;margin:0;background:#f8f9fa;text-align:center}}
 .card{{background:#fff;border-radius:12px;padding:2rem;box-shadow:0 2px 12px rgba(0,0,0,.08);max-width:400px}}
 .status{{font-size:1.3rem;font-weight:600;margin:1rem 0}}
 .success{{color:#16a34a}}.pending{{color:#d97706}}.error{{color:#dc2626}}
-a{{display:inline-block;margin-top:1rem;padding:.75rem 1.5rem;background:#2563eb;color:#fff;
-border-radius:8px;text-decoration:none;font-weight:500}}</style></head>
+.btn{{display:inline-block;margin-top:1rem;padding:.75rem 1.5rem;background:#2563eb;color:#fff;
+border-radius:8px;text-decoration:none;font-weight:500;border:none;font-size:1rem;cursor:pointer}}
+.hint{{color:#666;font-size:.9rem;margin-top:1rem}}</style></head>
 <body><div class="card">
 <h2>DigiLocker Verification</h2>
 <p class="status {css_class}">{label}</p>
 <p>Verification ID: <code>{verification_id[:8]}...</code></p>
-<a href="{deep_link}">Open Bittu App</a>
+<button class="btn" onclick="openApp()">Open Bittu App</button>
+<p class="hint">If the app doesn't open, go back to the Bittu app manually.</p>
 </div>
-<script>setTimeout(function(){{window.location.href="{deep_link}"}},2000)</script>
+<script>
+function openApp() {{
+  // Try intent link (Android)
+  window.location.href = "{intent_link}";
+  // Fallback: try custom scheme
+  setTimeout(function() {{ window.location.href = "bittu://kyc/result?verification_id={verification_id}&status={app_status}"; }}, 500);
+  // Fallback: close browser tab (returns to app that opened it)
+  setTimeout(function() {{ window.close(); }}, 1500);
+}}
+// Auto-trigger on page load
+openApp();
+</script>
 </body></html>"""
 
     return HTMLResponse(content=html)
