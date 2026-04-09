@@ -1,6 +1,7 @@
 """Cashfree DigiLocker KYC endpoints."""
+import uuid
 from fastapi import APIRouter, Depends, Request, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from typing import Optional
 
 from app.core.auth import UserContext, require_permission
@@ -13,10 +14,19 @@ logger = get_logger(__name__)
 
 
 class CreateURLIn(BaseModel):
-    verification_id: str
+    verification_id: Optional[str] = None
     documents: list[str] = ["AADHAAR", "PAN", "DRIVING_LICENSE"]
-    redirect_url: str
+    redirect_url: Optional[str] = None
+    redirect_to: Optional[str] = None  # Flutter sends this alias
     user_flow: str = "REDIRECT"
+
+    @model_validator(mode="after")
+    def _fill_defaults(self):
+        if not self.verification_id:
+            self.verification_id = str(uuid.uuid4())
+        if not self.redirect_url:
+            self.redirect_url = self.redirect_to or ""
+        return self
 
 
 class VerifyAccountIn(BaseModel):
