@@ -130,8 +130,24 @@ async def digilocker_callback(verification_id: str = Query(...)):
         logger.exception("callback_status_check_failed", verification_id=verification_id)
         status = "ERROR"
 
+    # Normalize Cashfree statuses for the Flutter app
+    success_statuses = {"VERIFIED", "AUTHENTICATED", "COMPLETED", "SUCCESS"}
+    pending_statuses = {"PENDING", "INITIATED", "IN_PROGRESS"}
+    if status.upper() in success_statuses:
+        app_status = "VERIFIED"
+        css_class = "success"
+        label = "Verified Successfully ✓"
+    elif status.upper() in pending_statuses:
+        app_status = "PENDING"
+        css_class = "pending"
+        label = "Verification Pending..."
+    else:
+        app_status = "ERROR"
+        css_class = "error"
+        label = f"Status: {status}"
+
     # Deep-link back to the Flutter app
-    deep_link = f"bittu://kyc/result?verification_id={verification_id}&status={status}"
+    deep_link = f"bittu://kyc/result?verification_id={verification_id}&status={app_status}"
 
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>KYC Verification</title>
@@ -145,11 +161,7 @@ a{{display:inline-block;margin-top:1rem;padding:.75rem 1.5rem;background:#2563eb
 border-radius:8px;text-decoration:none;font-weight:500}}</style></head>
 <body><div class="card">
 <h2>DigiLocker Verification</h2>
-<p class="status {"success" if status == "VERIFIED" else "pending" if status == "PENDING" else "error"}">{
-    "Verified Successfully ✓" if status == "VERIFIED" else
-    "Verification Pending..." if status == "PENDING" else
-    f"Status: {status}"
-}</p>
+<p class="status {css_class}">{label}</p>
 <p>Verification ID: <code>{verification_id[:8]}...</code></p>
 <a href="{deep_link}">Open Bittu App</a>
 </div>
