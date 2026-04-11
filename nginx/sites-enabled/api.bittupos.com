@@ -1,5 +1,5 @@
 server {
-    server_name api.merabittu.com;
+    server_name api.bittupos.com;
 
     # ── Request Size (menu image uploads) ──
     client_max_body_size 10M;
@@ -33,18 +33,18 @@ server {
     }
 
     listen 443 ssl;
-    ssl_certificate /etc/letsencrypt/live/api.merabittu.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/api.merabittu.com/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/api.bittupos.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.bittupos.com/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 }
 
 server {
-    if ($host = api.merabittu.com) {
+    if ($host = api.bittupos.com) {
         return 301 https://$host$request_uri;
     }
 
     listen 80;
-    server_name api.merabittu.com;
+    server_name api.bittupos.com;
     return 404;
 }

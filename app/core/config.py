@@ -114,7 +114,7 @@ class Settings(BaseSettings):
     # ── Google Business Profile ──
     GOOGLE_BUSINESS_CLIENT_ID: str = ""
     GOOGLE_BUSINESS_CLIENT_SECRET: str = ""
-    GOOGLE_BUSINESS_REDIRECT_URI: str = "https://www.merabittu.com/google/callback"
+    GOOGLE_BUSINESS_REDIRECT_URI: str = "https://www.bittupos.com/google/callback"
 
     # ── Upstash Redis (REST) ──
     UPSTASH_REDIS_REST_URL: str = ""

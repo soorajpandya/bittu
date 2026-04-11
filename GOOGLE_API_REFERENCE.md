@@ -1,6 +1,6 @@
-# Google Business Profile — API Reference
+﻿# Google Business Profile â€” API Reference
 
-Base URL: `https://api.merabittu.com/api/v1`
+Base URL: `https://api.bittupos.com/api/v1`
 
 All requests require: `-H "Authorization: Bearer <JWT_TOKEN>"`
 
@@ -9,7 +9,7 @@ All requests require: `-H "Authorization: Bearer <JWT_TOKEN>"`
 ## 1. Connect (start OAuth)
 
 ```bash
-curl -X GET "https://api.merabittu.com/api/v1/google/connect?restaurant_id=REST_ID" \
+curl -X GET "https://api.bittupos.com/api/v1/google/connect?restaurant_id=REST_ID" \
   -H "Authorization: Bearer <JWT_TOKEN>"
 ```
 
@@ -20,7 +20,7 @@ Response: `{"auth_url": "https://accounts.google.com/o/oauth2/v2/auth?...", "sta
 ## 2. OAuth Callback
 
 ```bash
-curl -X GET "https://api.merabittu.com/api/v1/google/callback?code=AUTH_CODE&state=STATE_VALUE" \
+curl -X GET "https://api.bittupos.com/api/v1/google/callback?code=AUTH_CODE&state=STATE_VALUE" \
   -H "Authorization: Bearer <JWT_TOKEN>"
 ```
 
@@ -31,7 +31,7 @@ Response: `{"connected": true, "restaurant_id": "...", "id": "..."}`
 ## 3. Connection Status
 
 ```bash
-curl -X GET "https://api.merabittu.com/api/v1/google/status?restaurant_id=REST_ID" \
+curl -X GET "https://api.bittupos.com/api/v1/google/status?restaurant_id=REST_ID" \
   -H "Authorization: Bearer <JWT_TOKEN>"
 ```
 
@@ -42,7 +42,7 @@ Response: `{"connected": true, "account_id": "123", "location_id": "456", "locat
 ## 4. Disconnect
 
 ```bash
-curl -X POST "https://api.merabittu.com/api/v1/google/disconnect" \
+curl -X POST "https://api.bittupos.com/api/v1/google/disconnect" \
   -H "Authorization: Bearer <JWT_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"restaurant_id": "REST_ID"}'
@@ -55,7 +55,7 @@ Response: `{"disconnected": true}`
 ## 5. List Locations
 
 ```bash
-curl -X GET "https://api.merabittu.com/api/v1/google/locations?restaurant_id=REST_ID" \
+curl -X GET "https://api.bittupos.com/api/v1/google/locations?restaurant_id=REST_ID" \
   -H "Authorization: Bearer <JWT_TOKEN>"
 ```
 
@@ -66,7 +66,7 @@ Response: `{"accounts": [...], "locations": {"123": [...]}}`
 ## 6. Select Location
 
 ```bash
-curl -X POST "https://api.merabittu.com/api/v1/google/locations/select" \
+curl -X POST "https://api.bittupos.com/api/v1/google/locations/select" \
   -H "Authorization: Bearer <JWT_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -84,7 +84,7 @@ Response: `{"selected": true, ...}`
 ## 7. List Reviews
 
 ```bash
-curl -X GET "https://api.merabittu.com/api/v1/google/reviews?restaurant_id=REST_ID&page_size=50" \
+curl -X GET "https://api.bittupos.com/api/v1/google/reviews?restaurant_id=REST_ID&page_size=50" \
   -H "Authorization: Bearer <JWT_TOKEN>"
 ```
 
@@ -97,7 +97,7 @@ Response: `{"reviews": [...], "average_rating": 4.5, "total_review_count": 128, 
 ## 8. Reply to Review
 
 ```bash
-curl -X POST "https://api.merabittu.com/api/v1/google/review/reply" \
+curl -X POST "https://api.bittupos.com/api/v1/google/review/reply" \
   -H "Authorization: Bearer <JWT_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -118,14 +118,14 @@ Returns 409 Conflict if review already has a reply.
 Standard post:
 
 ```bash
-curl -X POST "https://api.merabittu.com/api/v1/google/post" \
+curl -X POST "https://api.bittupos.com/api/v1/google/post" \
   -H "Authorization: Bearer <JWT_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{
     "restaurant_id": "REST_ID",
     "summary": "20% off all pizzas this weekend!",
     "action_type": "ORDER",
-    "action_url": "https://merabittu.com/order",
+    "action_url": "https://bittupos.com/order",
     "image_url": "https://example.com/pizza.jpg"
   }'
 ```
@@ -135,7 +135,7 @@ action_type options: BOOK, ORDER, SHOP, SIGN_UP, LEARN_MORE, CALL
 Event post:
 
 ```bash
-curl -X POST "https://api.merabittu.com/api/v1/google/post" \
+curl -X POST "https://api.bittupos.com/api/v1/google/post" \
   -H "Authorization: Bearer <JWT_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -148,7 +148,7 @@ curl -X POST "https://api.merabittu.com/api/v1/google/post" \
 Offer post:
 
 ```bash
-curl -X POST "https://api.merabittu.com/api/v1/google/post" \
+curl -X POST "https://api.bittupos.com/api/v1/google/post" \
   -H "Authorization: Bearer <JWT_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -163,14 +163,14 @@ curl -X POST "https://api.merabittu.com/api/v1/google/post" \
 ## 10. List Posts
 
 ```bash
-curl -X GET "https://api.merabittu.com/api/v1/google/posts?restaurant_id=REST_ID&page_size=20" \
+curl -X GET "https://api.bittupos.com/api/v1/google/posts?restaurant_id=REST_ID&page_size=20" \
   -H "Authorization: Bearer <JWT_TOKEN>"
 ```
 
 Also works with singular alias:
 
 ```bash
-curl -X GET "https://api.merabittu.com/api/v1/google/post?restaurant_id=REST_ID" \
+curl -X GET "https://api.bittupos.com/api/v1/google/post?restaurant_id=REST_ID" \
   -H "Authorization: Bearer <JWT_TOKEN>"
 ```
 
@@ -181,11 +181,11 @@ Response: `{"posts": [...], "next_page_token": null}`
 ## 11. Insights (detailed metrics)
 
 ```bash
-curl -X GET "https://api.merabittu.com/api/v1/google/insights?restaurant_id=REST_ID&start_date=2026-03-01&end_date=2026-03-27" \
+curl -X GET "https://api.bittupos.com/api/v1/google/insights?restaurant_id=REST_ID&start_date=2026-03-01&end_date=2026-03-27" \
   -H "Authorization: Bearer <JWT_TOKEN>"
 ```
 
-Dates are optional — defaults to last 30 days.
+Dates are optional â€” defaults to last 30 days.
 
 Response:
 
@@ -211,7 +211,7 @@ Response:
 ## 12. Insights Summary (dashboard card)
 
 ```bash
-curl -X GET "https://api.merabittu.com/api/v1/google/insights/summary?restaurant_id=REST_ID&days=30" \
+curl -X GET "https://api.bittupos.com/api/v1/google/insights/summary?restaurant_id=REST_ID&days=30" \
   -H "Authorization: Bearer <JWT_TOKEN>"
 ```
 
@@ -235,7 +235,7 @@ Response:
 ## 13. Manual Sync (refresh all data)
 
 ```bash
-curl -X POST "https://api.merabittu.com/api/v1/google/sync" \
+curl -X POST "https://api.bittupos.com/api/v1/google/sync" \
   -H "Authorization: Bearer <JWT_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"restaurant_id": "REST_ID"}'

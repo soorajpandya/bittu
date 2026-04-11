@@ -1,13 +1,13 @@
-{
+﻿{
   "title": "Dine-In Session API Reference",
-  "base_url": "https://api.merabittu.com/api/v1/dinein",
+  "base_url": "https://api.bittupos.com/api/v1/dinein",
   "notes": {
     "auth": "All /qr/* endpoints are PUBLIC (no JWT). Auth is via session_token.",
     "session_token": "Save session_token in localStorage after first scan. Send it back on next scan to restore session.",
     "request_id": "Always send a unique request_id (UUID) on cart add, cart update, and place-order for idempotency (safe retries).",
     "is_append": "If place-order returns is_append: true, items were added to existing order, not a new one.",
     "isolation": "Each diner only sees their own orders (session-isolated) unless sessions are merged.",
-    "websocket": "Connect to wss://api.merabittu.com/ws/session?session_token=TOKEN for real-time updates."
+    "websocket": "Connect to wss://api.bittupos.com/ws/session?session_token=TOKEN for real-time updates."
   },
   "endpoints": [
     {
@@ -43,7 +43,7 @@
         "is_new": true,
         "active_order_id": null
       },
-      "curl": "curl -X POST https://api.merabittu.com/api/v1/dinein/qr/scan -H \"Content-Type: application/json\" -d '{\"restaurant_id\":\"RESTAURANT_UUID\",\"table_id\":\"TABLE_UUID\",\"device_id\":\"browser-fingerprint-123\",\"session_token\":\"OPTIONAL_SAVED_TOKEN\"}'"
+      "curl": "curl -X POST https://api.bittupos.com/api/v1/dinein/qr/scan -H \"Content-Type: application/json\" -d '{\"restaurant_id\":\"RESTAURANT_UUID\",\"table_id\":\"TABLE_UUID\",\"device_id\":\"browser-fingerprint-123\",\"session_token\":\"OPTIONAL_SAVED_TOKEN\"}'"
     },
     {
       "name": "Get Session State (Reconnect / Page Refresh)",
@@ -81,7 +81,7 @@
         "linked_sessions": [],
         "expires_at": "2026-03-27T20:00:00Z"
       },
-      "curl": "curl \"https://api.merabittu.com/api/v1/dinein/qr/session?session_token=SESSION_TOKEN\""
+      "curl": "curl \"https://api.bittupos.com/api/v1/dinein/qr/session?session_token=SESSION_TOKEN\""
     },
     {
       "name": "Get Menu",
@@ -93,7 +93,7 @@
           "restaurant_id": "RESTAURANT_UUID (required)"
         }
       },
-      "curl": "curl \"https://api.merabittu.com/api/v1/dinein/qr/menu?restaurant_id=RESTAURANT_UUID\""
+      "curl": "curl \"https://api.bittupos.com/api/v1/dinein/qr/menu?restaurant_id=RESTAURANT_UUID\""
     },
     {
       "name": "Add to Cart",
@@ -124,7 +124,7 @@
         "status": "added"
       },
       "notes": "Same item+variant+notes = quantity incremented (no duplicate rows). request_id makes it idempotent.",
-      "curl": "curl -X POST https://api.merabittu.com/api/v1/dinein/qr/cart/add -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"item_id\":123,\"quantity\":2,\"addons\":[{\"id\":\"addon1\",\"name\":\"Extra Cheese\",\"price\":30}],\"notes\":\"No onions\",\"device_id\":\"browser-123\",\"request_id\":\"req_uuid_1\"}'"
+      "curl": "curl -X POST https://api.bittupos.com/api/v1/dinein/qr/cart/add -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"item_id\":123,\"quantity\":2,\"addons\":[{\"id\":\"addon1\",\"name\":\"Extra Cheese\",\"price\":30}],\"notes\":\"No onions\",\"device_id\":\"browser-123\",\"request_id\":\"req_uuid_1\"}'"
     },
     {
       "name": "Update Cart Item",
@@ -149,7 +149,7 @@
         "total_price": 765.0
       },
       "notes": "Set quantity to 0 to remove the item.",
-      "curl": "curl -X POST https://api.merabittu.com/api/v1/dinein/qr/cart/update -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"cart_item_id\":\"CART_ITEM_UUID\",\"quantity\":3,\"request_id\":\"req_uuid_2\"}'"
+      "curl": "curl -X POST https://api.bittupos.com/api/v1/dinein/qr/cart/update -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"cart_item_id\":\"CART_ITEM_UUID\",\"quantity\":3,\"request_id\":\"req_uuid_2\"}'"
     },
     {
       "name": "Remove Cart Item",
@@ -166,7 +166,7 @@
       "response": {
         "status": "removed"
       },
-      "curl": "curl -X POST https://api.merabittu.com/api/v1/dinein/qr/cart/remove -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"cart_item_id\":\"CART_ITEM_UUID\"}'"
+      "curl": "curl -X POST https://api.bittupos.com/api/v1/dinein/qr/cart/remove -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"cart_item_id\":\"CART_ITEM_UUID\"}'"
     },
     {
       "name": "Clear Cart",
@@ -181,7 +181,7 @@
       "response": {
         "status": "cleared"
       },
-      "curl": "curl -X POST \"https://api.merabittu.com/api/v1/dinein/qr/cart/clear?session_token=SESSION_TOKEN\""
+      "curl": "curl -X POST \"https://api.bittupos.com/api/v1/dinein/qr/cart/clear?session_token=SESSION_TOKEN\""
     },
     {
       "name": "Get Cart",
@@ -213,7 +213,7 @@
           }
         ]
       },
-      "curl": "curl \"https://api.merabittu.com/api/v1/dinein/qr/cart?session_token=SESSION_TOKEN\""
+      "curl": "curl \"https://api.bittupos.com/api/v1/dinein/qr/cart?session_token=SESSION_TOKEN\""
     },
     {
       "name": "Place Order",
@@ -242,7 +242,7 @@
         "status": "Queued"
       },
       "notes": "If is_append is true, items were added to the existing active order (not a new order). Cart is cleared after placing.",
-      "curl": "curl -X POST https://api.merabittu.com/api/v1/dinein/qr/place-order -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"device_id\":\"browser-123\",\"notes\":\"Make it spicy\",\"customer_name\":\"Rahul\",\"customer_phone\":\"9876543210\",\"payment_method\":\"cash\",\"request_id\":\"req_uuid_3\"}'"
+      "curl": "curl -X POST https://api.bittupos.com/api/v1/dinein/qr/place-order -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"device_id\":\"browser-123\",\"notes\":\"Make it spicy\",\"customer_name\":\"Rahul\",\"customer_phone\":\"9876543210\",\"payment_method\":\"cash\",\"request_id\":\"req_uuid_3\"}'"
     },
     {
       "name": "Get Order Status (Session-Isolated)",
@@ -276,7 +276,7 @@
         ]
       },
       "notes": "Only shows orders for THIS session. Other diners at same table see their own orders only.",
-      "curl": "curl \"https://api.merabittu.com/api/v1/dinein/qr/order-status?session_token=SESSION_TOKEN\""
+      "curl": "curl \"https://api.bittupos.com/api/v1/dinein/qr/order-status?session_token=SESSION_TOKEN\""
     },
     {
       "name": "Merge Sessions",
@@ -297,7 +297,7 @@
         "target_session_id": "uuid"
       },
       "notes": "Both sessions must be on the same table and active. After merge, both sessions see the shared order.",
-      "curl": "curl -X POST https://api.merabittu.com/api/v1/dinein/qr/merge -H \"Content-Type: application/json\" -d '{\"source_session_token\":\"SOURCE_TOKEN\",\"target_session_token\":\"TARGET_TOKEN\"}'"
+      "curl": "curl -X POST https://api.bittupos.com/api/v1/dinein/qr/merge -H \"Content-Type: application/json\" -d '{\"source_session_token\":\"SOURCE_TOKEN\",\"target_session_token\":\"TARGET_TOKEN\"}'"
     },
     {
       "name": "Call Waiter",
@@ -315,7 +315,7 @@
         "status": "sent",
         "request_type": "assistance"
       },
-      "curl": "curl -X POST https://api.merabittu.com/api/v1/dinein/qr/call-waiter -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"request_type\":\"assistance\"}'"
+      "curl": "curl -X POST https://api.bittupos.com/api/v1/dinein/qr/call-waiter -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"request_type\":\"assistance\"}'"
     },
     {
       "name": "Close Session",
@@ -333,7 +333,7 @@
         "status": "completed",
         "session_id": "uuid"
       },
-      "curl": "curl -X POST https://api.merabittu.com/api/v1/dinein/qr/close-session -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"reason\":\"completed\"}'"
+      "curl": "curl -X POST https://api.bittupos.com/api/v1/dinein/qr/close-session -H \"Content-Type: application/json\" -d '{\"session_token\":\"SESSION_TOKEN\",\"reason\":\"completed\"}'"
     },
     {
       "name": "Kitchen Table View (Admin)",
@@ -369,12 +369,12 @@
           ]
         }
       ],
-      "curl": "curl \"https://api.merabittu.com/api/v1/dinein/admin/kitchen-view\" -H \"Authorization: Bearer JWT_TOKEN\""
+      "curl": "curl \"https://api.bittupos.com/api/v1/dinein/admin/kitchen-view\" -H \"Authorization: Bearer JWT_TOKEN\""
     }
   ],
   "websocket": {
     "name": "Real-time Updates for Diners",
-    "url": "wss://api.merabittu.com/ws/session?session_token=SESSION_TOKEN",
+    "url": "wss://api.bittupos.com/ws/session?session_token=SESSION_TOKEN",
     "auth": "session_token query param (no JWT needed)",
     "auto_subscribed": "session:<session_id>",
     "events": [
@@ -398,28 +398,28 @@
       }
     },
     "ping_pong": "Server sends {\"event\":\"ping\"}, client must respond with {\"action\":\"pong\"}",
-    "javascript_example": "const ws = new WebSocket(`wss://api.merabittu.com/ws/session?session_token=${sessionToken}`);\nws.onmessage = (e) => {\n  const msg = JSON.parse(e.data);\n  if (msg.event === 'ping') {\n    ws.send(JSON.stringify({ action: 'pong' }));\n    return;\n  }\n  console.log('Event:', msg.event, msg.data);\n};"
+    "javascript_example": "const ws = new WebSocket(`wss://api.bittupos.com/ws/session?session_token=${sessionToken}`);\nws.onmessage = (e) => {\n  const msg = JSON.parse(e.data);\n  if (msg.event === 'ping') {\n    ws.send(JSON.stringify({ action: 'pong' }));\n    return;\n  }\n  console.log('Event:', msg.event, msg.data);\n};"
   },
   "order_flow": {
     "description": "Typical dine-in customer flow",
     "steps": [
-      "1. Customer scans QR → POST /qr/scan → save session_token in localStorage",
-      "2. Load menu → GET /qr/menu?restaurant_id=...",
-      "3. Add items → POST /qr/cart/add (repeat for each item)",
-      "4. Review cart → GET /qr/cart?session_token=...",
-      "5. Place order → POST /qr/place-order → cart clears, order created with status 'Queued'",
-      "6. Track order → GET /qr/order-status?session_token=... OR listen via WebSocket",
+      "1. Customer scans QR â†’ POST /qr/scan â†’ save session_token in localStorage",
+      "2. Load menu â†’ GET /qr/menu?restaurant_id=...",
+      "3. Add items â†’ POST /qr/cart/add (repeat for each item)",
+      "4. Review cart â†’ GET /qr/cart?session_token=...",
+      "5. Place order â†’ POST /qr/place-order â†’ cart clears, order created with status 'Queued'",
+      "6. Track order â†’ GET /qr/order-status?session_token=... OR listen via WebSocket",
       "7. Want more items? Repeat steps 3-5 (items append to existing order, is_append=true)",
-      "8. Call waiter → POST /qr/call-waiter",
-      "9. Done → POST /qr/close-session",
-      "10. Page refresh? → POST /qr/scan with saved session_token restores session"
+      "8. Call waiter â†’ POST /qr/call-waiter",
+      "9. Done â†’ POST /qr/close-session",
+      "10. Page refresh? â†’ POST /qr/scan with saved session_token restores session"
     ]
   },
   "merge_flow": {
     "description": "Two diners at same table want to share one bill",
     "steps": [
-      "1. Diner A scans QR → gets session_token_A",
-      "2. Diner B scans QR → gets session_token_B (separate session, same table)",
+      "1. Diner A scans QR â†’ gets session_token_A",
+      "2. Diner B scans QR â†’ gets session_token_B (separate session, same table)",
       "3. Both order independently (isolated)",
       "4. To merge: POST /qr/merge with source=A, target=B",
       "5. Both sessions now see the combined order",
