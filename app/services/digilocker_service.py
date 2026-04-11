@@ -175,9 +175,12 @@ class DigiLockerService:
     async def save_kyc(self, user_id: str, verification_id: str) -> dict:
         """
         Verify with Cashfree that verification is complete, fetch Aadhaar doc,
-        and save KYC data to Supabase user_metadata via admin API.
-        Mirrors the Supabase Edge Function save_kyc action.
+        and save full KYC data to the kyc_verifications DB table.
+        Only stores minimal flags in Supabase user_metadata to keep the JWT small.
         """
+        import json as _json
+        from app.core.database import get_connection
+
         s = _cfg()
 
         # 1. Check verification status with Cashfree
@@ -192,20 +195,52 @@ class DigiLockerService:
             "document_consent": status_data.get("document_consent"),
         }
 
+        aadhaar_name = None
+
         # 2. If authenticated, fetch Aadhaar document
         if cf_status == "AUTHENTICATED":
             try:
                 aadhaar = await self.get_document(verification_id, "AADHAAR")
                 if aadhaar and not aadhaar.get("error"):
                     kyc_data["aadhaar"] = aadhaar
+                    aadhaar_name = aadhaar.get("name") or aadhaar.get("full_name")
             except Exception:
                 logger.warning("save_kyc_aadhaar_fetch_failed", verification_id=verification_id)
 
-        # 3. Update user_metadata via Supabase admin API
+        # 3. Store FULL KYC data in kyc_verifications table (not in JWT)
+        try:
+            async with get_connection() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO kyc_verifications (user_id, verification_id, status, aadhaar_number, verified_at, kyc_data)
+                    VALUES ($1, $2, $3, $4, CASE WHEN $3 = 'AUTHENTICATED' THEN NOW() ELSE NULL END, $5::jsonb)
+                    ON CONFLICT (verification_id) DO UPDATE
+                    SET status = EXCLUDED.status, kyc_data = EXCLUDED.kyc_data,
+                        verified_at = EXCLUDED.verified_at
+                    """,
+                    user_id,
+                    verification_id,
+                    cf_status,
+                    (kyc_data.get("aadhaar") or {}).get("aadhaar_number"),
+                    _json.dumps(kyc_data),
+                )
+        except Exception:
+            logger.exception("save_kyc_db_failed", user_id=user_id, verification_id=verification_id)
+
+        # 4. Set only MINIMAL flags in user_metadata (keeps JWT small)
+        #    Do NOT store photo_link, full aadhaar data, etc.
+        minimal_metadata = {
+            "kyc_verified": cf_status == "AUTHENTICATED",
+            "kyc_status": cf_status,
+            "kyc_verification_id": verification_id,
+        }
+        if aadhaar_name:
+            minimal_metadata["kyc_name"] = aadhaar_name
+
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.put(
                 f"{s.SUPABASE_URL}/auth/v1/admin/users/{user_id}",
-                json={"user_metadata": {"digilocker_verification": kyc_data}},
+                json={"user_metadata": minimal_metadata},
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {s.SUPABASE_SERVICE_ROLE_KEY}",
@@ -224,10 +259,9 @@ class DigiLockerService:
         Called from webhook handler when verification succeeds.
         Looks up user_id from kyc_verifications table, then saves KYC.
         """
-        from app.core.database import get_pool
+        from app.core.database import get_connection
 
-        pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with get_connection() as conn:
             row = await conn.fetchrow(
                 "SELECT user_id FROM kyc_verifications WHERE verification_id = $1",
                 verification_id,
