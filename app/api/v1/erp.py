@@ -1444,7 +1444,7 @@ async def generate_gst_report(
             """SELECT
                    COUNT(DISTINCT CASE WHEN i.invoice_type='B2B' THEN i.id END) AS b2b_count,
                    COUNT(DISTINCT CASE WHEN i.invoice_type!='B2B' THEN i.id END) AS b2c_count,
-                   COALESCE(SUM(i.total_amount), 0) AS total_sales,
+                   COALESCE(SUM(i.amount), 0) AS total_sales,
                    COALESCE(SUM(i.taxable_amount), 0) AS total_taxable,
                    COALESCE(SUM(i.cgst_amount), 0) AS cgst_total,
                    COALESCE(SUM(i.sgst_amount), 0) AS sgst_total,
