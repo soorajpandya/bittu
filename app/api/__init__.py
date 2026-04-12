@@ -72,6 +72,7 @@ from app.api.v1 import (
     accounting,
     ai_ingredients,
     invoice_import,
+    erp,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -154,3 +155,4 @@ router.include_router(dinein.router)
 router.include_router(accounting.router)
 router.include_router(ai_ingredients.router)
 router.include_router(invoice_import.router)
+router.include_router(erp.router)

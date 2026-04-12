@@ -64,6 +64,30 @@ ACCOUNTING_INVOICE_VOIDED = "accounting.invoice_voided"
 ACCOUNTING_CREDITNOTE_CREATED = "accounting.creditnote_created"
 ACCOUNTING_SYNC_COMPLETED = "accounting.sync_completed"
 
+# ── ERP events (006_erp_full_system) ──
+
+# Double-entry accounting
+JOURNAL_ENTRY_CREATED = "accounting.journal_entry_created"
+
+# Procurement
+PURCHASE_ORDER_APPROVED = "purchase.order_approved"
+PURCHASE_RECEIVED = "purchase.received"
+GRN_CREATED = "grn.created"
+GRN_VERIFIED = "grn.verified"
+VENDOR_PAYMENT_MADE = "vendor.payment_made"
+
+# Stock transfers
+STOCK_TRANSFER_SHIPPED = "stock.transfer_shipped"
+STOCK_TRANSFER_RECEIVED = "stock.transfer_received"
+
+# Cash & Shift management
+SHIFT_OPENED = "shift.opened"
+SHIFT_CLOSED = "shift.closed"
+
+# GST / Invoicing
+GST_INVOICE_CREATED = "gst.invoice_created"
+GST_REPORT_GENERATED = "gst.report_generated"
+
 
 @dataclass
 class DomainEvent:
