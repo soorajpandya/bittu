@@ -596,19 +596,15 @@ async def inventory_summary(
                v.current_stock, v.weighted_avg_cost,
                ROUND(v.current_stock * v.weighted_avg_cost, 2) AS stock_value,
                v.last_movement_at,
-               ig.reorder_point,
-               CASE WHEN ig.reorder_point IS NOT NULL AND v.current_stock < ig.reorder_point
-                    THEN true ELSE false END AS is_low
+               0 AS reorder_point,
+               false AS is_low
           FROM v_ingredient_stock_ledger v
-          JOIN ingredients ig ON ig.id = v.ingredient_id
          WHERE v.restaurant_id = $1
     """
     params: list = [rid]
     if bid:
         params.append(bid)
         sql += f" AND v.branch_id = ${len(params)}::uuid"
-    if low_only:
-        sql += " AND ig.reorder_point IS NOT NULL AND v.current_stock < ig.reorder_point"
     sql += " ORDER BY v.ingredient_name"
     async with get_connection() as conn:
         rows = await conn.fetch(sql, *params)
