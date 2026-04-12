@@ -222,6 +222,32 @@ class GSTReportGenerate(BaseModel):
     period_end: date
 
 
+class TaxRuleCreate(BaseModel):
+    name: str
+    priority: int = 100
+    tax_rate_id: str
+    order_type: Optional[str] = None
+    platform: Optional[str] = None
+    is_interstate: Optional[bool] = None
+    applicable_on: Optional[str] = None
+    min_order_value: Optional[float] = None
+    max_order_value: Optional[float] = None
+    time_from: Optional[str] = None
+    time_to: Optional[str] = None
+
+
+class PlatformTaxCreate(BaseModel):
+    platform: str
+    gst_handled_by_platform: bool = False
+    commission_rate: float = 0
+    tcs_rate: float = 0
+    notes: Optional[str] = None
+
+
+class FeatureFlagUpdate(BaseModel):
+    is_enabled: bool
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 1. CHART OF ACCOUNTS
 # ═══════════════════════════════════════════════════════════════════════════
@@ -596,15 +622,20 @@ async def inventory_summary(
                v.current_stock, v.weighted_avg_cost,
                ROUND(v.current_stock * v.weighted_avg_cost, 2) AS stock_value,
                v.last_movement_at,
-               0 AS reorder_point,
-               false AS is_low
+               COALESCE(ig.reorder_level, 0) AS reorder_point,
+               CASE WHEN ig.reorder_level IS NOT NULL AND ig.reorder_level > 0
+                         AND v.current_stock < ig.reorder_level
+                    THEN true ELSE false END AS is_low
           FROM v_ingredient_stock_ledger v
+          LEFT JOIN ingredients ig ON ig.id = v.ingredient_id
          WHERE v.restaurant_id = $1
     """
     params: list = [rid]
     if bid:
         params.append(bid)
         sql += f" AND v.branch_id = ${len(params)}::uuid"
+    if low_only:
+        sql += " AND ig.reorder_level IS NOT NULL AND ig.reorder_level > 0 AND v.current_stock < ig.reorder_level"
     sql += " ORDER BY v.ingredient_name"
     async with get_connection() as conn:
         rows = await conn.fetch(sql, *params)
@@ -1602,3 +1633,327 @@ async def daily_pnl(
     async with get_connection() as conn:
         rows = await conn.fetch(sql, *params)
     return [dict(r) for r in rows]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 14. TAX RULES (Dynamic Rule Engine)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/tax-rules")
+async def list_tax_rules(
+    is_active: bool = Query(True),
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    rid = _rid(user)
+    async with get_connection() as conn:
+        rows = await conn.fetch(
+            """SELECT tr.*, t.name AS tax_rate_name, t.rate_percentage
+                 FROM tax_rules tr
+                 JOIN tax_rates t ON t.id = tr.tax_rate_id
+                WHERE tr.restaurant_id = $1 AND tr.is_active = $2
+                ORDER BY tr.priority ASC""",
+            rid, is_active,
+        )
+    return [dict(r) for r in rows]
+
+
+@router.post("/tax-rules", status_code=201)
+async def create_tax_rule(
+    body: TaxRuleCreate,
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    rid = _rid(user)
+    async with get_connection() as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO tax_rules
+                   (restaurant_id, name, priority, tax_rate_id,
+                    order_type, platform, is_interstate, applicable_on,
+                    min_order_value, max_order_value, time_from, time_to)
+               VALUES ($1,$2,$3,$4::uuid,$5,$6,$7,$8,$9,$10,
+                       $11::time,$12::time)
+               RETURNING *""",
+            rid, body.name, body.priority, body.tax_rate_id,
+            body.order_type, body.platform, body.is_interstate,
+            body.applicable_on, body.min_order_value, body.max_order_value,
+            body.time_from, body.time_to,
+        )
+    return dict(row)
+
+
+@router.patch("/tax-rules/{rule_id}")
+async def update_tax_rule(
+    rule_id: UUID,
+    body: TaxRuleCreate,
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    rid = _rid(user)
+    async with get_connection() as conn:
+        row = await conn.fetchrow(
+            """UPDATE tax_rules SET
+                   name=$1, priority=$2, tax_rate_id=$3::uuid,
+                   order_type=$4, platform=$5, is_interstate=$6,
+                   applicable_on=$7, min_order_value=$8, max_order_value=$9,
+                   time_from=$10::time, time_to=$11::time, updated_at=NOW()
+               WHERE id=$12 AND restaurant_id=$13
+               RETURNING *""",
+            body.name, body.priority, body.tax_rate_id,
+            body.order_type, body.platform, body.is_interstate,
+            body.applicable_on, body.min_order_value, body.max_order_value,
+            body.time_from, body.time_to,
+            rule_id, rid,
+        )
+    if not row:
+        raise HTTPException(404, "Tax rule not found")
+    return dict(row)
+
+
+@router.delete("/tax-rules/{rule_id}")
+async def delete_tax_rule(
+    rule_id: UUID,
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    rid = _rid(user)
+    async with get_connection() as conn:
+        row = await conn.fetchrow(
+            """UPDATE tax_rules SET is_active=false, updated_at=NOW()
+               WHERE id=$1 AND restaurant_id=$2 RETURNING id""",
+            rule_id, rid,
+        )
+    if not row:
+        raise HTTPException(404, "Tax rule not found")
+    return {"status": "deactivated"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 15. PLATFORM TAX CONFIG
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/platform-tax-config")
+async def list_platform_tax_config(
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    rid = _rid(user)
+    async with get_connection() as conn:
+        rows = await conn.fetch(
+            """SELECT * FROM platform_tax_config
+                WHERE restaurant_id = $1 AND is_active = true
+                ORDER BY platform""",
+            rid,
+        )
+    return [dict(r) for r in rows]
+
+
+@router.post("/platform-tax-config", status_code=201)
+async def create_platform_tax_config(
+    body: PlatformTaxCreate,
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    rid = _rid(user)
+    async with get_connection() as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO platform_tax_config
+                   (restaurant_id, platform, gst_handled_by_platform,
+                    commission_rate, tcs_rate, notes)
+               VALUES ($1,$2,$3,$4,$5,$6)
+               ON CONFLICT (restaurant_id, platform)
+               DO UPDATE SET
+                   gst_handled_by_platform = EXCLUDED.gst_handled_by_platform,
+                   commission_rate = EXCLUDED.commission_rate,
+                   tcs_rate = EXCLUDED.tcs_rate,
+                   notes = EXCLUDED.notes,
+                   updated_at = NOW()
+               RETURNING *""",
+            rid, body.platform, body.gst_handled_by_platform,
+            body.commission_rate, body.tcs_rate, body.notes,
+        )
+    return dict(row)
+
+
+@router.patch("/platform-tax-config/{config_id}")
+async def update_platform_tax_config(
+    config_id: UUID,
+    body: PlatformTaxCreate,
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    rid = _rid(user)
+    async with get_connection() as conn:
+        row = await conn.fetchrow(
+            """UPDATE platform_tax_config SET
+                   platform=$1, gst_handled_by_platform=$2,
+                   commission_rate=$3, tcs_rate=$4, notes=$5, updated_at=NOW()
+               WHERE id=$6 AND restaurant_id=$7
+               RETURNING *""",
+            body.platform, body.gst_handled_by_platform,
+            body.commission_rate, body.tcs_rate, body.notes,
+            config_id, rid,
+        )
+    if not row:
+        raise HTTPException(404, "Platform config not found")
+    return dict(row)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 16. FEATURE FLAGS
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/feature-flags")
+async def list_feature_flags(
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    rid = _rid(user)
+    async with get_connection() as conn:
+        rows = await conn.fetch(
+            """SELECT flag_name, is_enabled, metadata, updated_at
+                 FROM feature_flags
+                WHERE restaurant_id = $1
+                ORDER BY flag_name""",
+            rid,
+        )
+    return [dict(r) for r in rows]
+
+
+@router.patch("/feature-flags/{flag_name}")
+async def toggle_feature_flag(
+    flag_name: str,
+    body: FeatureFlagUpdate,
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    rid = _rid(user)
+    async with get_connection() as conn:
+        row = await conn.fetchrow(
+            """UPDATE feature_flags SET is_enabled=$1, updated_at=NOW()
+               WHERE restaurant_id=$2 AND flag_name=$3
+               RETURNING flag_name, is_enabled, updated_at""",
+            body.is_enabled, rid, flag_name,
+        )
+    if not row:
+        raise HTTPException(404, "Feature flag not found")
+    return dict(row)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 17. CONSISTENCY CHECK
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/consistency-check")
+async def run_consistency_check(
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    rid = _rid(user)
+    async with get_connection() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM fn_erp_consistency_check($1)",
+            rid,
+        )
+    issues = [dict(r) for r in rows]
+    return {
+        "restaurant_id": rid,
+        "total_issues": len(issues),
+        "status": "healthy" if len(issues) == 0 else "issues_found",
+        "issues": issues,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 18. ERP EVENT LOG
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/event-log")
+async def list_event_log(
+    event_type: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    limit: int = Query(50, le=200),
+    offset: int = Query(0, ge=0),
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    rid = _rid(user)
+    clauses = ["restaurant_id = $1"]
+    params: list = [rid]
+    if event_type:
+        params.append(event_type)
+        clauses.append(f"event_type = ${len(params)}")
+    if status:
+        params.append(status)
+        clauses.append(f"status = ${len(params)}")
+    params.extend([limit, offset])
+    sql = f"""
+        SELECT id, event_type, reference_type, reference_id,
+               status, error_message, processing_time_ms, created_at
+          FROM erp_event_log
+         WHERE {' AND '.join(clauses)}
+         ORDER BY created_at DESC
+         LIMIT ${len(params)-1} OFFSET ${len(params)}
+    """
+    async with get_connection() as conn:
+        rows = await conn.fetch(sql, *params)
+    return [dict(r) for r in rows]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 19. ORDER ERP SUMMARY (connected view)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/order-summary/{order_id}")
+async def order_erp_summary(
+    order_id: UUID,
+    user: UserContext = Depends(require_role("owner", "manager")),
+):
+    rid = _rid(user)
+    async with get_connection() as conn:
+        order = await conn.fetchrow(
+            "SELECT * FROM v_order_erp_summary WHERE order_id=$1 AND restaurant_id=$2",
+            order_id, rid,
+        )
+        if not order:
+            raise HTTPException(404, "Order not found")
+        tax_details = await conn.fetch(
+            """SELECT tax_name, rate_percentage, taxable_amount,
+                      cgst_amount, sgst_amount, igst_amount, total_tax
+                 FROM order_tax_details WHERE order_id=$1
+                 ORDER BY rate_percentage""",
+            order_id,
+        )
+        invoice = await conn.fetchrow(
+            """SELECT id, invoice_number, taxable_amount, cgst_amount,
+                      sgst_amount, igst_amount, total_amount
+                 FROM invoices WHERE order_id=$1 AND is_cancelled = false""",
+            order_id,
+        )
+    result = dict(order)
+    result["tax_breakdown"] = [dict(r) for r in tax_details]
+    result["invoice"] = dict(invoice) if invoice else None
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 20. SEED DATA
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.post("/seed/feature-flags", status_code=201)
+async def seed_feature_flags(
+    user: UserContext = Depends(require_role("owner")),
+):
+    rid = _rid(user)
+    async with get_connection() as conn:
+        await conn.execute("SELECT fn_seed_feature_flags($1)", rid)
+    return {"status": "seeded"}
+
+
+@router.post("/seed/chart-of-accounts", status_code=201)
+async def seed_chart_of_accounts(
+    user: UserContext = Depends(require_role("owner")),
+):
+    rid = _rid(user)
+    async with get_connection() as conn:
+        await conn.execute("SELECT fn_seed_default_chart_of_accounts($1)", rid)
+    return {"status": "seeded"}
+
+
+@router.post("/seed/tax-rates", status_code=201)
+async def seed_tax_rates(
+    user: UserContext = Depends(require_role("owner")),
+):
+    rid = _rid(user)
+    async with get_connection() as conn:
+        await conn.execute("SELECT fn_seed_default_tax_rates($1)", rid)
+    return {"status": "seeded"}
