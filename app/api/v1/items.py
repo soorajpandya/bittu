@@ -3,11 +3,14 @@ from typing import Optional, List, Any
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel, ConfigDict
+import structlog
 
 from app.core.auth import UserContext, get_current_user
 from app.core.database import get_connection
 from app.core.tenant import tenant_where_clause
 from app.core.exceptions import ForbiddenError
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/items", tags=["Items"])
 
@@ -119,6 +122,23 @@ async def create_item(
     body: ItemCreate,
     user: UserContext = Depends(require_owner_or_manager),
 ):
+    # ── Duplicate check: same name + price for this tenant ──
+    clause, check_params = tenant_where_clause(user)
+    check_params.extend([body.Item_Name.strip(), body.price])
+    async with get_connection() as conn:
+        existing = await conn.fetchrow(
+            f"""SELECT "Item_ID", "Item_Name", price FROM items
+                WHERE {clause}
+                AND LOWER(TRIM("Item_Name")) = LOWER(TRIM(${len(check_params) - 1}))
+                AND price = ${len(check_params)}""",
+            *check_params,
+        )
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Item '{body.Item_Name}' with price {body.price} already exists (ID: {existing['Item_ID']})",
+        )
+
     fields = [
         '"Item_Name"', '"Description"', 'price', '"Available_Status"', '"Category"',
         '"Subcategory"', '"Cuisine"', '"Spice_Level"', '"Prep_Time_Min"', '"Image_url"',
@@ -137,6 +157,116 @@ async def create_item(
     async with get_connection() as conn:
         item = await conn.fetchrow(sql, *values)
         return dict(item)
+
+
+# ── Bulk Import (AI Menu Scan) ───────────────────────────────
+
+class BulkImportItem(BaseModel):
+    item_name: str
+    description: Optional[str] = None
+    price: float
+    category: Optional[str] = None
+    subcategory: Optional[str] = None
+    cuisine: Optional[str] = None
+    spice_level: Optional[str] = None
+    prep_time_min: Optional[int] = None
+    image_url: Optional[str] = None
+    is_veg: Optional[bool] = None
+    short_code: Optional[str] = None
+
+
+class BulkImportRequest(BaseModel):
+    items: List[BulkImportItem]
+    skip_duplicates: bool = True  # default: skip dupes silently
+
+
+class BulkImportResult(BaseModel):
+    total_submitted: int
+    created: int
+    skipped_duplicates: int
+    created_items: List[dict]
+    skipped_items: List[dict]
+
+
+@router.post("/bulk-import", response_model=BulkImportResult)
+async def bulk_import_items(
+    body: BulkImportRequest,
+    user: UserContext = Depends(require_owner_or_manager),
+):
+    """
+    Bulk import items (used by AI Menu Scan confirm flow).
+    Skips duplicates by matching name (case-insensitive) + price per tenant.
+    """
+    if not body.items:
+        return BulkImportResult(
+            total_submitted=0, created=0, skipped_duplicates=0,
+            created_items=[], skipped_items=[],
+        )
+
+    if len(body.items) > 200:
+        raise HTTPException(400, "Max 200 items per bulk import")
+
+    clause, base_params = tenant_where_clause(user)
+    created_items = []
+    skipped_items = []
+
+    async with get_connection() as conn:
+        # Fetch ALL existing item names+prices for this tenant in one query
+        existing_rows = await conn.fetch(
+            f"""SELECT LOWER(TRIM("Item_Name")) as norm_name, price
+                FROM items WHERE {clause}""",
+            *base_params,
+        )
+        # Build a set of (normalized_name, price) for O(1) lookup
+        existing_set = {
+            (row["norm_name"], float(row["price"]))
+            for row in existing_rows
+        }
+
+        for item in body.items:
+            name_norm = item.item_name.strip().lower()
+            key = (name_norm, float(item.price))
+
+            if key in existing_set:
+                skipped_items.append({
+                    "item_name": item.item_name,
+                    "price": item.price,
+                    "reason": "duplicate",
+                })
+                continue
+
+            # Insert
+            row = await conn.fetchrow(
+                """INSERT INTO items (
+                    "Item_Name", "Description", price, "Available_Status",
+                    "Category", "Subcategory", "Cuisine", "Spice_Level",
+                    "Prep_Time_Min", "Image_url", is_veg,
+                    restaurant_id, branch_id, user_id
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                RETURNING *""",
+                item.item_name, item.description, item.price, True,
+                item.category, item.subcategory, item.cuisine, item.spice_level,
+                item.prep_time_min, item.image_url, item.is_veg,
+                user.restaurant_id, user.branch_id, user.user_id,
+            )
+            created_items.append(dict(row))
+            # Add to set so subsequent dupes within same batch are caught
+            existing_set.add(key)
+
+    logger.info(
+        "bulk_import_complete",
+        total=len(body.items),
+        created=len(created_items),
+        skipped=len(skipped_items),
+    )
+
+    return BulkImportResult(
+        total_submitted=len(body.items),
+        created=len(created_items),
+        skipped_duplicates=len(skipped_items),
+        created_items=created_items,
+        skipped_items=skipped_items,
+    )
 
 
 @router.get("/{item_id}", response_model=ItemResponse)
