@@ -233,7 +233,13 @@ class FoodImageService:
 
             async with httpx.AsyncClient(timeout=OPENAI_IMAGE_TIMEOUT) as client:
                 # 1. Generate image via OpenAI
-                prompt = f"{raw_name} food dish, realistic, high quality, professional food photography"
+                prompt = (
+                    f"A professional food photography shot of the dish called \"{raw_name}\". "
+                    f"Show ONLY this specific dish: \"{raw_name}\". "
+                    f"The dish must be clearly identifiable as {raw_name}, beautifully plated, "
+                    f"top-down angle, clean background, restaurant-quality presentation, "
+                    f"natural lighting, appetizing, high resolution."
+                )
                 resp = await client.post(
                     "https://api.openai.com/v1/images/generations",
                     headers={
