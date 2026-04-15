@@ -73,6 +73,8 @@ from app.api.v1 import (
     ai_ingredients,
     invoice_import,
     erp,
+    # ── Food Images ──
+    food_images,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -156,3 +158,5 @@ router.include_router(accounting.router)
 router.include_router(ai_ingredients.router)
 router.include_router(invoice_import.router)
 router.include_router(erp.router)
+# ── Food Images ──
+router.include_router(food_images.router)
