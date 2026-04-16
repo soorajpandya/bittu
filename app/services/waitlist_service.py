@@ -87,21 +87,21 @@ class WaitlistService:
         offset: int = 0,
     ) -> dict:
         """Get current waitlist queue for the restaurant."""
-        clause, params = tenant_where_clause(user)
+        clause, params = tenant_where_clause(user, "w")
 
         conditions = [clause]
         if status:
             params.append(status)
-            conditions.append(f"status = ${len(params)}")
+            conditions.append(f"w.status = ${len(params)}")
         else:
             # Default: show active entries
-            conditions.append("status IN ('waiting', 'notified')")
+            conditions.append("w.status IN ('waiting', 'notified')")
 
         where = " AND ".join(conditions)
 
         async with get_connection() as conn:
             total = await conn.fetchval(
-                f"SELECT COUNT(*) FROM waitlist_entries WHERE {where}", *params
+                f"SELECT COUNT(*) FROM waitlist_entries w WHERE {where}", *params
             )
 
             params.extend([limit, offset])
@@ -144,7 +144,7 @@ class WaitlistService:
         If table_id is given, match against that specific table.
         Otherwise, check all vacant tables.
         """
-        clause, params = tenant_where_clause(user)
+        rt_clause, rt_params = tenant_where_clause(user)
 
         async with get_connection() as conn:
             # Get settings
@@ -156,16 +156,16 @@ class WaitlistService:
             if table_id:
                 tables = await conn.fetch(
                     f"""SELECT id, table_number, capacity FROM restaurant_tables
-                        WHERE {clause} AND id = ${len(params) + 1}
+                        WHERE {rt_clause} AND id = ${len(rt_params) + 1}
                         AND status = 'blank' AND is_active = true""",
-                    *params, table_id,
+                    *rt_params, table_id,
                 )
             else:
                 tables = await conn.fetch(
                     f"""SELECT id, table_number, capacity FROM restaurant_tables
-                        WHERE {clause} AND status = 'blank' AND is_active = true
+                        WHERE {rt_clause} AND status = 'blank' AND is_active = true
                         ORDER BY capacity ASC""",
-                    *params,
+                    *rt_params,
                 )
 
             if not tables:
@@ -354,16 +354,16 @@ class WaitlistService:
 
     async def reorder(self, user: UserContext, ordered_ids: list[UUID]) -> list[dict]:
         """Reorder the queue (admin override). Accepts ordered list of entry IDs."""
-        clause, params = tenant_where_clause(user)
+        wl_clause, wl_params = tenant_where_clause(user)
 
         async with get_connection() as conn:
             results = []
             for i, eid in enumerate(ordered_ids, start=1):
                 row = await conn.fetchrow(
                     f"""UPDATE waitlist_entries SET position = $1
-                        WHERE id = $2 AND {clause} AND status IN ('waiting', 'notified')
+                        WHERE id = $2 AND {wl_clause} AND status IN ('waiting', 'notified')
                         RETURNING *""",
-                    i, eid, *params,
+                    i, eid, *wl_params,
                 )
                 if row:
                     results.append(self._format_entry(row))
