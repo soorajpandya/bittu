@@ -75,6 +75,8 @@ from app.api.v1 import (
     erp,
     # ── Food Images ──
     food_images,
+    # ── Waitlist ──
+    waitlist,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -160,3 +162,5 @@ router.include_router(invoice_import.router)
 router.include_router(erp.router)
 # ── Food Images ──
 router.include_router(food_images.router)
+# ── Waitlist ──
+router.include_router(waitlist.router)
