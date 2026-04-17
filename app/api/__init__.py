@@ -157,6 +157,8 @@ router.include_router(favourite_items.router)
 router.include_router(dinein.router)
 # ── ERP ──
 router.include_router(accounting.router)
+router.include_router(accounting.accounts_router)
+router.include_router(accounting.reports_router)
 router.include_router(ai_ingredients.router)
 router.include_router(invoice_import.router)
 router.include_router(erp.router)
