@@ -482,6 +482,24 @@ async def _handle_payment_completed(event: DomainEvent):
     t0 = _time.monotonic()
     try:
         async with get_connection() as conn:
+            already_posted = await conn.fetchval(
+                """
+                SELECT 1
+                FROM accounting_entries
+                WHERE reference_type = 'order'
+                  AND reference_id = $1
+                  AND journal_entry_id IS NOT NULL
+                  AND entry_side IS NOT NULL
+                LIMIT 1
+                """,
+                order_id,
+            )
+            if already_posted:
+                elapsed = int((_time.monotonic() - t0) * 1000)
+                await _log_event(conn, event, "skipped", "order_already_accounted", elapsed)
+                logger.info("erp_payment_accounting_skipped", order_id=order_id, reason="order_already_accounted")
+                return
+
             journal_enabled = await _is_flag_enabled(
                 conn, event.restaurant_id, "erp.auto_journal_entries",
             )
