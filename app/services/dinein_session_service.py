@@ -583,7 +583,7 @@ class DineInSessionService:
         - Idempotent via request_id
         """
         session = await self._get_valid_session(session_token)
-        sid = session["id"]
+        sid = str(session["id"])
         owner_id = session["user_id"]
         restaurant_id = str(session["restaurant_id"]) if session.get("restaurant_id") else None
 
