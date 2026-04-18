@@ -348,7 +348,8 @@ class DineInSessionService:
         - Serialized via distributed lock
         """
         session = await self._get_valid_session(session_token)
-        sid = session["id"]
+        sid = str(session["id"])
+        session_user_id = await self._ensure_session_user(sid, "qr", device_id=device_id)
 
         # ── Idempotency check ──
         if request_id:
