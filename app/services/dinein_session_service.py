@@ -215,7 +215,6 @@ class DineInSessionService:
         """
         session = await self._get_valid_session(session_token)
         sid = str(session["id"])
-        session_user_id = await self._ensure_session_user(sid, "qr", device_id=device_id)
 
         async with get_connection() as conn:
             # Get active order if any
@@ -257,7 +256,8 @@ class DineInSessionService:
         reason: 'completed' | 'manual_exit'
         """
         session = await self._get_valid_session(session_token)
-        sid = session["id"]
+        sid = str(session["id"])
+        session_user_id = await self._ensure_session_user(sid, "qr", device_id=device_id)
 
         try:
             async with DistributedLock(f"dinein_session:{sid}", timeout=10):
