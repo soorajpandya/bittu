@@ -714,20 +714,45 @@ class DineInSessionService:
                         )
 
                     # ── Insert order_items ──
+                    has_order_items_session_id = await conn.fetchval(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_name = 'order_items'
+                              AND column_name = 'session_id'
+                        )
+                        """
+                    )
+
                     order_item_rows = []
                     for oi in order_items_data:
-                        oi_row = await conn.fetchrow(
-                            """
-                            INSERT INTO order_items (
-                                order_id, item_id, variant_id, item_name,
-                                quantity, unit_price, total_price, addons, notes, user_id, session_id
-                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)
-                            RETURNING id
-                            """,
-                            order_id, oi["item_id"], oi.get("variant_id"), oi["item_name"],
-                            oi["quantity"], oi["unit_price"], oi["total_price"],
-                            json.dumps(oi.get("addons") or []), oi.get("notes"), owner_id, sid,
-                        )
+                        if has_order_items_session_id:
+                            oi_row = await conn.fetchrow(
+                                """
+                                INSERT INTO order_items (
+                                    order_id, item_id, variant_id, item_name,
+                                    quantity, unit_price, total_price, addons, notes, user_id, session_id
+                                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)
+                                RETURNING id
+                                """,
+                                order_id, oi["item_id"], oi.get("variant_id"), oi["item_name"],
+                                oi["quantity"], oi["unit_price"], oi["total_price"],
+                                json.dumps(oi.get("addons") or []), oi.get("notes"), owner_id, sid,
+                            )
+                        else:
+                            oi_row = await conn.fetchrow(
+                                """
+                                INSERT INTO order_items (
+                                    order_id, item_id, variant_id, item_name,
+                                    quantity, unit_price, total_price, addons, notes, user_id
+                                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+                                RETURNING id
+                                """,
+                                order_id, oi["item_id"], oi.get("variant_id"), oi["item_name"],
+                                oi["quantity"], oi["unit_price"], oi["total_price"],
+                                json.dumps(oi.get("addons") or []), oi.get("notes"), owner_id,
+                            )
                         order_item_rows.append({
                             "order_item_id": oi_row["id"],
                             "item_name": oi["item_name"],
