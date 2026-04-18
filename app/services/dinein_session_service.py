@@ -766,8 +766,11 @@ class DineInSessionService:
                     # ── Clear cart ──
                     await conn.execute("DELETE FROM table_session_carts WHERE session_id = $1", sid)
 
-                    # Get order number
-                    order_number = await conn.fetchval("SELECT order_number FROM orders WHERE id = $1", order_id)
+                    # Get order number (works for schemas without orders.order_number column)
+                    order_number = await conn.fetchval(
+                        "SELECT COALESCE(metadata->>'order_number', LEFT(id::text, 8)) FROM orders WHERE id = $1",
+                        order_id,
+                    )
 
                 order_number = str(order_number) if order_number else order_id[:8]
 
@@ -832,7 +835,9 @@ class DineInSessionService:
             # Get orders linked to this session
             orders = await conn.fetch(
                 """
-                SELECT o.id, o.order_number, o.status, o.total_amount, o.subtotal,
+                  SELECT o.id,
+                      COALESCE(o.metadata->>'order_number', LEFT(o.id::text, 8)) AS order_number,
+                      o.status, o.total_amount, o.subtotal,
                        o.tax_amount, o.table_number, o.notes, o.metadata, o.created_at
                 FROM orders o
                 JOIN session_orders so ON so.order_id = o.id
@@ -1041,7 +1046,9 @@ class DineInSessionService:
                 SELECT
                     rt.id AS table_id, rt.table_number,
                     ds.id AS session_id, ds.device_id, ds.status AS session_status,
-                    o.id AS order_id, o.order_number, o.status AS order_status,
+                    o.id AS order_id,
+                    COALESCE(o.metadata->>'order_number', LEFT(o.id::text, 8)) AS order_number,
+                    o.status AS order_status,
                     o.total_amount, o.metadata,
                     ko.id AS kitchen_order_id, ko.status AS kitchen_status,
                     ko.created_at AS ko_created_at
@@ -1156,7 +1163,9 @@ class DineInSessionService:
 
             orders = await conn.fetch(
                 """
-                SELECT o.id, o.order_number, o.status, o.subtotal, o.tax_amount,
+                  SELECT o.id,
+                      COALESCE(o.metadata->>'order_number', LEFT(o.id::text, 8)) AS order_number,
+                      o.status, o.subtotal, o.tax_amount,
                        o.discount_amount, o.total_amount, o.created_at
                 FROM orders o
                 JOIN session_orders so ON so.order_id = o.id
@@ -1667,7 +1676,9 @@ class DineInSessionService:
         """Get full order with items for session state recovery."""
         order = await conn.fetchrow(
             """
-            SELECT id, order_number, status, total_amount, subtotal, tax_amount,
+                 SELECT id,
+                     COALESCE(metadata->>'order_number', LEFT(id::text, 8)) AS order_number,
+                     status, total_amount, subtotal, tax_amount,
                    table_number, notes, created_at
             FROM orders WHERE id = $1
             """,
