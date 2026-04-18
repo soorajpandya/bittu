@@ -389,7 +389,7 @@ class DineInSessionService:
                         """
                         SELECT id, quantity, unit_price FROM table_session_carts
                         WHERE session_id = $1 AND item_id = $2
-                          AND COALESCE(variant_id, '') = COALESCE($3, '')
+                                                    AND COALESCE(variant_id::text, '') = COALESCE($3::text, '')
                           AND COALESCE(notes, '') = COALESCE($4, '')
                         """,
                         sid, item_id, variant_id, notes,

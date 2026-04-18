@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 # Connection registry
 # ──────────────────────────────────────────────────────────────
 
-@dataclass
+@dataclass(eq=False)
 class WSConnection:
     ws: WebSocket
     user_id: str
