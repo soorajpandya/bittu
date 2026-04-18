@@ -214,7 +214,8 @@ class DineInSessionService:
         Used on reconnect / page refresh.
         """
         session = await self._get_valid_session(session_token)
-        sid = session["id"]
+        sid = str(session["id"])
+        session_user_id = await self._ensure_session_user(sid, "qr", device_id=device_id)
 
         async with get_connection() as conn:
             # Get active order if any
@@ -1745,6 +1746,7 @@ class DineInSessionService:
 
     async def _check_idempotency(self, request_id: str, session_id: str) -> Optional[dict]:
         """Check if request_id was already processed."""
+        session_id = str(session_id)
         async with get_connection() as conn:
             row = await conn.fetchrow(
                 "SELECT result FROM idempotency_keys WHERE key = $1 AND session_id = $2",
@@ -1756,6 +1758,7 @@ class DineInSessionService:
 
     async def _save_idempotency(self, request_id: str, session_id: str, result: dict):
         """Save idempotency result."""
+        session_id = str(session_id)
         async with get_connection() as conn:
             await conn.execute(
                 """
