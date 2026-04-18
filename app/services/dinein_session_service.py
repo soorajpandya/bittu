@@ -761,19 +761,39 @@ class DineInSessionService:
 
                     # ── Kitchen order (one per place-order action) ──
                     kitchen_order_id = str(uuid.uuid4())
+                    kitchen_cols_rows = await conn.fetch(
+                        "SELECT column_name FROM information_schema.columns WHERE table_name = 'kitchen_orders'"
+                    )
+                    kitchen_cols = {r["column_name"] for r in kitchen_cols_rows}
+
+                    ko_insert_cols = ["id", "order_id", "restaurant_id", "status", "user_id"]
+                    ko_insert_vals = ["$1", "$2", "$3", "'queued'::kitchen_status", "$4"]
+                    ko_params = [kitchen_order_id, order_id, restaurant_id, owner_id]
+                    next_param = 5
+
+                    if "priority" in kitchen_cols:
+                        ko_insert_cols.append("priority")
+                        ko_insert_vals.append("0")
+                    if "source" in kitchen_cols:
+                        ko_insert_cols.append("source")
+                        ko_insert_vals.append("'qr_table'")
+                    if "table_session_id" in kitchen_cols:
+                        ko_insert_cols.append("table_session_id")
+                        ko_insert_vals.append(f"${next_param}")
+                        ko_params.append(sid)
+                        next_param += 1
+                    if "branch_id" in kitchen_cols:
+                        ko_insert_cols.append("branch_id")
+                        ko_insert_vals.append(f"${next_param}")
+                        ko_params.append(str(session.get("branch_id")) if session.get("branch_id") else None)
+                        next_param += 1
+                    if "created_at" in kitchen_cols:
+                        ko_insert_cols.append("created_at")
+                        ko_insert_vals.append("now()")
+
                     await conn.execute(
-                        """
-                        INSERT INTO kitchen_orders (
-                            id, order_id, restaurant_id, status, user_id,
-                            priority, source, table_session_id, branch_id, created_at
-                        ) VALUES (
-                            $1, $2, $3, 'queued'::kitchen_status, $4,
-                            0, 'qr_table', $5, $6, now()
-                        )
-                        """,
-                        kitchen_order_id, order_id, restaurant_id, owner_id,
-                        sid,
-                        str(session.get("branch_id")) if session.get("branch_id") else None,
+                        f"INSERT INTO kitchen_orders ({', '.join(ko_insert_cols)}) VALUES ({', '.join(ko_insert_vals)})",
+                        *ko_params,
                     )
 
                     for oi_info in order_item_rows:
