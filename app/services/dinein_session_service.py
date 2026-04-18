@@ -91,7 +91,7 @@ class DineInSessionService:
                 FROM restaurant_tables rt
                 LEFT JOIN restaurants r ON r.id = rt.restaurant_id
                 WHERE rt.id = $1::uuid AND rt.is_active = true
-                  AND (rt.restaurant_id = $2::uuid OR rt.user_id = $2::uuid)
+                                    AND (rt.restaurant_id::text = $2::text OR rt.user_id::text = $2::text)
                 """,
                 table_id, restaurant_id,
             )
