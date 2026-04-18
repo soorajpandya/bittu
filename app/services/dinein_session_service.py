@@ -44,6 +44,7 @@ SESSION_CLOSED = "dinein.session_closed"
 SESSION_MERGED = "dinein.session_merged"
 DINEIN_ORDER_UPDATED = "dinein.order_updated"
 DINEIN_ITEM_ADDED = "dinein.item_added"
+BILL_UPDATED = "dinein.bill_updated"
 
 
 class DineInSessionService:
@@ -63,13 +64,14 @@ class DineInSessionService:
         """
         Customer scans QR code.
         - If client sends a valid session_token → restore session
-        - Otherwise create a new session
-        - Same table can have multiple independent sessions
+        - Otherwise, reuse active session for the table or create one
+        - Strict rule: one active session per table
         """
         # ── Try to restore existing session from client token ──
         if client_session_token:
             restored = await self._try_restore_session(client_session_token)
             if restored:
+                await self._ensure_session_user(restored["id"], "qr", device_id=device_id)
                 await self._touch_activity(restored["id"])
                 return {
                     "session_id": restored["id"],
@@ -116,18 +118,49 @@ class DineInSessionService:
         owner_id = str(table["user_id"])
         actual_restaurant_id = str(table["restaurant_id"]) if table["restaurant_id"] else None
 
+        # Reuse active session for this table if present.
+        is_new = True
         async with get_serializable_transaction() as conn:
-            await conn.execute(
+            existing = await conn.fetchrow(
                 """
-                INSERT INTO dine_in_sessions (
-                    id, table_id, restaurant_id, user_id, branch_id,
-                    session_token, device_id, guest_count, status,
-                    last_activity_at, expires_at
-                ) VALUES ($1, $2, $3, $4, NULL, $5, $6, 1, 'active', $7, $8)
+                SELECT id, session_token, active_order_id
+                FROM dine_in_sessions
+                WHERE table_id = $1
+                  AND status = 'active'
+                ORDER BY created_at DESC
+                LIMIT 1
                 """,
-                session_id, table_id, actual_restaurant_id,
-                owner_id, session_token, device_id, now, expires_at,
+                table_id,
             )
+
+            if existing:
+                session_id = str(existing["id"])
+                session_token = existing["session_token"]
+                is_new = False
+                await conn.execute(
+                    """
+                    UPDATE dine_in_sessions
+                    SET device_id = COALESCE($1, device_id),
+                        last_activity_at = now()
+                    WHERE id = $2
+                    """,
+                    device_id,
+                    session_id,
+                )
+            else:
+                await conn.execute(
+                    """
+                    INSERT INTO dine_in_sessions (
+                        id, table_id, restaurant_id, user_id, branch_id,
+                        session_token, device_id, guest_count, status,
+                        last_activity_at, expires_at, started_at,
+                        created_by, total_amount, paid_amount, remaining_amount,
+                        active_users_count
+                    ) VALUES ($1, $2, $3, $4, NULL, $5, $6, 1, 'active', $7, $8, $7, 'qr', 0, 0, 0, 0)
+                    """,
+                    session_id, table_id, actual_restaurant_id,
+                    owner_id, session_token, device_id, now, expires_at,
+                )
 
             # Ensure table is marked running
             await conn.execute(
@@ -138,6 +171,8 @@ class DineInSessionService:
                 """,
                 now, table_id,
             )
+
+        await self._ensure_session_user(session_id, "qr", device_id=device_id)
 
         table_info = {
             "id": str(table["id"]),
@@ -154,7 +189,7 @@ class DineInSessionService:
         } if table["rest_id"] else {}
 
         await emit_and_publish(DomainEvent(
-            event_type=SESSION_CREATED,
+            event_type=SESSION_CREATED if is_new else SESSION_RESTORED,
             payload={
                 "session_id": session_id,
                 "table_id": table_id,
@@ -169,8 +204,8 @@ class DineInSessionService:
             "session_token": session_token,
             "table": table_info,
             "restaurant": restaurant_info,
-            "is_new": True,
-            "active_order_id": None,
+            "is_new": is_new,
+            "active_order_id": str(existing["active_order_id"]) if not is_new and existing and existing.get("active_order_id") else None,
         }
 
     async def get_session_state(self, session_token: str) -> dict:
@@ -391,7 +426,7 @@ class DineInSessionService:
                             item_name, variant_name, quantity,
                             unit_price, total_price,
                             json.dumps(addons or []), json.dumps(extras or []),
-                            notes, device_id, request_id,
+                            notes, session_user_id, request_id,
                         )
                         result_qty = quantity
 
@@ -1102,8 +1137,444 @@ class DineInSessionService:
         return {"status": "sent", "request_type": request_type}
 
     # ══════════════════════════════════════════════════════════
+    # 8. BILLING / SPLIT / PAYMENTS
+    # ══════════════════════════════════════════════════════════
+
+    async def get_session_bill(self, session_id: str) -> dict:
+        """Return aggregated session bill from all linked session orders."""
+        async with get_connection() as conn:
+            session = await conn.fetchrow(
+                """
+                SELECT id, table_id, restaurant_id, status, total_amount, paid_amount, remaining_amount
+                FROM dine_in_sessions
+                WHERE id = $1
+                """,
+                session_id,
+            )
+            if not session:
+                raise NotFoundError("Session", session_id)
+
+            orders = await conn.fetch(
+                """
+                SELECT o.id, o.order_number, o.status, o.subtotal, o.tax_amount,
+                       o.discount_amount, o.total_amount, o.created_at
+                FROM orders o
+                JOIN session_orders so ON so.order_id = o.id
+                WHERE so.session_id = $1
+                ORDER BY o.created_at
+                """,
+                session_id,
+            )
+
+            order_ids = [str(o["id"]) for o in orders]
+            grouped_items = []
+            if order_ids:
+                grouped_rows = await conn.fetch(
+                    """
+                    SELECT
+                        oi.item_id,
+                        oi.item_name,
+                        SUM(oi.quantity) AS quantity,
+                        SUM(oi.total_price) AS total_price
+                    FROM order_items oi
+                    WHERE oi.order_id = ANY($1::uuid[])
+                    GROUP BY oi.item_id, oi.item_name
+                    ORDER BY oi.item_name
+                    """,
+                    order_ids,
+                )
+                grouped_items = [
+                    {
+                        "item_id": r["item_id"],
+                        "item_name": r["item_name"],
+                        "quantity": int(r["quantity"] or 0),
+                        "total_price": float(r["total_price"] or 0),
+                    }
+                    for r in grouped_rows
+                ]
+
+            subtotal = sum(Decimal(str(o["subtotal"] or 0)) for o in orders)
+            tax = sum(Decimal(str(o["tax_amount"] or 0)) for o in orders)
+            discount = sum(Decimal(str(o["discount_amount"] or 0)) for o in orders)
+            grand_total = sum(Decimal(str(o["total_amount"] or 0)) for o in orders)
+
+            payment_rows = await conn.fetch(
+                """
+                SELECT id, amount, payment_method, transaction_ref, paid_by, notes, created_at
+                FROM table_session_payments
+                WHERE session_id = $1
+                ORDER BY created_at
+                """,
+                session_id,
+            )
+
+            paid_total = sum(Decimal(str(p["amount"] or 0)) for p in payment_rows)
+            remaining = grand_total - paid_total
+            if remaining < 0:
+                remaining = Decimal("0")
+
+            await conn.execute(
+                """
+                UPDATE dine_in_sessions
+                SET total_amount = $1,
+                    paid_amount = $2,
+                    remaining_amount = $3
+                WHERE id = $4
+                """,
+                float(grand_total),
+                float(paid_total),
+                float(remaining),
+                session_id,
+            )
+
+        return {
+            "session_id": session_id,
+            "status": session["status"],
+            "orders": [
+                {
+                    "order_id": str(o["id"]),
+                    "order_number": o["order_number"],
+                    "status": o["status"],
+                    "subtotal": float(o["subtotal"] or 0),
+                    "tax": float(o["tax_amount"] or 0),
+                    "discount": float(o["discount_amount"] or 0),
+                    "total": float(o["total_amount"] or 0),
+                    "created_at": o["created_at"].isoformat() if o["created_at"] else None,
+                }
+                for o in orders
+            ],
+            "grouped_items": grouped_items,
+            "subtotal": float(subtotal),
+            "tax": float(tax),
+            "discount": float(discount),
+            "grand_total": float(grand_total),
+            "paid_total": float(paid_total),
+            "remaining_amount": float(remaining),
+            "payments": [
+                {
+                    "payment_id": str(p["id"]),
+                    "amount": float(p["amount"]),
+                    "payment_method": p["payment_method"],
+                    "transaction_ref": p["transaction_ref"],
+                    "paid_by": p["paid_by"],
+                    "notes": p["notes"],
+                    "created_at": p["created_at"].isoformat() if p["created_at"] else None,
+                }
+                for p in payment_rows
+            ],
+        }
+
+    async def split_bill(
+        self,
+        session_id: str,
+        split_type: str,
+        parts: int = 1,
+        item_splits: Optional[list[dict]] = None,
+        user_splits: Optional[list[dict]] = None,
+    ) -> dict:
+        """Compute split bill suggestions without mutating order totals."""
+        bill = await self.get_session_bill(session_id)
+        grand_total = Decimal(str(bill["grand_total"]))
+        split_type = (split_type or "").lower()
+
+        if grand_total <= 0:
+            raise ValidationError("Session has no payable amount")
+
+        if split_type == "equal":
+            if parts <= 0:
+                raise ValidationError("parts must be greater than 0")
+            per = (grand_total / Decimal(str(parts))).quantize(Decimal("0.01"))
+            shares = [{"label": f"part_{idx + 1}", "amount": float(per)} for idx in range(parts)]
+            delta = grand_total - (per * parts)
+            if delta != 0 and shares:
+                shares[0]["amount"] = float(Decimal(str(shares[0]["amount"])) + delta)
+            return {"session_id": session_id, "split_type": "equal", "shares": shares}
+
+        if split_type == "by_item":
+            if not item_splits:
+                raise ValidationError("item_splits required for by_item")
+
+            item_total = Decimal("0")
+            shares = []
+            for idx, row in enumerate(item_splits):
+                amount = Decimal(str(row.get("amount") or 0))
+                if amount <= 0:
+                    continue
+                item_total += amount
+                shares.append({
+                    "label": row.get("label") or f"item_group_{idx + 1}",
+                    "amount": float(amount),
+                    "items": row.get("items") or [],
+                })
+
+            if item_total <= 0:
+                raise ValidationError("At least one positive item split amount is required")
+            if item_total > grand_total:
+                raise ValidationError("Item split total cannot exceed grand total")
+
+            if item_total < grand_total:
+                shares.append({"label": "unallocated", "amount": float(grand_total - item_total), "items": []})
+
+            return {"session_id": session_id, "split_type": "by_item", "shares": shares}
+
+        if split_type == "by_user":
+            if user_splits:
+                user_total = Decimal("0")
+                shares = []
+                for idx, row in enumerate(user_splits):
+                    amount = Decimal(str(row.get("amount") or 0))
+                    if amount <= 0:
+                        continue
+                    user_total += amount
+                    shares.append({
+                        "label": row.get("name") or f"user_{idx + 1}",
+                        "session_user_id": row.get("session_user_id"),
+                        "amount": float(amount),
+                    })
+                if user_total <= 0:
+                    raise ValidationError("At least one positive user split amount is required")
+                if user_total > grand_total:
+                    raise ValidationError("User split total cannot exceed grand total")
+                if user_total < grand_total:
+                    shares.append({"label": "unallocated", "amount": float(grand_total - user_total)})
+                return {"session_id": session_id, "split_type": "by_user", "shares": shares}
+
+            async with get_connection() as conn:
+                users = await conn.fetch(
+                    """
+                    SELECT id, COALESCE(name, CONCAT('guest_', LEFT(id::text, 6))) AS name
+                    FROM table_session_users
+                    WHERE session_id = $1 AND is_active = true
+                    ORDER BY joined_at
+                    """,
+                    session_id,
+                )
+
+            if not users:
+                raise ValidationError("No active session users found")
+
+            per = (grand_total / Decimal(str(len(users)))).quantize(Decimal("0.01"))
+            shares = [
+                {
+                    "label": u["name"],
+                    "session_user_id": str(u["id"]),
+                    "amount": float(per),
+                }
+                for u in users
+            ]
+            delta = grand_total - (per * len(users))
+            if delta != 0 and shares:
+                shares[0]["amount"] = float(Decimal(str(shares[0]["amount"])) + delta)
+            return {"session_id": session_id, "split_type": "by_user", "shares": shares}
+
+        raise ValidationError("split_type must be one of: equal, by_item, by_user")
+
+    async def record_session_payment(
+        self,
+        session_id: str,
+        amount: float,
+        payment_method: str,
+        created_by: Optional[str] = None,
+        transaction_ref: Optional[str] = None,
+        paid_by: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> dict:
+        """Record partial/full payment against a table session."""
+        amt = Decimal(str(amount or 0))
+        if amt <= 0:
+            raise ValidationError("Payment amount must be greater than zero")
+
+        async with get_serializable_transaction() as conn:
+            session = await conn.fetchrow(
+                "SELECT id, status, restaurant_id FROM dine_in_sessions WHERE id = $1",
+                session_id,
+            )
+            if not session:
+                raise NotFoundError("Session", session_id)
+            if session["status"] != "active":
+                raise ValidationError("Payments are only allowed for active sessions")
+
+            bill = await self.get_session_bill(session_id)
+            remaining = Decimal(str(bill["remaining_amount"]))
+            if remaining <= 0:
+                raise ValidationError("Session is already fully paid")
+            if amt > remaining:
+                raise ValidationError(f"Payment exceeds remaining amount ({remaining})")
+
+            payment_id = await conn.fetchval(
+                """
+                INSERT INTO table_session_payments (
+                    session_id, amount, payment_method, transaction_ref,
+                    paid_by, notes, created_by
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING id
+                """,
+                session_id,
+                float(amt),
+                payment_method,
+                transaction_ref,
+                paid_by,
+                notes,
+                created_by,
+            )
+
+        updated_bill = await self.get_session_bill(session_id)
+        await emit_and_publish(DomainEvent(
+            event_type=BILL_UPDATED,
+            payload={
+                "session_id": session_id,
+                "payment_id": str(payment_id),
+                "payment_method": payment_method,
+                "amount": float(amt),
+                "remaining_amount": updated_bill["remaining_amount"],
+            },
+            restaurant_id=str(session["restaurant_id"]) if session and session.get("restaurant_id") else None,
+        ))
+
+        return {
+            "payment_id": str(payment_id),
+            "session_id": session_id,
+            "amount": float(amt),
+            "remaining_amount": updated_bill["remaining_amount"],
+            "status": "recorded",
+        }
+
+    async def paid_and_vacate(self, session_id: str, closed_by: Optional[str] = None) -> dict:
+        """Close session only when remaining amount is zero, then free the table."""
+        bill = await self.get_session_bill(session_id)
+        remaining = Decimal(str(bill["remaining_amount"]))
+        if remaining > 0:
+            raise ValidationError(f"Cannot close session with unpaid amount: {remaining}")
+
+        async with get_serializable_transaction() as conn:
+            session = await conn.fetchrow(
+                "SELECT id, table_id, restaurant_id, status FROM dine_in_sessions WHERE id = $1",
+                session_id,
+            )
+            if not session:
+                raise NotFoundError("Session", session_id)
+            if session["status"] != "active":
+                raise ValidationError(f"Session is already {session['status']}")
+
+            await conn.execute(
+                """
+                UPDATE dine_in_sessions
+                SET status = 'closed',
+                    ended_at = now(),
+                    active_users_count = 0,
+                    last_activity_at = now()
+                WHERE id = $1
+                """,
+                session_id,
+            )
+
+            await conn.execute(
+                """
+                UPDATE table_session_users
+                SET is_active = false
+                WHERE session_id = $1
+                """,
+                session_id,
+            )
+
+            await conn.execute(
+                """
+                UPDATE restaurant_tables
+                SET status = 'blank',
+                    is_occupied = false,
+                    occupied_since = NULL,
+                    session_token = NULL,
+                    current_order_id = NULL
+                WHERE id = $1
+                """,
+                str(session["table_id"]),
+            )
+
+        await emit_and_publish(DomainEvent(
+            event_type=SESSION_CLOSED,
+            payload={
+                "session_id": session_id,
+                "table_id": str(session["table_id"]),
+                "closed_by": closed_by,
+                "remaining_amount": 0,
+            },
+            restaurant_id=str(session["restaurant_id"]) if session.get("restaurant_id") else None,
+        ))
+
+        return {
+            "status": "closed",
+            "session_id": session_id,
+            "table_id": str(session["table_id"]),
+            "remaining_amount": 0.0,
+        }
+
+    # ══════════════════════════════════════════════════════════
     # PRIVATE HELPERS
     # ══════════════════════════════════════════════════════════
+
+    async def _ensure_session_user(
+        self,
+        session_id: str,
+        user_type: str,
+        name: Optional[str] = None,
+        device_id: Optional[str] = None,
+    ) -> str:
+        """Upsert active session participant and refresh session active user count."""
+        async with get_serializable_transaction() as conn:
+            row = None
+            if device_id:
+                row = await conn.fetchrow(
+                    """
+                    SELECT id FROM table_session_users
+                    WHERE session_id = $1 AND device_id = $2
+                    LIMIT 1
+                    """,
+                    session_id,
+                    device_id,
+                )
+
+            if row:
+                await conn.execute(
+                    """
+                    UPDATE table_session_users
+                    SET is_active = true,
+                        joined_at = COALESCE(joined_at, now()),
+                        name = COALESCE($1, name)
+                    WHERE id = $2
+                    """,
+                    name,
+                    str(row["id"]),
+                )
+                session_user_id = str(row["id"])
+            else:
+                session_user_id = str(uuid.uuid4())
+                await conn.execute(
+                    """
+                    INSERT INTO table_session_users (id, session_id, user_type, name, device_id, is_active)
+                    VALUES ($1, $2, $3, $4, $5, true)
+                    """,
+                    session_user_id,
+                    session_id,
+                    user_type,
+                    name,
+                    device_id,
+                )
+
+            active_count = await conn.fetchval(
+                """
+                SELECT COUNT(*)
+                FROM table_session_users
+                WHERE session_id = $1 AND is_active = true
+                """,
+                session_id,
+            )
+            await conn.execute(
+                "UPDATE dine_in_sessions SET active_users_count = $1 WHERE id = $2",
+                int(active_count or 0),
+                session_id,
+            )
+
+        return session_user_id
 
     async def _get_valid_session(self, session_token: str) -> dict:
         """Validate session token, check expiry and status."""
@@ -1122,6 +1593,8 @@ class DineInSessionService:
             if session["status"] == "expired":
                 raise ValidationError("Session has expired. Please scan QR again.")
             elif session["status"] == "completed":
+                raise ValidationError("Session is closed.")
+            elif session["status"] == "closed":
                 raise ValidationError("Session is closed.")
             elif session["status"] == "merged":
                 # Redirect to merged session — the token is still usable

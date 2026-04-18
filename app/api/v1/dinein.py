@@ -77,6 +77,21 @@ class CloseSessionIn(BaseModel):
     reason: str = "completed"
 
 
+class SplitBillIn(BaseModel):
+    split_type: str = "equal"  # equal | by_item | by_user
+    parts: int = 1
+    item_splits: Optional[list[dict]] = None
+    user_splits: Optional[list[dict]] = None
+
+
+class SessionPaymentIn(BaseModel):
+    amount: float = Field(gt=0)
+    payment_method: str
+    transaction_ref: Optional[str] = None
+    paid_by: Optional[str] = None
+    notes: Optional[str] = None
+
+
 # ══════════════════════════════════════════════════════════════
 # PUBLIC ENDPOINTS (customer-facing, no JWT)
 # ══════════════════════════════════════════════════════════════
@@ -223,3 +238,57 @@ async def kitchen_table_view(
         user_id=owner_id,
         restaurant_id=user.restaurant_id or "",
     )
+
+
+@router.get("/sessions/{session_id}/bill")
+async def get_session_bill(
+    session_id: str,
+    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter", "staff")),
+):
+    """Get complete bill snapshot for a table session."""
+    return await _svc.get_session_bill(session_id=session_id)
+
+
+@router.post("/sessions/{session_id}/split-bill")
+async def split_session_bill(
+    session_id: str,
+    body: SplitBillIn,
+    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter", "staff")),
+):
+    """Generate split bill allocations (equal/by_item/by_user)."""
+    return await _svc.split_bill(
+        session_id=session_id,
+        split_type=body.split_type,
+        parts=body.parts,
+        item_splits=body.item_splits,
+        user_splits=body.user_splits,
+    )
+
+
+@router.post("/sessions/{session_id}/payments")
+async def record_session_payment(
+    session_id: str,
+    body: SessionPaymentIn,
+    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter", "staff")),
+):
+    """Record a partial/full payment for session settlement."""
+    actor = user.owner_id if user.is_branch_user else user.user_id
+    return await _svc.record_session_payment(
+        session_id=session_id,
+        amount=body.amount,
+        payment_method=body.payment_method,
+        created_by=actor,
+        transaction_ref=body.transaction_ref,
+        paid_by=body.paid_by,
+        notes=body.notes,
+    )
+
+
+@router.post("/sessions/{session_id}/paid-vacate")
+async def paid_vacate_session(
+    session_id: str,
+    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter")),
+):
+    """Close session and free table after full payment validation."""
+    actor = user.owner_id if user.is_branch_user else user.user_id
+    return await _svc.paid_and_vacate(session_id=session_id, closed_by=actor)

@@ -7,9 +7,11 @@ from app.core.auth import UserContext, require_permission, require_role
 from app.core.database import get_connection
 from app.core.logging import get_logger
 from app.services.table_service import TableSessionService
+from app.services.dinein_session_service import DineInSessionService
 
 router = APIRouter(prefix="/tables", tags=["Tables"])
 _svc = TableSessionService()
+_dinein_svc = DineInSessionService()
 logger = get_logger(__name__)
 
 
@@ -314,6 +316,65 @@ class MarkPaidVacateIn(BaseModel):
     order_id: Optional[str] = None
 
 
+class SessionSplitBillIn(BaseModel):
+    split_type: str = "equal"
+    parts: int = 1
+    item_splits: Optional[list[dict]] = None
+    user_splits: Optional[list[dict]] = None
+
+
+class SessionPaymentIn(BaseModel):
+    amount: float = Field(gt=0)
+    payment_method: str
+    transaction_ref: Optional[str] = None
+    paid_by: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@router.get("/sessions/{session_id}/bill")
+async def get_session_bill(
+    session_id: str,
+    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter", "staff")),
+):
+    """POS alias: get full bill for a table session."""
+    return await _dinein_svc.get_session_bill(session_id)
+
+
+@router.post("/sessions/{session_id}/split-bill")
+async def split_bill(
+    session_id: str,
+    body: SessionSplitBillIn,
+    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter", "staff")),
+):
+    """POS alias: split session bill equally/by-item/by-user."""
+    return await _dinein_svc.split_bill(
+        session_id=session_id,
+        split_type=body.split_type,
+        parts=body.parts,
+        item_splits=body.item_splits,
+        user_splits=body.user_splits,
+    )
+
+
+@router.post("/sessions/{session_id}/payments")
+async def add_session_payment(
+    session_id: str,
+    body: SessionPaymentIn,
+    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter", "staff")),
+):
+    """POS alias: record partial/full payment against session."""
+    actor = user.owner_id if user.is_branch_user else user.user_id
+    return await _dinein_svc.record_session_payment(
+        session_id=session_id,
+        amount=body.amount,
+        payment_method=body.payment_method,
+        created_by=actor,
+        transaction_ref=body.transaction_ref,
+        paid_by=body.paid_by,
+        notes=body.notes,
+    )
+
+
 @router.post("/sessions/{session_id}/paid-vacate")
 async def mark_paid_and_vacate(
     session_id: str,
@@ -321,6 +382,5 @@ async def mark_paid_and_vacate(
     user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter")),
 ):
     """Mark order as paid and end the table session."""
-    return await _svc.mark_paid_and_vacate(
-        user=user, session_id=session_id, order_id=body.order_id,
-    )
+    actor = user.owner_id if user.is_branch_user else user.user_id
+    return await _dinein_svc.paid_and_vacate(session_id=session_id, closed_by=actor)
