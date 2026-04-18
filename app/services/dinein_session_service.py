@@ -685,8 +685,10 @@ class DineInSessionService:
                         await conn.execute(
                             """
                             INSERT INTO session_orders (session_id, order_id, role)
-                            VALUES ($1, $2, 'owner')
-                            ON CONFLICT (session_id, order_id) DO NOTHING
+                            SELECT $1, $2, 'owner'
+                            WHERE NOT EXISTS (
+                                SELECT 1 FROM session_orders WHERE session_id = $1 AND order_id = $2
+                            )
                             """,
                             sid, order_id,
                         )
