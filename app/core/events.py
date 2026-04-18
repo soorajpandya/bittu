@@ -109,7 +109,7 @@ class DomainEvent:
             "branch_id": self.branch_id,
             "timestamp": self.timestamp,
             "correlation_id": self.correlation_id,
-        }).decode()
+        }, default=str).decode()
 
 
 # ── Event Bus (in-process) ──
