@@ -9,7 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.core.database import get_connection, get_transaction
 from app.core.logging import get_logger
 
@@ -256,7 +256,7 @@ class FeatureFlagUpdate(BaseModel):
 async def list_accounts(
     account_type: Optional[str] = Query(None),
     is_active: bool = Query(True),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     clauses = ["restaurant_id = $1", "is_active = $2"]
@@ -279,7 +279,7 @@ async def list_accounts(
 @router.post("/accounts", status_code=201)
 async def create_account(
     body: AccountCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -297,7 +297,7 @@ async def create_account(
 @router.get("/accounts/balances")
 async def account_balances(
     as_of_date: Optional[date] = Query(None),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     if as_of_date:
@@ -344,7 +344,7 @@ async def list_journals(
     branch_id: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     bid = _bid(user, branch_id)
@@ -395,7 +395,7 @@ async def list_journals(
 @router.post("/journals", status_code=201)
 async def create_journal(
     body: JournalCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     uid = _uid(user)
@@ -446,7 +446,7 @@ async def create_journal(
 @router.post("/journals/{journal_id}/reverse", status_code=201)
 async def reverse_journal(
     journal_id: UUID,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     uid = _uid(user)
@@ -494,7 +494,7 @@ async def reverse_journal(
 async def list_recipes(
     item_id: Optional[int] = Query(None),
     is_active: bool = Query(True),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     clauses = ["r.restaurant_id = $1", "r.is_active = $2"]
@@ -537,7 +537,7 @@ async def list_recipes(
 @router.post("/recipes", status_code=201)
 async def create_recipe(
     body: RecipeCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     uid = _uid(user)
@@ -565,7 +565,7 @@ async def create_recipe(
 async def update_recipe(
     recipe_id: UUID,
     body: RecipeUpdate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     async with get_transaction() as conn:
@@ -613,7 +613,7 @@ async def update_recipe(
 async def inventory_summary(
     branch_id: Optional[str] = Query(None),
     low_only: bool = Query(False),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     bid = _bid(user, branch_id)
@@ -649,7 +649,7 @@ async def inventory_history(
     transaction_type: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     bid = _bid(user, branch_id)
@@ -679,7 +679,7 @@ async def inventory_history(
 @router.post("/inventory-ledger/adjust", status_code=201)
 async def adjust_stock(
     body: StockAdjust,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     uid = _uid(user)
@@ -712,7 +712,7 @@ async def list_vendors(
     search: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     clauses = ["v.restaurant_id = $1", "v.is_active = $2"]
@@ -743,7 +743,7 @@ async def list_vendors(
 @router.post("/vendors", status_code=201)
 async def create_vendor(
     body: VendorCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -768,7 +768,7 @@ async def create_vendor(
 @router.get("/vendors/{vendor_id}")
 async def get_vendor(
     vendor_id: UUID,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -791,7 +791,7 @@ async def get_vendor(
 async def update_vendor(
     vendor_id: UUID,
     body: VendorUpdate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     data = body.dict(exclude_unset=True)
@@ -823,7 +823,7 @@ async def list_grn(
     end_date: Optional[date] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     clauses = ["g.restaurant_id = $1"]
@@ -860,7 +860,7 @@ async def list_grn(
 @router.post("/grn", status_code=201)
 async def create_grn(
     body: GRNCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     uid = _uid(user)
@@ -896,7 +896,7 @@ async def create_grn(
 @router.patch("/grn/{grn_id}/verify")
 async def verify_grn(
     grn_id: UUID,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     uid = _uid(user)
@@ -940,7 +940,7 @@ async def list_vendor_payments(
     end_date: Optional[date] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     clauses = ["vp.restaurant_id = $1"]
@@ -977,7 +977,7 @@ async def list_vendor_payments(
 @router.post("/vendor-payments", status_code=201)
 async def create_vendor_payment(
     body: VendorPaymentCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     uid = _uid(user)
@@ -1003,7 +1003,7 @@ async def create_vendor_payment(
 
 @router.get("/drawers")
 async def list_drawers(
-    user: UserContext = Depends(require_role("owner", "manager", "cashier")),
+    user: UserContext = Depends(require_permission("erp.shifts.read")),
 ):
     rid = _rid(user)
     bid = user.branch_id
@@ -1020,7 +1020,7 @@ async def list_drawers(
 @router.post("/drawers", status_code=201)
 async def create_drawer(
     body: DrawerCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     bid = body.branch_id or user.branch_id
@@ -1038,7 +1038,7 @@ async def create_drawer(
 @router.post("/shifts/open", status_code=201)
 async def open_shift(
     body: ShiftOpen,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier")),
+    user: UserContext = Depends(require_permission("erp.shifts.manage")),
 ):
     rid = _rid(user)
     uid = _uid(user)
@@ -1063,7 +1063,7 @@ async def open_shift(
 
 @router.get("/shifts/current")
 async def current_shift(
-    user: UserContext = Depends(require_role("owner", "manager", "cashier")),
+    user: UserContext = Depends(require_permission("erp.shifts.read")),
 ):
     uid = _uid(user)
     async with get_connection() as conn:
@@ -1114,7 +1114,7 @@ async def current_shift(
 async def close_shift(
     shift_id: UUID,
     body: ShiftClose,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier")),
+    user: UserContext = Depends(require_permission("erp.shifts.manage")),
 ):
     uid = _uid(user)
     async with get_transaction() as conn:
@@ -1162,7 +1162,7 @@ async def list_shifts(
     end_date: Optional[date] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     clauses = ["s.restaurant_id = $1"]
@@ -1203,7 +1203,7 @@ async def list_transfers(
     direction: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     bid = user.branch_id
@@ -1240,7 +1240,7 @@ async def list_transfers(
 @router.post("/transfers", status_code=201)
 async def create_transfer(
     body: TransferCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     uid = _uid(user)
@@ -1268,7 +1268,7 @@ async def create_transfer(
 @router.patch("/transfers/{transfer_id}/approve")
 async def approve_transfer(
     transfer_id: UUID,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     uid = _uid(user)
     rid = _rid(user)
@@ -1286,7 +1286,7 @@ async def approve_transfer(
 @router.patch("/transfers/{transfer_id}/ship")
 async def ship_transfer(
     transfer_id: UUID,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     uid = _uid(user)
     rid = _rid(user)
@@ -1318,7 +1318,7 @@ async def ship_transfer(
 async def receive_transfer(
     transfer_id: UUID,
     body: TransferReceive,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     uid = _uid(user)
     rid = _rid(user)
@@ -1358,7 +1358,7 @@ async def receive_transfer(
 @router.get("/tax-rates")
 async def list_tax_rates(
     is_active: bool = Query(True),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -1377,7 +1377,7 @@ async def list_tax_rates(
 @router.post("/tax-rates", status_code=201)
 async def create_tax_rate(
     body: TaxRateCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -1397,7 +1397,7 @@ async def create_tax_rate(
 @router.post("/tax-rates/assign", status_code=201)
 async def assign_tax(
     body: TaxAssign,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     async with get_connection() as conn:
         row = await conn.fetchrow(
@@ -1414,7 +1414,7 @@ async def assign_tax(
 async def unassign_tax(
     item_id: int,
     tax_rate_id: UUID,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     async with get_connection() as conn:
         await conn.execute(
@@ -1432,7 +1432,7 @@ async def unassign_tax(
 async def list_gst_reports(
     report_type: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     clauses = ["restaurant_id = $1"]
@@ -1456,7 +1456,7 @@ async def list_gst_reports(
 @router.post("/gst-reports/generate", status_code=201)
 async def generate_gst_report(
     body: GSTReportGenerate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     async with get_transaction() as conn:
@@ -1505,7 +1505,7 @@ async def generate_gst_report(
 @router.patch("/gst-reports/{report_id}/filed")
 async def mark_filed(
     report_id: UUID,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -1523,7 +1523,7 @@ async def mark_filed(
 async def tax_liability(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     if not start_date:
@@ -1561,7 +1561,7 @@ async def item_profitability(
     period_end: Optional[date] = Query(None),
     sort_by: str = Query("gross_profit"),
     limit: int = Query(50, le=200),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     bid = _bid(user, branch_id)
@@ -1609,7 +1609,7 @@ async def daily_pnl(
     branch_id: Optional[str] = Query(None),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     bid = _bid(user, branch_id)
@@ -1642,7 +1642,7 @@ async def daily_pnl(
 @router.get("/tax-rules")
 async def list_tax_rules(
     is_active: bool = Query(True),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -1660,7 +1660,7 @@ async def list_tax_rules(
 @router.post("/tax-rules", status_code=201)
 async def create_tax_rule(
     body: TaxRuleCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -1684,7 +1684,7 @@ async def create_tax_rule(
 async def update_tax_rule(
     rule_id: UUID,
     body: TaxRuleCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -1710,7 +1710,7 @@ async def update_tax_rule(
 @router.delete("/tax-rules/{rule_id}")
 async def delete_tax_rule(
     rule_id: UUID,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -1730,7 +1730,7 @@ async def delete_tax_rule(
 
 @router.get("/platform-tax-config")
 async def list_platform_tax_config(
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -1746,7 +1746,7 @@ async def list_platform_tax_config(
 @router.post("/platform-tax-config", status_code=201)
 async def create_platform_tax_config(
     body: PlatformTaxCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -1773,7 +1773,7 @@ async def create_platform_tax_config(
 async def update_platform_tax_config(
     config_id: UUID,
     body: PlatformTaxCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -1798,7 +1798,7 @@ async def update_platform_tax_config(
 
 @router.get("/feature-flags")
 async def list_feature_flags(
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -1816,7 +1816,7 @@ async def list_feature_flags(
 async def toggle_feature_flag(
     flag_name: str,
     body: FeatureFlagUpdate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.write")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -1837,7 +1837,7 @@ async def toggle_feature_flag(
 
 @router.get("/consistency-check")
 async def run_consistency_check(
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -1864,7 +1864,7 @@ async def list_event_log(
     status: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     clauses = ["restaurant_id = $1"]
@@ -1896,7 +1896,7 @@ async def list_event_log(
 @router.get("/order-summary/{order_id}")
 async def order_erp_summary(
     order_id: UUID,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("erp.read")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -1931,7 +1931,7 @@ async def order_erp_summary(
 
 @router.post("/seed/feature-flags", status_code=201)
 async def seed_feature_flags(
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("erp.seed")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -1941,7 +1941,7 @@ async def seed_feature_flags(
 
 @router.post("/seed/chart-of-accounts", status_code=201)
 async def seed_chart_of_accounts(
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("erp.seed")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:
@@ -1951,7 +1951,7 @@ async def seed_chart_of_accounts(
 
 @router.post("/seed/tax-rates", status_code=201)
 async def seed_tax_rates(
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("erp.seed")),
 ):
     rid = _rid(user)
     async with get_connection() as conn:

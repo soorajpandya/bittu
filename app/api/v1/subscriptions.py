@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission, get_current_user
 from app.services.subscription_service import SubscriptionService
 
 router = APIRouter(prefix="/subscriptions", tags=["Subscriptions"])
@@ -64,7 +64,7 @@ async def list_addons():
 
 @router.get("/status")
 async def check_subscription(
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("subscription.read")),
 ):
     """Check if user has an active subscription."""
     return await _svc.check_active(user.user_id)
@@ -72,7 +72,7 @@ async def check_subscription(
 
 @router.get("")
 async def get_subscription(
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("subscription.read")),
 ):
     """Get full subscription details."""
     return await _svc.get_subscription(user)
@@ -80,7 +80,7 @@ async def get_subscription(
 
 @router.post("/verify")
 async def verify_subscription(
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "chef", "waiter", "staff")),
+    user: UserContext = Depends(get_current_user),
 ):
     """Verify subscription status with plan details."""
     return await _svc.verify_subscription(user)
@@ -88,7 +88,7 @@ async def verify_subscription(
 
 @router.post("/free-trial")
 async def start_free_trial(
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("subscription.write")),
 ):
     """Start a 14-day free trial (one per user)."""
     return await _svc.start_free_trial(user)
@@ -97,7 +97,7 @@ async def start_free_trial(
 @router.post("/subscribe")
 async def subscribe(
     body: SubscribeIn,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("subscription.write")),
 ):
     """
     Create a subscription. Returns Razorpay subscription details
@@ -108,7 +108,7 @@ async def subscribe(
 
 @router.post("/cancel")
 async def cancel_subscription(
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("subscription.write")),
 ):
     """
     Cancel subscription. Access continues until current billing period ends.
@@ -120,7 +120,7 @@ async def cancel_subscription(
 @router.post("/upgrade")
 async def upgrade_plan(
     body: UpgradeIn,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("subscription.write")),
 ):
     """
     Upgrade to a higher plan. Takes effect immediately.
@@ -132,7 +132,7 @@ async def upgrade_plan(
 @router.post("/downgrade")
 async def downgrade_plan(
     body: DowngradeIn,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("subscription.write")),
 ):
     """
     Schedule a downgrade. Takes effect at next billing cycle.
@@ -143,7 +143,7 @@ async def downgrade_plan(
 @router.post("/addons/purchase")
 async def purchase_addon(
     body: PurchaseAddonIn,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("subscription.write")),
 ):
     """
     Purchase an add-on (e.g., printer). Returns Razorpay order
@@ -161,7 +161,7 @@ async def admin_list_subscriptions(
     status: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("subscription.admin")),
 ):
     """Admin: View all subscriptions, optionally filtered by status."""
     return await _svc.admin_list_subscriptions(status, limit, offset)
@@ -171,7 +171,7 @@ async def admin_list_subscriptions(
 async def admin_update_plan(
     plan_id: int,
     body: AdminUpdatePlanIn,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("subscription.admin")),
 ):
     """Admin: Update plan pricing, features, or Razorpay plan ID."""
     return await _svc.admin_update_plan(plan_id, body.model_dump(exclude_unset=True))

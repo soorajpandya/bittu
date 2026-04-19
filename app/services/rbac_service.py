@@ -42,6 +42,14 @@ class RBACService:
                 "staff.branch_users.update": {}, "staff.branch_users.delete": {},
                 # Accounting
                 "accounting.read": {}, "accounting.write": {},
+                # ERP
+                "erp.read": {}, "erp.write": {}, "erp.shifts.read": {},
+                "erp.shifts.manage": {}, "erp.seed": {},
+                # Subscriptions & Billing
+                "subscription.read": {}, "subscription.write": {}, "subscription.admin": {},
+                "billing.read": {},
+                # Cash Transactions
+                "cash_transaction.read": {}, "cash_transaction.create": {}, "cash_transaction.delete": {},
             },
             "manager": {
                 "order.create": {}, "order.edit": {}, "order.cancel": {}, "order.read": {},
@@ -56,12 +64,19 @@ class RBACService:
                 # Staff (read-only) + accounting
                 "staff.read": {}, "staff.branch_users.read": {},
                 "accounting.read": {}, "accounting.write": {},
+                # ERP
+                "erp.read": {}, "erp.write": {}, "erp.shifts.read": {}, "erp.shifts.manage": {},
+                # Cash Transactions
+                "cash_transaction.read": {}, "cash_transaction.create": {}, "cash_transaction.delete": {},
             },
             "cashier": {
                 "order.read": {}, "order.edit": {}, "orders.read": {}, "orders.update": {},
                 "billing.generate": {}, "billing.discount": {"max_discount_percent": 10},
                 "payment.create": {}, "payments.create": {},
                 "table.read": {}, "table.start": {}, "table.close": {}, "table.manage": {}, "tables.manage": {},
+                # ERP shifts & Cash Transactions
+                "erp.shifts.read": {}, "erp.shifts.manage": {},
+                "cash_transaction.read": {}, "cash_transaction.create": {},
             },
             "waiter": {
                 "order.create": {}, "order.read": {}, "orders.create": {}, "orders.read": {},
