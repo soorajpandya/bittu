@@ -7,6 +7,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.core.database import init_db_pool, close_db_pool
@@ -91,8 +94,8 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()
 
-    docs_url = "/docs"
-    redoc_url = "/redoc"
+    docs_url = None
+    redoc_url = None
     openapi_url = "/openapi.json"
 
     app = FastAPI(
@@ -127,6 +130,31 @@ def create_app() -> FastAPI:
 
     # -- Routes --
     app.include_router(api_router)
+
+    # -- Self-hosted Docs (no CDN dependency) --
+    import swagger_ui_bundle, os as _os
+    _swagger_static = _os.path.join(_os.path.dirname(swagger_ui_bundle.__file__), "vendor", "swagger-ui-4.15.5")
+    app.mount("/_swagger-ui", StaticFiles(directory=_swagger_static), name="swagger_ui_static")
+
+    @app.get("/docs", include_in_schema=False)
+    async def swagger_ui() -> HTMLResponse:
+        return get_swagger_ui_html(
+            openapi_url="/openapi.json",
+            title="BITTU API - Swagger UI",
+            swagger_js_url="/_swagger-ui/swagger-ui-bundle.js",
+            swagger_css_url="/_swagger-ui/swagger-ui.css",
+            swagger_favicon_url="/_swagger-ui/favicon-32x32.png",
+        )
+
+    @app.get("/redoc", include_in_schema=False)
+    async def redoc_ui() -> HTMLResponse:
+        return get_redoc_html(
+            openapi_url="/openapi.json",
+            title="BITTU API - ReDoc",
+            redoc_js_url="https://cdn.jsdelivr.net/npm/redoc@latest/bundles/redoc.standalone.js",
+            redoc_favicon_url="/_swagger-ui/favicon-32x32.png",
+            with_google_fonts=False,
+        )
 
     # -- Prometheus metrics (unauthenticated, for scraping) --
     app.add_route("/metrics", metrics_endpoint, methods=["GET"])
