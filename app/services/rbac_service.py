@@ -125,6 +125,7 @@ class RBACService:
                 if not row:
                     # Owner or non-branch user fallback.
                     role_name = (user.role or "staff").lower()
+                    logger.info("rbac_fallback_used", user_id=user.user_id, role=role_name, reason="no_branch_user_row")
                     for k, meta in self._fallback_permissions.get(role_name, {}).items():
                         permission_map[k] = {"allowed": True, "meta": meta}
                     return permission_map
@@ -156,6 +157,7 @@ class RBACService:
                             "branch_id": str(row["branch_id"]) if row["branch_id"] else None,
                         }
                 else:
+                    logger.info("rbac_fallback_used", user_id=user.user_id, role=role_name, reason="no_role_id_assigned")
                     for k, meta in self._fallback_permissions.get(role_name, {}).items():
                         permission_map[k] = {
                             "allowed": True,
@@ -174,6 +176,7 @@ class RBACService:
         except Exception as exc:
             logger.warning("rbac_permission_load_failed", user_id=user.user_id, error=str(exc))
             role_name = (user.role or "staff").lower()
+            logger.info("rbac_fallback_used", user_id=user.user_id, role=role_name, reason="db_error", error=str(exc))
             for k, meta in self._fallback_permissions.get(role_name, {}).items():
                 permission_map[k] = {"allowed": True, "meta": meta}
             return permission_map
@@ -212,6 +215,13 @@ class RBACService:
                     meta=details.get("meta") or {},
                 )
 
+        logger.info(
+            "rbac_permission_denied",
+            user_id=user.user_id,
+            role=user.role,
+            permission=self._norm(permission_key),
+            branch_id=str(user.branch_id) if user.branch_id else None,
+        )
         return PermissionDecision(
             permission_key=self._norm(permission_key),
             allowed=False,
@@ -220,6 +230,35 @@ class RBACService:
             branch_id=user.branch_id,
             meta={},
         )
+
+    async def get_user_permissions(self, user: "UserContext") -> dict[str, Any]:
+        """Return the full permission map for the user (for /auth/permissions/me)."""
+        permission_map = await self._load_permission_map(user)
+        source = "db"
+
+        # Determine source: if any entry lacks role_id, we're on fallback
+        if permission_map:
+            sample = next(iter(permission_map.values()))
+            if sample.get("role_id") is None and not sample.get("branch_id"):
+                source = "fallback"
+                logger.info("permissions_served_from_fallback", user_id=user.user_id, role=user.role)
+
+        permissions: dict[str, Any] = {}
+        for key, details in permission_map.items():
+            allowed = details.get("allowed", False)
+            meta = details.get("meta") or {}
+            if meta:
+                permissions[key] = {"allowed": allowed, **meta}
+            else:
+                permissions[key] = allowed
+
+        return {
+            "role": details.get("role_name") or user.role if permission_map else user.role,
+            "role_id": details.get("role_id") or user.role_id if permission_map else user.role_id,
+            "branch_id": str(user.branch_id) if user.branch_id else None,
+            "source": source,
+            "permissions": permissions,
+        }
 
 
 rbac_service = RBACService()

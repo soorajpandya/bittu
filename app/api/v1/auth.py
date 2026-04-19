@@ -20,6 +20,7 @@ from app.services.auth_service import (
     AuthError,
     _initialize_restaurant_and_branch,
 )
+from app.services.rbac_service import rbac_service
 
 from app.core.logging import get_logger
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -110,6 +111,17 @@ async def get_me(
         return result
     except AuthError as e:
         return _handle_auth_error(e)
+
+
+@router.get("/permissions/me")
+async def get_my_permissions(
+    user: UserContext = Depends(get_current_user),
+):
+    """Return the authenticated user's resolved permissions and meta constraints.
+
+    Frontend uses this to adapt UI (hide buttons, cap discount sliders, etc.).
+    """
+    return await rbac_service.get_user_permissions(user)
 
 
 @router.post("/initialize-restaurant")
