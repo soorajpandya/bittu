@@ -379,7 +379,7 @@ class SessionPaymentIn(BaseModel):
 @router.get("/sessions/{session_id}/bill")
 async def get_session_bill(
     session_id: str,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter", "staff")),
+    user: UserContext = Depends(require_permission("billing.generate")),
 ):
     """POS alias: get full bill for a table session."""
     return await _dinein_svc.get_session_bill(session_id)
@@ -389,7 +389,7 @@ async def get_session_bill(
 async def split_bill(
     session_id: str,
     body: SessionSplitBillIn,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter", "staff")),
+    user: UserContext = Depends(require_permission("billing.generate")),
 ):
     """POS alias: split session bill equally/by-item/by-user."""
     return await _dinein_svc.split_bill(
@@ -405,7 +405,7 @@ async def split_bill(
 async def add_session_payment(
     session_id: str,
     body: SessionPaymentIn,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter", "staff")),
+    user: UserContext = Depends(require_permission("payment.create")),
 ):
     """POS alias: record partial/full payment against session."""
     actor = user.owner_id if user.is_branch_user else user.user_id
@@ -424,7 +424,7 @@ async def add_session_payment(
 async def mark_paid_and_vacate(
     session_id: str,
     body: MarkPaidVacateIn = MarkPaidVacateIn(),
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter")),
+    user: UserContext = Depends(require_permission("table.close")),
 ):
     """Mark order as paid and end the table session."""
     actor = user.owner_id if user.is_branch_user else user.user_id
