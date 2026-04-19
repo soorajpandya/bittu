@@ -1,0 +1,50 @@
+# Raw CURL Commands for Dine-in QR Table Flow
+# Copy and execute these commands in sequence, replacing SESSION_TOKEN in cart and place-order with response from scan
+
+# ============================================
+# 1. SCAN QR CODE
+# ============================================
+curl -X POST https://api.bittupos.com/api/v1/dinein/qr/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "restaurant_id": "751c6d1d-1559-45f2-a24b-7ecd16678113",
+    "table_id": "8aa06d7b-b596-4450-9df1-01b8ccfd17dd",
+    "device_id": "manual-test"
+  }' \
+  -w "\nStatus: %{http_code}\n"
+
+# Response will contain: session_token (copy this for next steps)
+# Expected: 200 + {"session_token": "...", "session_id": "...", ...}
+
+# ============================================
+# 2. ADD TO CART
+# ============================================
+# Replace SESSION_TOKEN_HERE with the token from step 1
+curl -X POST https://api.bittupos.com/api/v1/dinein/qr/cart/add \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_token": "SESSION_TOKEN_HERE",
+    "item_id": 221,
+    "quantity": 1,
+    "device_id": "manual-test",
+    "request_id": "cart-test"
+  }' \
+  -w "\nStatus: %{http_code}\n"
+
+# Expected: 200 + {"cart_contains": N, "total": X.XX, ...}
+
+# ============================================
+# 3. PLACE ORDER
+# ============================================
+# Replace SESSION_TOKEN_HERE with the token from step 1
+curl -X POST https://api.bittupos.com/api/v1/dinein/qr/place-order \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_token": "SESSION_TOKEN_HERE",
+    "device_id": "manual-test",
+    "payment_method": "cash",
+    "request_id": "place-order-test"
+  }' \
+  -w "\nStatus: %{http_code}\n"
+
+# Expected: 200 + {"order_id": "...", "order_number": "...", "total": X.XX, ...}
