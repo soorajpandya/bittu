@@ -19,6 +19,13 @@ logger = get_logger(__name__)
 _LOCAL_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _LOCAL_TTL_SECONDS = 30
 
+# ── Observability counters (in-memory, per-worker) ──
+_FALLBACK_COUNTER: dict[str, list[float]] = {}   # reason -> [timestamps]
+_DENIAL_COUNTER: dict[str, list[float]] = {}      # user_id -> [timestamps]
+_ANOMALY_WINDOW = 300   # 5-minute sliding window
+_FALLBACK_WARN_THRESHOLD = 10   # warn if >10 fallbacks in 5min
+_DENIAL_WARN_THRESHOLD = 5      # warn if same user denied >5 times in 5min
+
 
 class RBACService:
     def __init__(self) -> None:
@@ -126,6 +133,7 @@ class RBACService:
                     # Owner or non-branch user fallback.
                     role_name = (user.role or "staff").lower()
                     logger.info("rbac_fallback_used", user_id=user.user_id, role=role_name, reason="no_branch_user_row")
+                    self._track_fallback("no_branch_user_row")
                     for k, meta in self._fallback_permissions.get(role_name, {}).items():
                         permission_map[k] = {"allowed": True, "meta": meta}
                     return permission_map
@@ -158,6 +166,7 @@ class RBACService:
                         }
                 else:
                     logger.info("rbac_fallback_used", user_id=user.user_id, role=role_name, reason="no_role_id_assigned")
+                    self._track_fallback("no_role_id_assigned")
                     for k, meta in self._fallback_permissions.get(role_name, {}).items():
                         permission_map[k] = {
                             "allowed": True,
@@ -177,6 +186,7 @@ class RBACService:
             logger.warning("rbac_permission_load_failed", user_id=user.user_id, error=str(exc))
             role_name = (user.role or "staff").lower()
             logger.info("rbac_fallback_used", user_id=user.user_id, role=role_name, reason="db_error", error=str(exc))
+            self._track_fallback("db_error")
             for k, meta in self._fallback_permissions.get(role_name, {}).items():
                 permission_map[k] = {"allowed": True, "meta": meta}
             return permission_map
@@ -215,21 +225,57 @@ class RBACService:
                     meta=details.get("meta") or {},
                 )
 
+        norm_key = self._norm(permission_key)
         logger.info(
             "rbac_permission_denied",
             user_id=user.user_id,
             role=user.role,
-            permission=self._norm(permission_key),
+            permission=norm_key,
             branch_id=str(user.branch_id) if user.branch_id else None,
         )
+        self._track_denial(user.user_id, norm_key)
         return PermissionDecision(
-            permission_key=self._norm(permission_key),
+            permission_key=norm_key,
             allowed=False,
             role_id=user.role_id,
             role_name=user.role,
             branch_id=user.branch_id,
             meta={},
         )
+
+    # ── Anomaly tracking helpers ──
+
+    @staticmethod
+    def _track_fallback(reason: str) -> None:
+        now = time.time()
+        ts_list = _FALLBACK_COUNTER.setdefault(reason, [])
+        ts_list.append(now)
+        cutoff = now - _ANOMALY_WINDOW
+        _FALLBACK_COUNTER[reason] = [t for t in ts_list if t > cutoff]
+        if len(_FALLBACK_COUNTER[reason]) >= _FALLBACK_WARN_THRESHOLD:
+            logger.warning(
+                "rbac_fallback_spike",
+                reason=reason,
+                count=len(_FALLBACK_COUNTER[reason]),
+                window_seconds=_ANOMALY_WINDOW,
+            )
+
+    @staticmethod
+    def _track_denial(user_id: str, permission: str) -> None:
+        now = time.time()
+        key = f"{user_id}:{permission}"
+        ts_list = _DENIAL_COUNTER.setdefault(key, [])
+        ts_list.append(now)
+        cutoff = now - _ANOMALY_WINDOW
+        _DENIAL_COUNTER[key] = [t for t in ts_list if t > cutoff]
+        if len(_DENIAL_COUNTER[key]) >= _DENIAL_WARN_THRESHOLD:
+            logger.warning(
+                "rbac_repeated_denial",
+                user_id=user_id,
+                permission=permission,
+                count=len(_DENIAL_COUNTER[key]),
+                window_seconds=_ANOMALY_WINDOW,
+            )
 
     async def get_user_permissions(self, user: "UserContext") -> dict[str, Any]:
         """Return the full permission map for the user (for /auth/permissions/me)."""
@@ -243,18 +289,19 @@ class RBACService:
                 source = "fallback"
                 logger.info("permissions_served_from_fallback", user_id=user.user_id, role=user.role)
 
-        permissions: dict[str, Any] = {}
+        # Consistent shape: every permission is {"allowed": bool, "meta": dict}
+        permissions: dict[str, dict[str, Any]] = {}
+        last_details: dict[str, Any] = {}
         for key, details in permission_map.items():
-            allowed = details.get("allowed", False)
-            meta = details.get("meta") or {}
-            if meta:
-                permissions[key] = {"allowed": allowed, **meta}
-            else:
-                permissions[key] = allowed
+            last_details = details
+            permissions[key] = {
+                "allowed": details.get("allowed", False),
+                "meta": details.get("meta") or {},
+            }
 
         return {
-            "role": details.get("role_name") or user.role if permission_map else user.role,
-            "role_id": details.get("role_id") or user.role_id if permission_map else user.role_id,
+            "role": last_details.get("role_name") or user.role if permission_map else user.role,
+            "role_id": last_details.get("role_id") or user.role_id if permission_map else user.role_id,
             "branch_id": str(user.branch_id) if user.branch_id else None,
             "source": source,
             "permissions": permissions,
