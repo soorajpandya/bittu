@@ -409,7 +409,7 @@ async def add_session_payment(
 ):
     """POS alias: record partial/full payment against session."""
     actor = user.owner_id if user.is_branch_user else user.user_id
-    return await _dinein_svc.record_session_payment(
+    result = await _dinein_svc.record_session_payment(
         session_id=session_id,
         amount=body.amount,
         payment_method=body.payment_method,
@@ -418,6 +418,15 @@ async def add_session_payment(
         paid_by=body.paid_by,
         notes=body.notes,
     )
+    await log_activity(
+        user_id=user.user_id,
+        branch_id=user.branch_id,
+        action="payment.session_payment",
+        entity_type="table_session",
+        entity_id=session_id,
+        metadata={"amount": body.amount, "payment_method": body.payment_method},
+    )
+    return result
 
 
 @router.post("/sessions/{session_id}/paid-vacate")
@@ -428,4 +437,13 @@ async def mark_paid_and_vacate(
 ):
     """Mark order as paid and end the table session."""
     actor = user.owner_id if user.is_branch_user else user.user_id
-    return await _dinein_svc.paid_and_vacate(session_id=session_id, closed_by=actor)
+    result = await _dinein_svc.paid_and_vacate(session_id=session_id, closed_by=actor)
+    await log_activity(
+        user_id=user.user_id,
+        branch_id=user.branch_id,
+        action="table.paid_and_vacated",
+        entity_type="table_session",
+        entity_id=session_id,
+        metadata={},
+    )
+    return result

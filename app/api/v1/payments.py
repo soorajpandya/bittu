@@ -69,16 +69,28 @@ async def list_payments(
             if len(parts) > 1 and parts[1].lower() == "asc":
                 order_dir = "ASC"
         async with get_connection() as conn:
-            rows = await conn.fetch(
-                f"""
-                SELECT p.* FROM payments p
-                JOIN orders o ON o.id = p.order_id
-                WHERE o.user_id = $1
-                ORDER BY p.{order_col} {order_dir}
-                LIMIT $2 OFFSET $3
-                """,
-                owner_id, limit, offset,
-            )
+            if user.is_branch_user and user.branch_id:
+                rows = await conn.fetch(
+                    f"""
+                    SELECT p.* FROM payments p
+                    JOIN orders o ON o.id = p.order_id
+                    WHERE o.user_id = $1 AND o.branch_id = $2
+                    ORDER BY p.{order_col} {order_dir}
+                    LIMIT $3 OFFSET $4
+                    """,
+                    owner_id, user.branch_id, limit, offset,
+                )
+            else:
+                rows = await conn.fetch(
+                    f"""
+                    SELECT p.* FROM payments p
+                    JOIN orders o ON o.id = p.order_id
+                    WHERE o.user_id = $1
+                    ORDER BY p.{order_col} {order_dir}
+                    LIMIT $2 OFFSET $3
+                    """,
+                    owner_id, limit, offset,
+                )
             return [dict(r) for r in rows]
     except Exception as e:
         logger.warning("list_payments_failed", error=str(e), user_id=user.user_id)
@@ -91,12 +103,21 @@ async def record_payment(
     user: UserContext = Depends(require_permission("payment.create")),
 ):
     """Record a payment for an order (called from POS save-and-print)."""
-    return await _svc.initiate_payment(
+    result = await _svc.initiate_payment(
         user=user,
         order_id=body.order_id,
         method=body.method,
         amount=body.amount,
     )
+    await log_activity(
+        user_id=user.user_id,
+        branch_id=user.branch_id,
+        action="payment.created",
+        entity_type="payment",
+        entity_id=result.get("payment_id") if isinstance(result, dict) else None,
+        metadata={"order_id": body.order_id, "method": body.method, "amount": body.amount},
+    )
+    return result
 
 
 @router.post("/voice", response_class=Response)
@@ -117,13 +138,22 @@ async def initiate_payment(
     body: InitiatePaymentIn,
     user: UserContext = Depends(require_permission("payment.create")),
 ):
-    return await _svc.initiate_payment(
+    result = await _svc.initiate_payment(
         user=user,
         order_id=body.order_id,
         payment_mode=body.payment_mode,
         amount=body.amount,
         tip=body.tip,
     )
+    await log_activity(
+        user_id=user.user_id,
+        branch_id=user.branch_id,
+        action="payment.initiated",
+        entity_type="payment",
+        entity_id=result.get("payment_id") if isinstance(result, dict) else None,
+        metadata={"order_id": body.order_id, "payment_mode": body.payment_mode, "amount": body.amount},
+    )
+    return result
 
 
 @router.post("/verify")

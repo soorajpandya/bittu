@@ -22,35 +22,38 @@ _LOCAL_TTL_SECONDS = 30
 
 class RBACService:
     def __init__(self) -> None:
-        self._fallback_permissions = {
+        # Fallback permissions: key -> meta dict.  Used when DB is unavailable.
+        self._fallback_permissions: dict[str, dict[str, dict]] = {
             "owner": {
-                "order.*", "orders.*", "billing.*", "payment.*", "payments.*",
-                "table.*", "tables.*", "inventory.*", "voice.use", "kitchen.*",
-                "kitchen_station.*",
+                "order.*": {}, "orders.*": {}, "billing.*": {}, "payment.*": {}, "payments.*": {},
+                "table.*": {}, "tables.*": {}, "inventory.*": {}, "voice.use": {}, "kitchen.*": {},
+                "kitchen_station.*": {},
             },
             "manager": {
-                "order.create", "order.edit", "order.cancel", "order.read",
-                "orders.create", "orders.read", "orders.update",
-                "billing.generate", "billing.discount",
-                "payment.create", "payments.create",
-                "table.read", "table.start", "table.close", "table.manage", "tables.manage",
-                "inventory.read", "inventory.update", "inventory.manage",
-                "kitchen.read", "kitchen.update",
-                "kitchen_station.read", "kitchen_station.manage",
+                "order.create": {}, "order.edit": {}, "order.cancel": {}, "order.read": {},
+                "orders.create": {}, "orders.read": {}, "orders.update": {},
+                "billing.generate": {}, "billing.discount": {"max_discount_percent": 50},
+                "payment.create": {}, "payments.create": {},
+                "payment.refund": {"max_refund_amount": 5000},
+                "table.read": {}, "table.start": {}, "table.close": {}, "table.manage": {}, "tables.manage": {},
+                "inventory.read": {}, "inventory.update": {}, "inventory.manage": {},
+                "kitchen.read": {}, "kitchen.update": {},
+                "kitchen_station.read": {}, "kitchen_station.manage": {},
             },
             "cashier": {
-                "order.read", "order.edit", "orders.read", "orders.update",
-                "billing.generate", "billing.discount",
-                "payment.create", "payments.create",
-                "table.read", "table.start", "table.close", "table.manage", "tables.manage",
+                "order.read": {}, "order.edit": {}, "orders.read": {}, "orders.update": {},
+                "billing.generate": {}, "billing.discount": {"max_discount_percent": 10},
+                "payment.create": {}, "payments.create": {},
+                "table.read": {}, "table.start": {}, "table.close": {}, "table.manage": {}, "tables.manage": {},
             },
             "waiter": {
-                "order.create", "order.read", "orders.create", "orders.read",
-                "table.read", "table.start", "table.close", "table.manage", "tables.manage", "kitchen.read",
+                "order.create": {}, "order.read": {}, "orders.create": {}, "orders.read": {},
+                "table.read": {}, "table.start": {}, "table.close": {}, "table.manage": {}, "tables.manage": {},
+                "kitchen.read": {},
             },
-            "chef": {"order.read", "orders.read", "kitchen.read", "kitchen.update", "kitchen_station.read"},
-            "kitchen": {"order.read", "orders.read", "kitchen.read", "kitchen.update", "kitchen_station.read"},
-            "staff": {"order.read", "orders.read", "table.read", "kitchen.read"},
+            "chef": {"order.read": {}, "orders.read": {}, "kitchen.read": {}, "kitchen.update": {}, "kitchen_station.read": {}},
+            "kitchen": {"order.read": {}, "orders.read": {}, "kitchen.read": {}, "kitchen.update": {}, "kitchen_station.read": {}},
+            "staff": {"order.read": {}, "orders.read": {}, "table.read": {}, "kitchen.read": {}},
         }
 
     def _norm(self, permission_key: str) -> str:
@@ -122,8 +125,8 @@ class RBACService:
                 if not row:
                     # Owner or non-branch user fallback.
                     role_name = (user.role or "staff").lower()
-                    for k in self._fallback_permissions.get(role_name, set()):
-                        permission_map[k] = {"allowed": True, "meta": {}}
+                    for k, meta in self._fallback_permissions.get(role_name, {}).items():
+                        permission_map[k] = {"allowed": True, "meta": meta}
                     return permission_map
 
                 role_id = row["role_id"]
@@ -153,10 +156,10 @@ class RBACService:
                             "branch_id": str(row["branch_id"]) if row["branch_id"] else None,
                         }
                 else:
-                    for k in self._fallback_permissions.get(role_name, set()):
+                    for k, meta in self._fallback_permissions.get(role_name, {}).items():
                         permission_map[k] = {
                             "allowed": True,
-                            "meta": {},
+                            "meta": meta,
                             "role_id": None,
                             "role_name": role_name,
                             "branch_id": str(row["branch_id"]) if row["branch_id"] else None,
@@ -171,8 +174,8 @@ class RBACService:
         except Exception as exc:
             logger.warning("rbac_permission_load_failed", user_id=user.user_id, error=str(exc))
             role_name = (user.role or "staff").lower()
-            for k in self._fallback_permissions.get(role_name, set()):
-                permission_map[k] = {"allowed": True, "meta": {}}
+            for k, meta in self._fallback_permissions.get(role_name, {}).items():
+                permission_map[k] = {"allowed": True, "meta": meta}
             return permission_map
 
     async def invalidate_user_cache(self, user_id: str, branch_id: str | None) -> None:
