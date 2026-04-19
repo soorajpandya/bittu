@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.payment_service import PaymentService
 from app.services.elevenlabs_service import ElevenLabsService
+from app.services.activity_log_service import log_activity
 
 from app.core.database import get_connection
 from app.core.logging import get_logger
@@ -53,7 +54,7 @@ async def list_payments(
     order_by: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user: UserContext = Depends(require_permission("payments.create")),
+    user: UserContext = Depends(require_permission("payment.create")),
 ):
     """List payments for the current user's restaurant."""
     try:
@@ -87,7 +88,7 @@ async def list_payments(
 @router.post("")
 async def record_payment(
     body: RecordPaymentIn,
-    user: UserContext = Depends(require_permission("payments.create")),
+    user: UserContext = Depends(require_permission("payment.create")),
 ):
     """Record a payment for an order (called from POS save-and-print)."""
     return await _svc.initiate_payment(
@@ -114,7 +115,7 @@ async def payment_voice(
 @router.post("/initiate")
 async def initiate_payment(
     body: InitiatePaymentIn,
-    user: UserContext = Depends(require_permission("payments.create")),
+    user: UserContext = Depends(require_permission("payment.create")),
 ):
     return await _svc.initiate_payment(
         user=user,
@@ -128,7 +129,7 @@ async def initiate_payment(
 @router.post("/verify")
 async def verify_payment(
     body: VerifyPaymentIn,
-    user: UserContext = Depends(require_permission("payments.create")),
+    user: UserContext = Depends(require_permission("payment.create")),
 ):
     return await _svc.verify_razorpay_payment(
         razorpay_payment_id=body.razorpay_payment_id,
@@ -140,11 +141,20 @@ async def verify_payment(
 @router.post("/refund")
 async def refund_payment(
     body: RefundIn,
-    user: UserContext = Depends(require_permission("payments.refund")),
+    user: UserContext = Depends(require_permission("payment.refund")),
 ):
-    return await _svc.initiate_refund(
+    result = await _svc.initiate_refund(
         user=user,
         payment_id=body.payment_id,
         amount=body.amount,
         reason=body.reason,
     )
+    await log_activity(
+        user_id=user.user_id,
+        branch_id=user.branch_id,
+        action="payment.refund_issued",
+        entity_type="payment",
+        entity_id=body.payment_id,
+        metadata={"amount": body.amount, "reason": body.reason},
+    )
+    return result

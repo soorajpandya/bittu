@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from app.core.auth import UserContext, require_permission, require_role
 from app.core.database import get_connection
 from app.core.logging import get_logger
+from app.services.activity_log_service import log_activity
 from app.services.table_service import TableSessionService
 from app.services.dinein_session_service import DineInSessionService
 
@@ -71,7 +72,7 @@ async def list_tables(
 @router.post("", status_code=201)
 async def create_table(
     body: CreateTableIn,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("table.manage")),
 ):
     """Create a new restaurant table."""
     try:
@@ -90,7 +91,16 @@ async def create_table(
                 body.status,
                 body.is_active,
             )
-            return dict(row)
+            result = dict(row)
+            await log_activity(
+                user_id=user.user_id,
+                branch_id=user.branch_id,
+                action="table.created",
+                entity_type="table",
+                entity_id=str(result.get("id")) if result.get("id") else None,
+                metadata={"table_number": body.table_number},
+            )
+            return result
     except Exception as e:
         logger.warning("create_table_failed", error=str(e), user_id=user.user_id)
         from fastapi.responses import JSONResponse
@@ -108,7 +118,7 @@ class UpdateTableIn(BaseModel):
 async def update_table(
     table_id: str,
     body: UpdateTableIn,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("table.manage")),
 ):
     """Update a restaurant table."""
     try:
@@ -129,7 +139,16 @@ async def update_table(
             if not row:
                 from fastapi.responses import JSONResponse
                 return JSONResponse(status_code=404, content={"detail": "Table not found"})
-            return dict(row)
+            result = dict(row)
+            await log_activity(
+                user_id=user.user_id,
+                branch_id=user.branch_id,
+                action="table.updated",
+                entity_type="table",
+                entity_id=table_id,
+                metadata={"updated_fields": list(updates.keys())},
+            )
+            return result
     except Exception as e:
         logger.warning("update_table_failed", error=str(e), user_id=user.user_id)
         from fastapi.responses import JSONResponse
@@ -139,7 +158,7 @@ async def update_table(
 @router.delete("/{table_id}")
 async def delete_table(
     table_id: str,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("table.manage")),
 ):
     """Delete a restaurant table."""
     try:
@@ -152,6 +171,14 @@ async def delete_table(
             if "DELETE 0" in result:
                 from fastapi.responses import JSONResponse
                 return JSONResponse(status_code=404, content={"detail": "Table not found"})
+            await log_activity(
+                user_id=user.user_id,
+                branch_id=user.branch_id,
+                action="table.deleted",
+                entity_type="table",
+                entity_id=table_id,
+                metadata={},
+            )
             return {"status": "deleted"}
     except Exception as e:
         logger.warning("delete_table_failed", error=str(e), user_id=user.user_id)
@@ -162,14 +189,23 @@ async def delete_table(
 @router.post("/sessions")
 async def start_session(
     body: StartSessionIn,
-    user: UserContext = Depends(require_permission("tables.manage")),
+    user: UserContext = Depends(require_permission("table.start")),
 ):
-    return await _svc.start_session(
+    result = await _svc.start_session(
         user=user,
         table_id=body.table_id,
         branch_id=body.branch_id,
         customer_name=body.customer_name,
     )
+    await log_activity(
+        user_id=user.user_id,
+        branch_id=user.branch_id,
+        action="table.session_started",
+        entity_type="table_session",
+        entity_id=str(result.get("session_id")) if isinstance(result, dict) else None,
+        metadata={"table_id": body.table_id},
+    )
+    return result
 
 
 @router.post("/sessions/join")
@@ -183,7 +219,7 @@ async def join_session(body: JoinSessionIn):
 @router.post("/cart/add")
 async def add_to_cart(
     body: AddToCartIn,
-    user: UserContext = Depends(require_permission("tables.manage")),
+    user: UserContext = Depends(require_permission("table.start")),
 ):
     return await _svc.add_to_cart(
         user=user,
@@ -195,7 +231,7 @@ async def add_to_cart(
 @router.get("/cart/{session_id}")
 async def get_cart(
     session_id: str,
-    user: UserContext = Depends(require_permission("tables.manage")),
+    user: UserContext = Depends(require_permission("table.read")),
 ):
     return await _svc.get_cart(session_id=session_id)
 
@@ -203,7 +239,7 @@ async def get_cart(
 @router.delete("/cart/remove")
 async def remove_from_cart(
     body: RemoveCartItemIn,
-    user: UserContext = Depends(require_permission("tables.manage")),
+    user: UserContext = Depends(require_permission("table.start")),
 ):
     return await _svc.remove_from_cart(
         user=user,
@@ -215,9 +251,18 @@ async def remove_from_cart(
 @router.post("/sessions/{session_id}/end")
 async def end_session(
     session_id: str,
-    user: UserContext = Depends(require_permission("tables.manage")),
+    user: UserContext = Depends(require_permission("table.close")),
 ):
-    return await _svc.end_session(user=user, session_id=session_id)
+    result = await _svc.end_session(user=user, session_id=session_id)
+    await log_activity(
+        user_id=user.user_id,
+        branch_id=user.branch_id,
+        action="table.session_closed",
+        entity_type="table_session",
+        entity_id=session_id,
+        metadata={},
+    )
+    return result
 
 
 # ── QR Ordering Endpoints (public — customer-facing, no JWT) ──

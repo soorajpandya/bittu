@@ -333,6 +333,65 @@ class OrderService:
 
         return await self.get_order_detail(user=user, order_id=order_id)
 
+    async def apply_discount(
+        self,
+        user: UserContext,
+        order_id: str,
+        discount_percent: float,
+        reason: Optional[str] = None,
+    ) -> dict:
+        """Apply percentage discount to an order with server-side recalculation."""
+        owner_id = user.owner_id if user.is_branch_user else user.user_id
+        async with get_serializable_transaction() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT id, subtotal, tax_amount, total_amount, status, user_id, branch_id
+                FROM orders
+                WHERE id = $1 AND user_id = $2
+                FOR UPDATE
+                """,
+                order_id,
+                owner_id,
+            )
+            if not row:
+                raise NotFoundError("Order", order_id)
+
+            if user.is_branch_user and user.branch_id and row["branch_id"] and str(row["branch_id"]) != str(user.branch_id):
+                raise ForbiddenError("Cross-branch access denied")
+
+            if str(row["status"]).lower() in {"cancelled", "completed"}:
+                raise ValidationError("Cannot apply discount to completed/cancelled orders")
+
+            subtotal = Decimal(str(row["subtotal"] or 0))
+            tax_amount = Decimal(str(row["tax_amount"] or 0))
+            pct = Decimal(str(discount_percent))
+            discount_amount = (subtotal * pct) / Decimal("100")
+            new_total = subtotal - discount_amount + tax_amount
+            if new_total < Decimal("0"):
+                new_total = Decimal("0")
+
+            notes = reason or ""
+            await conn.execute(
+                """
+                UPDATE orders
+                SET discount_amount = $1,
+                    total_amount = $2,
+                    notes = CASE WHEN COALESCE($3, '') = '' THEN notes ELSE CONCAT(COALESCE(notes, ''), '\n[discount] ', $3) END,
+                    updated_at = NOW()
+                WHERE id = $4
+                """,
+                float(discount_amount),
+                float(new_total),
+                notes,
+                order_id,
+            )
+
+            updated = await conn.fetchrow(
+                "SELECT id, subtotal, tax_amount, discount_amount, total_amount, status, updated_at FROM orders WHERE id = $1",
+                order_id,
+            )
+            return dict(updated) if updated else {}
+
     # ── UPDATE ORDER STATUS ──
 
     async def update_status(

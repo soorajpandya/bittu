@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.core.auth import UserContext, require_permission
+from app.services.activity_log_service import log_activity
 from app.services.inventory_service import InventoryService
 
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
@@ -26,6 +27,15 @@ async def get_stock_levels(
 @router.post("/receive")
 async def receive_purchase_order(
     body: ReceivePurchaseIn,
-    user: UserContext = Depends(require_permission("inventory.manage")),
+    user: UserContext = Depends(require_permission("inventory.update")),
 ):
-    return await _svc.receive_purchase_order(user=user, purchase_order_id=body.purchase_order_id)
+    result = await _svc.receive_purchase_order(user=user, purchase_order_id=body.purchase_order_id)
+    await log_activity(
+        user_id=user.user_id,
+        branch_id=user.branch_id,
+        action="inventory.received",
+        entity_type="purchase_order",
+        entity_id=body.purchase_order_id,
+        metadata={},
+    )
+    return result

@@ -11,13 +11,14 @@ from jwt import PyJWKClient
 from fastapi import Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.core.config import get_settings
 from app.core.exceptions import UnauthorizedError, ForbiddenError
 from app.core.database import get_connection
 from app.core.redis import cache_get, cache_set
 from app.core.logging import get_logger
+from app.services.rbac_service import rbac_service
 
 logger = get_logger(__name__)
 security = HTTPBearer()
@@ -78,10 +79,13 @@ class UserContext:
     user_id: str
     email: Optional[str] = None
     role: str = "owner"  # owner | manager | cashier | chef | waiter | staff
+    role_id: Optional[str] = None
     restaurant_id: Optional[str] = None
     branch_id: Optional[str] = None
     owner_id: Optional[str] = None  # For branch users, the owner who created them
     is_branch_user: bool = False
+    permission_key: Optional[str] = None
+    permission_meta: dict = field(default_factory=dict)
 
 
 async def get_current_user(
@@ -130,10 +134,13 @@ async def get_current_user(
             "user_id": ctx.user_id,
             "email": ctx.email,
             "role": ctx.role,
+            "role_id": ctx.role_id,
             "restaurant_id": ctx.restaurant_id,
             "branch_id": ctx.branch_id,
             "owner_id": ctx.owner_id,
             "is_branch_user": ctx.is_branch_user,
+            "permission_key": ctx.permission_key,
+            "permission_meta": ctx.permission_meta,
         }).decode(), ttl=300)
     except Exception:
         pass
@@ -151,10 +158,12 @@ async def _resolve_user_context(user_id: str, email: Optional[str]) -> UserConte
         # Check if branch user first (more specific)
         branch_user = await conn.fetchrow(
             """
-            SELECT bu.user_id, bu.branch_id, bu.owner_id, bu.role, bu.is_active,
+             SELECT bu.user_id, bu.branch_id, bu.owner_id, bu.role, bu.role_id, bu.is_active,
+                 COALESCE(r.name, bu.role) AS role_name,
                    sb.restaurant_id
             FROM branch_users bu
             JOIN sub_branches sb ON sb.id = bu.branch_id
+             LEFT JOIN roles r ON r.id = bu.role_id
             WHERE bu.user_id = $1 AND bu.is_active = true
             """,
             user_id,
@@ -164,11 +173,13 @@ async def _resolve_user_context(user_id: str, email: Optional[str]) -> UserConte
             return UserContext(
                 user_id=user_id,
                 email=email,
-                role=branch_user["role"],
+                role=branch_user["role_name"],
+                role_id=str(branch_user["role_id"]) if branch_user["role_id"] else None,
                 restaurant_id=str(branch_user["restaurant_id"]) if branch_user["restaurant_id"] else None,
                 branch_id=str(branch_user["branch_id"]),
                 owner_id=str(branch_user["owner_id"]),
                 is_branch_user=True,
+                permission_meta={},
             )
 
         # Check if owner (has restaurant)
@@ -188,10 +199,12 @@ async def _resolve_user_context(user_id: str, email: Optional[str]) -> UserConte
                 user_id=user_id,
                 email=email,
                 role="owner",
+                role_id=None,
                 restaurant_id=str(restaurant["restaurant_id"]),
                 branch_id=str(restaurant["branch_id"]) if restaurant["branch_id"] else None,
                 owner_id=user_id,
                 is_branch_user=False,
+                permission_meta={},
             )
 
         # New user — no restaurant yet
@@ -257,12 +270,14 @@ def require_permission(permission: str):
     Accepts both colon and dot separators: 'payments:create' or 'payments.create'.
     """
     async def _check(user: UserContext = Depends(get_current_user)) -> UserContext:
-        user_perms = ROLE_PERMISSIONS.get(user.role, set())
-        # Normalise to colon separator for matching
-        norm = permission.replace(".", ":")
-        resource = norm.split(":")[0]
-        if norm not in user_perms and f"{resource}:*" not in user_perms:
+        decision = await rbac_service.check_permission(user, permission)
+        if not decision.allowed:
             raise ForbiddenError(f"Permission denied: {permission}")
+
+        user.permission_key = decision.permission_key
+        user.permission_meta = decision.meta
+        if decision.role_id:
+            user.role_id = decision.role_id
         return user
     return _check
 

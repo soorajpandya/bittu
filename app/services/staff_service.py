@@ -16,6 +16,8 @@ from app.core.auth import UserContext
 from app.core.database import get_connection, get_serializable_transaction
 from app.core.exceptions import NotFoundError, ForbiddenError, ValidationError, ConflictError
 from app.core.logging import get_logger
+from app.core.redis import cache_delete
+from app.services.rbac_service import rbac_service
 
 logger = get_logger(__name__)
 
@@ -24,6 +26,23 @@ VALID_BRANCH_USER_ROLES = {"manager", "cashier", "chef", "waiter", "staff"}
 
 
 class StaffService:
+
+    async def _resolve_role_id(self, conn, branch_id: str, role: str) -> Optional[str]:
+        """Resolve role_id for a branch role using RBAC table naming."""
+        role_name = "kitchen" if role == "chef" else role
+        role_row = await conn.fetchrow(
+            "SELECT id FROM roles WHERE branch_id = $1 AND lower(name) = lower($2) LIMIT 1",
+            branch_id,
+            role_name,
+        )
+        return str(role_row["id"]) if role_row else None
+
+    async def _invalidate_auth_cache(self, user_id: str, branch_id: Optional[str]) -> None:
+        try:
+            await cache_delete(f"user_ctx:{user_id}")
+        except Exception:
+            pass
+        await rbac_service.invalidate_user_cache(user_id=user_id, branch_id=branch_id)
 
     # ─── Sub-branch management ──────────────────────────────────
 
@@ -83,8 +102,10 @@ class StaffService:
 
                 await conn.execute(
                     """
-                    INSERT INTO branch_users (user_id, branch_id, owner_id, role, is_active)
-                    VALUES ($1, $2, $3, 'manager', true)
+                    INSERT INTO branch_users (user_id, branch_id, owner_id, role, role_id, is_active)
+                    VALUES ($1, $2, $3, 'manager',
+                            (SELECT id FROM roles WHERE branch_id = $2 AND lower(name) = 'manager' LIMIT 1),
+                            true)
                     """,
                     manager_user_id, branch_id, user.user_id,
                 )
@@ -196,23 +217,27 @@ class StaffService:
                 )
 
             if existing:
+                role_id = await self._resolve_role_id(conn, branch_id=branch_id, role=role)
                 # Reactivate and reassign
                 await conn.execute(
                     """
                     UPDATE branch_users
-                    SET branch_id = $1, role = $2, owner_id = $3, is_active = true
-                    WHERE user_id = $4
+                    SET branch_id = $1, role = $2, role_id = $3, owner_id = $4, is_active = true
+                    WHERE user_id = $5
                     """,
-                    branch_id, role, user.user_id, target_user_id,
+                    branch_id, role, role_id, user.user_id, target_user_id,
                 )
             else:
+                role_id = await self._resolve_role_id(conn, branch_id=branch_id, role=role)
                 await conn.execute(
                     """
-                    INSERT INTO branch_users (user_id, branch_id, owner_id, role, is_active)
-                    VALUES ($1, $2, $3, $4, true)
+                    INSERT INTO branch_users (user_id, branch_id, owner_id, role, role_id, is_active)
+                    VALUES ($1, $2, $3, $4, $5, true)
                     """,
-                    target_user_id, branch_id, user.user_id, role,
+                    target_user_id, branch_id, user.user_id, role, role_id,
                 )
+
+        await self._invalidate_auth_cache(user_id=target_user_id, branch_id=branch_id)
 
         logger.info(
             "branch_user_added",
@@ -321,9 +346,23 @@ class StaffService:
                 raise NotFoundError("BranchUser", target_user_id)
 
             await conn.execute(
-                "UPDATE branch_users SET role = $1 WHERE user_id = $2",
-                role, target_user_id,
+                """
+                UPDATE branch_users bu
+                SET role = $1,
+                    role_id = (
+                        SELECT id FROM roles
+                        WHERE branch_id = bu.branch_id
+                          AND lower(name) = lower($2)
+                        LIMIT 1
+                    )
+                WHERE user_id = $3
+                """,
+                role,
+                "kitchen" if role == "chef" else role,
+                target_user_id,
             )
+
+        await self._invalidate_auth_cache(user_id=target_user_id, branch_id=str(row["branch_id"]))
 
         logger.info("branch_user_role_updated", target_user_id=target_user_id, role=role)
         return {
@@ -354,6 +393,8 @@ class StaffService:
                 "UPDATE branch_users SET is_active = false WHERE user_id = $1",
                 target_user_id,
             )
+
+        await self._invalidate_auth_cache(user_id=target_user_id, branch_id=str(row["branch_id"]))
 
         logger.info("branch_user_removed", target_user_id=target_user_id)
         return {"user_id": target_user_id, "is_active": False}
