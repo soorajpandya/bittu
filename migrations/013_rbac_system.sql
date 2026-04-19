@@ -97,7 +97,7 @@ WHERE bu.role_id IS NULL
     OR (lower(bu.role) = 'chef' AND lower(r.name) = 'kitchen')
   );
 
--- Assign role permissions by role name.
+-- Assign role permissions by role name (deduped so ON CONFLICT updates each row at most once).
 WITH role_perm(role_name, perm_key, allowed, meta) AS (
   VALUES
   -- Owner
@@ -127,6 +127,7 @@ WITH role_perm(role_name, perm_key, allowed, meta) AS (
   ('owner','kitchen.update', true, '{}'::jsonb),
   ('owner','kitchen_station.read', true, '{}'::jsonb),
   ('owner','kitchen_station.manage', true, '{}'::jsonb),
+
   -- Manager
   ('manager','order.create', true, '{}'::jsonb),
   ('manager','order.edit', true, '{}'::jsonb),
@@ -153,6 +154,7 @@ WITH role_perm(role_name, perm_key, allowed, meta) AS (
   ('manager','kitchen_station.manage', true, '{}'::jsonb),
   ('manager','payment.refund', true, '{"max_refund_amount": 5000}'::jsonb),
   ('manager','payments.refund', true, '{"max_refund_amount": 5000}'::jsonb),
+
   -- Cashier
   ('cashier','order.read', true, '{}'::jsonb),
   ('cashier','order.edit', true, '{}'::jsonb),
@@ -167,6 +169,7 @@ WITH role_perm(role_name, perm_key, allowed, meta) AS (
   ('cashier','table.close', true, '{}'::jsonb),
   ('cashier','table.manage', true, '{}'::jsonb),
   ('cashier','tables.manage', true, '{}'::jsonb),
+
   -- Waiter
   ('waiter','order.create', true, '{}'::jsonb),
   ('waiter','order.read', true, '{}'::jsonb),
@@ -178,24 +181,35 @@ WITH role_perm(role_name, perm_key, allowed, meta) AS (
   ('waiter','table.manage', true, '{}'::jsonb),
   ('waiter','tables.manage', true, '{}'::jsonb),
   ('waiter','kitchen.read', true, '{}'::jsonb),
+
   -- Kitchen
   ('kitchen','order.read', true, '{}'::jsonb),
   ('kitchen','orders.read', true, '{}'::jsonb),
   ('kitchen','kitchen.read', true, '{}'::jsonb),
   ('kitchen','kitchen.update', true, '{}'::jsonb),
   ('kitchen','kitchen_station.read', true, '{}'::jsonb),
+
   -- Staff
   ('staff','order.read', true, '{}'::jsonb),
   ('staff','orders.read', true, '{}'::jsonb),
   ('staff','table.read', true, '{}'::jsonb),
   ('staff','kitchen.read', true, '{}'::jsonb)
+),
+deduped AS (
+  SELECT DISTINCT ON (role_name, perm_key)
+    role_name, perm_key, allowed, meta
+  FROM role_perm
+  ORDER BY role_name, perm_key
 )
 INSERT INTO role_permissions (role_id, permission_id, allowed, meta)
-SELECT r.id, p.id, rp.allowed, rp.meta
-FROM role_perm rp
-JOIN roles r ON lower(r.name) = lower(rp.role_name)
-JOIN permissions p ON p.key = rp.perm_key
+SELECT r.id, p.id, d.allowed, d.meta
+FROM deduped d
+JOIN roles r ON lower(r.name) = lower(d.role_name)
+JOIN permissions p ON p.key = d.perm_key
 ON CONFLICT (role_id, permission_id)
-DO UPDATE SET allowed = EXCLUDED.allowed, meta = EXCLUDED.meta, updated_at = NOW();
+DO UPDATE
+SET allowed = EXCLUDED.allowed,
+    meta = EXCLUDED.meta,
+    updated_at = NOW();
 
 COMMIT;
