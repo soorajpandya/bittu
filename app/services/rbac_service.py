@@ -26,6 +26,7 @@ class RBACService:
             "owner": {
                 "order.*", "orders.*", "billing.*", "payment.*", "payments.*",
                 "table.*", "tables.*", "inventory.*", "voice.use", "kitchen.*",
+                "kitchen_station.*",
             },
             "manager": {
                 "order.create", "order.edit", "order.cancel", "order.read",
@@ -34,7 +35,8 @@ class RBACService:
                 "payment.create", "payments.create",
                 "table.read", "table.start", "table.close", "table.manage", "tables.manage",
                 "inventory.read", "inventory.update", "inventory.manage",
-                "kitchen.read",
+                "kitchen.read", "kitchen.update",
+                "kitchen_station.read", "kitchen_station.manage",
             },
             "cashier": {
                 "order.read", "order.edit", "orders.read", "orders.update",
@@ -46,8 +48,8 @@ class RBACService:
                 "order.create", "order.read", "orders.create", "orders.read",
                 "table.read", "table.start", "table.close", "table.manage", "tables.manage", "kitchen.read",
             },
-            "chef": {"order.read", "orders.read", "kitchen.read"},
-            "kitchen": {"order.read", "orders.read", "kitchen.read"},
+            "chef": {"order.read", "orders.read", "kitchen.read", "kitchen.update", "kitchen_station.read"},
+            "kitchen": {"order.read", "orders.read", "kitchen.read", "kitchen.update", "kitchen_station.read"},
             "staff": {"order.read", "orders.read", "table.read", "kitchen.read"},
         }
 

@@ -143,6 +143,15 @@ async def refund_payment(
     body: RefundIn,
     user: UserContext = Depends(require_permission("payment.refund")),
 ):
+    # Enforce max_refund_amount constraint from permission meta
+    if body.amount is not None and user.permission_meta:
+        max_refund = user.permission_meta.get("max_refund_amount")
+        if max_refund is not None and body.amount > float(max_refund):
+            from app.core.exceptions import ValidationError
+            raise ValidationError(
+                f"Refund amount {body.amount} exceeds max allowed {max_refund} for your role"
+            )
+
     result = await _svc.initiate_refund(
         user=user,
         payment_id=body.payment_id,

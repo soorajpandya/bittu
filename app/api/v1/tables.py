@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
-from app.core.auth import UserContext, require_permission, require_role
+from app.core.auth import UserContext, require_permission
 from app.core.database import get_connection
 from app.core.logging import get_logger
 from app.services.activity_log_service import log_activity
@@ -53,7 +53,7 @@ class RemoveCartItemIn(BaseModel):
 
 @router.get("")
 async def list_tables(
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "chef", "waiter", "staff")),
+    user: UserContext = Depends(require_permission("table.read")),
 ):
     """List all tables for the current user's restaurant."""
     try:

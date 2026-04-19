@@ -73,7 +73,10 @@ INSERT INTO permissions (key) VALUES
   ('inventory.update'),
   ('inventory.manage'),
   ('voice.use'),
-  ('kitchen.read')
+  ('kitchen.read'),
+  ('kitchen.update'),
+  ('kitchen_station.read'),
+  ('kitchen_station.manage')
 ON CONFLICT (key) DO NOTHING;
 
 -- Seed standard roles per branch.
@@ -121,6 +124,9 @@ WITH role_perm(role_name, perm_key, allowed, meta) AS (
   ('owner','inventory.manage', true, '{}'::jsonb),
   ('owner','voice.use', true, '{}'::jsonb),
   ('owner','kitchen.read', true, '{}'::jsonb),
+  ('owner','kitchen.update', true, '{}'::jsonb),
+  ('owner','kitchen_station.read', true, '{}'::jsonb),
+  ('owner','kitchen_station.manage', true, '{}'::jsonb),
   -- Manager
   ('manager','order.create', true, '{}'::jsonb),
   ('manager','order.edit', true, '{}'::jsonb),
@@ -142,6 +148,11 @@ WITH role_perm(role_name, perm_key, allowed, meta) AS (
   ('manager','inventory.update', true, '{}'::jsonb),
   ('manager','inventory.manage', true, '{}'::jsonb),
   ('manager','kitchen.read', true, '{}'::jsonb),
+  ('manager','kitchen.update', true, '{}'::jsonb),
+  ('manager','kitchen_station.read', true, '{}'::jsonb),
+  ('manager','kitchen_station.manage', true, '{}'::jsonb),
+  ('manager','payment.refund', true, '{"max_refund_amount": 5000}'::jsonb),
+  ('manager','payments.refund', true, '{"max_refund_amount": 5000}'::jsonb),
   -- Cashier
   ('cashier','order.read', true, '{}'::jsonb),
   ('cashier','order.edit', true, '{}'::jsonb),
@@ -171,6 +182,8 @@ WITH role_perm(role_name, perm_key, allowed, meta) AS (
   ('kitchen','order.read', true, '{}'::jsonb),
   ('kitchen','orders.read', true, '{}'::jsonb),
   ('kitchen','kitchen.read', true, '{}'::jsonb),
+  ('kitchen','kitchen.update', true, '{}'::jsonb),
+  ('kitchen','kitchen_station.read', true, '{}'::jsonb),
   -- Staff
   ('staff','order.read', true, '{}'::jsonb),
   ('staff','orders.read', true, '{}'::jsonb),

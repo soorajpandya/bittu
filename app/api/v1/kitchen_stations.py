@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.core.database import get_connection
 from app.core.logging import get_logger
 
@@ -19,7 +19,7 @@ class CreateKitchenStationIn(BaseModel):
 @router.get("")
 async def list_kitchen_stations(
     is_active: Optional[bool] = Query(None),
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "chef", "waiter", "staff")),
+    user: UserContext = Depends(require_permission("kitchen_station.read")),
 ):
     """List all kitchen stations for the current user's restaurant."""
     try:
@@ -44,7 +44,7 @@ async def list_kitchen_stations(
 @router.post("", status_code=201)
 async def create_kitchen_station(
     body: CreateKitchenStationIn,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("kitchen_station.manage")),
 ):
     """Create a new kitchen station."""
     owner_id = user.owner_id if user.is_branch_user else user.user_id
