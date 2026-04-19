@@ -35,6 +35,13 @@ class RBACService:
                 "order.*": {}, "orders.*": {}, "billing.*": {}, "payment.*": {}, "payments.*": {},
                 "table.*": {}, "tables.*": {}, "inventory.*": {}, "voice.use": {}, "kitchen.*": {},
                 "kitchen_station.*": {},
+                # Staff & branch management
+                "staff.branches.read": {}, "staff.branches.create": {}, "staff.branches.update": {},
+                "staff.read": {}, "staff.create": {}, "staff.update": {}, "staff.delete": {},
+                "staff.branch_users.read": {}, "staff.branch_users.create": {},
+                "staff.branch_users.update": {}, "staff.branch_users.delete": {},
+                # Accounting
+                "accounting.read": {}, "accounting.write": {},
             },
             "manager": {
                 "order.create": {}, "order.edit": {}, "order.cancel": {}, "order.read": {},
@@ -46,6 +53,9 @@ class RBACService:
                 "inventory.read": {}, "inventory.update": {}, "inventory.manage": {},
                 "kitchen.read": {}, "kitchen.update": {},
                 "kitchen_station.read": {}, "kitchen_station.manage": {},
+                # Staff (read-only) + accounting
+                "staff.read": {}, "staff.branch_users.read": {},
+                "accounting.read": {}, "accounting.write": {},
             },
             "cashier": {
                 "order.read": {}, "order.edit": {}, "orders.read": {}, "orders.update": {},

@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.core.database import get_connection
 from app.core.exceptions import ValidationError
 from app.core.logging import get_logger
@@ -30,7 +30,7 @@ async def cash_flow(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     branch_id: Optional[str] = Query(None),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("accounting.read")),
 ):
     """Revenue vs expenses for a period (default: last 30 days)."""
     uid = user.owner_id if user.is_branch_user else user.user_id
@@ -49,7 +49,7 @@ async def list_entries(
     branch_id: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("accounting.read")),
 ):
     """List accounting entries with filters."""
     uid = user.owner_id if user.is_branch_user else user.user_id
@@ -63,7 +63,7 @@ async def daily_breakdown(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     branch_id: Optional[str] = Query(None),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("accounting.read")),
 ):
     """Revenue and expenses grouped by day."""
     uid = user.owner_id if user.is_branch_user else user.user_id
@@ -79,7 +79,7 @@ async def payment_method_breakdown(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     branch_id: Optional[str] = Query(None),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("accounting.read")),
 ):
     """Revenue split by payment method."""
     uid = user.owner_id if user.is_branch_user else user.user_id
@@ -93,7 +93,7 @@ async def payment_method_breakdown(
 @router.post("/expenses", status_code=201)
 async def record_expense(
     body: ExpenseCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("accounting.write")),
 ):
     """Manually record an expense."""
     uid = user.owner_id if user.is_branch_user else user.user_id
@@ -114,7 +114,7 @@ async def record_expense(
 @accounts_router.get("")
 async def list_accounts(
     account_type: Optional[str] = Query(None, description="Filter by type: asset|liability|equity|revenue|expense"),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("accounting.read")),
 ):
     """List all Chart of Accounts for the restaurant."""
     restaurant_id = user.restaurant_id
@@ -139,7 +139,7 @@ async def list_accounts(
 
 @accounts_router.get("/tree")
 async def accounts_tree(
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("accounting.read")),
 ):
     """Return the Chart of Accounts as a hierarchical tree."""
     restaurant_id = user.restaurant_id
@@ -177,7 +177,7 @@ async def account_ledger(
     account_id: str,
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("accounting.read")),
 ):
     """
     T-account ledger for a single CoA account.
@@ -204,7 +204,7 @@ async def account_ledger(
 async def profit_and_loss(
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("accounting.read")),
 ):
     """
     Profit & Loss statement.
@@ -235,7 +235,7 @@ async def cashflow_report(
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
     branch_id: Optional[str] = Query(None),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("accounting.read")),
 ):
     """Cash inflow vs outflow summary (merges legacy + double-entry rows)."""
     uid = user.owner_id if user.is_branch_user else user.user_id

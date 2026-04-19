@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, get_current_user, require_permission
 from app.core.database import get_connection
 from app.services.staff_service import StaffService
 
@@ -52,7 +52,7 @@ class UpdateStaffIn(BaseModel):
 # ─── Branch endpoints ──────────────────────────────────────
 
 @router.get("/branches")
-async def list_branches(user: UserContext = Depends(require_role("owner"))):
+async def list_branches(user: UserContext = Depends(require_permission("staff.branches.read"))):
     """Get all branches for the current owner."""
     return await _svc.get_branches(user=user)
 
@@ -60,7 +60,7 @@ async def list_branches(user: UserContext = Depends(require_role("owner"))):
 @router.post("/branches", status_code=201)
 async def create_branch(
     body: CreateBranchIn,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("staff.branches.create")),
 ):
     """Create a new sub-branch. Optionally assign a manager by Supabase user_id."""
     return await _svc.create_sub_branch(
@@ -76,7 +76,7 @@ async def create_branch(
 async def update_branch(
     branch_id: str,
     body: UpdateBranchIn,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("staff.branches.update")),
 ):
     return await _svc.update_branch(
         user=user,
@@ -89,7 +89,7 @@ async def update_branch(
 
 @router.get("/branch-users/me")
 async def get_my_branch_user(
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "chef", "waiter", "staff")),
+    user: UserContext = Depends(get_current_user),
 ):
     """Get the current user's branch_user record (role, branch, etc.)."""
     return await _svc.get_my_branch_user(user=user)
@@ -98,7 +98,7 @@ async def get_my_branch_user(
 @router.get("/branch-users")
 async def list_branch_users(
     branch_id: Optional[str] = None,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("staff.branch_users.read")),
 ):
     """List all branch users (managers, cashiers, etc.) that can log in."""
     return await _svc.list_branch_users(user=user, branch_id=branch_id)
@@ -107,7 +107,7 @@ async def list_branch_users(
 @router.post("/branch-users", status_code=201)
 async def add_branch_user(
     body: AddBranchUserIn,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("staff.branch_users.create")),
 ):
     """Assign a Supabase user to a branch with a role (e.g. manager)."""
     return await _svc.add_branch_user(
@@ -122,7 +122,7 @@ async def add_branch_user(
 async def update_branch_user_role(
     target_user_id: str,
     body: UpdateBranchUserIn,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("staff.branch_users.update")),
 ):
     """Change a branch user's role."""
     return await _svc.update_branch_user_role(
@@ -135,7 +135,7 @@ async def update_branch_user_role(
 @router.delete("/branch-users/{target_user_id}")
 async def remove_branch_user(
     target_user_id: str,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("staff.branch_users.delete")),
 ):
     """Deactivate a branch user (they lose login access to that branch)."""
     return await _svc.remove_branch_user(user=user, target_user_id=target_user_id)
@@ -146,7 +146,7 @@ async def remove_branch_user(
 @router.post("")
 async def create_staff(
     body: CreateStaffIn,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("staff.create")),
 ):
     branch_id = body.branch_id
     if not branch_id:
@@ -182,7 +182,7 @@ async def create_staff(
 @router.get("")
 async def list_staff(
     branch_id: Optional[str] = None,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("staff.read")),
 ):
     return await _svc.get_branch_users(user=user, branch_id=branch_id)
 
@@ -191,7 +191,7 @@ async def list_staff(
 async def update_staff(
     staff_id: str,
     body: UpdateStaffIn,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("staff.update")),
 ):
     return await _svc.update_branch_user(
         user=user,
@@ -203,6 +203,6 @@ async def update_staff(
 @router.delete("/{staff_id}")
 async def deactivate_staff(
     staff_id: str,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("staff.delete")),
 ):
     return await _svc.deactivate_branch_user(user=user, branch_user_id=staff_id)
