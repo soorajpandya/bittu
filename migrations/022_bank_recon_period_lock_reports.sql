@@ -130,11 +130,11 @@ CREATE TRIGGER trg_enforce_period_lock
 -- ════════════════════════════════════════════════════════════════════════════
 
 -- Bank reconciliation permissions
-INSERT INTO permissions (code, name, description, category) VALUES
-    ('bank_recon.read',   'View Bank Reconciliation',   'View bank statements and reconciliation status', 'accounting'),
-    ('bank_recon.write',  'Manage Bank Reconciliation',  'Import statements, match entries, reconcile',     'accounting'),
-    ('reports.read',      'View Financial Reports',      'View trial balance, P&L, balance sheet, aging',   'accounting')
-ON CONFLICT (code) DO NOTHING;
+INSERT INTO permissions (key) VALUES
+    ('bank_recon.read'),
+    ('bank_recon.write'),
+    ('reports.read')
+ON CONFLICT (key) DO NOTHING;
 
 -- Grant to owner and manager roles
 INSERT INTO role_permissions (role_id, permission_id)
@@ -142,7 +142,7 @@ SELECT r.id, p.id
 FROM roles r
 CROSS JOIN permissions p
 WHERE r.name IN ('owner', 'manager')
-  AND p.code IN ('bank_recon.read', 'bank_recon.write', 'reports.read')
+  AND p.key IN ('bank_recon.read', 'bank_recon.write', 'reports.read')
 ON CONFLICT DO NOTHING;
 
 -- Grant read-only to cashier
@@ -151,7 +151,7 @@ SELECT r.id, p.id
 FROM roles r
 CROSS JOIN permissions p
 WHERE r.name = 'cashier'
-  AND p.code IN ('bank_recon.read', 'reports.read')
+  AND p.key IN ('bank_recon.read', 'reports.read')
 ON CONFLICT DO NOTHING;
 
 COMMIT;
