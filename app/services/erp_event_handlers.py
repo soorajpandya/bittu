@@ -767,7 +767,9 @@ async def _handle_vendor_payment(event: DomainEvent):
 # ═══════════════════════════════════════════════════════════════════════
 
 async def _handle_shift_closed(event: DomainEvent):
-    """Aggregate daily P&L when a shift is closed."""
+    """Aggregate daily P&L + record cash drawer journal when a shift is closed."""
+    from app.services.accounting_engine import accounting_engine
+
     restaurant_id = event.restaurant_id
     branch_id = event.branch_id
 
@@ -788,6 +790,37 @@ async def _handle_shift_closed(event: DomainEvent):
                 "erp_daily_pnl_aggregated",
                 restaurant_id=restaurant_id, pnl_id=pnl_id,
             )
+
+            # Cash drawer → ledger: sum payments by method for this shift
+            shift_id = event.payload.get("shift_id") or event.payload.get("drawer_id")
+            if shift_id:
+                payment_totals = await conn.fetchrow(
+                    """
+                    SELECT
+                        COALESCE(SUM(amount) FILTER (WHERE payment_method IN ('cash', 'CASH')), 0) AS cash_total,
+                        COALESCE(SUM(amount) FILTER (WHERE payment_method IN ('card', 'CARD', 'credit_card', 'debit_card')), 0) AS card_total,
+                        COALESCE(SUM(amount) FILTER (WHERE payment_method IN ('upi', 'UPI', 'bank', 'neft', 'rtgs')), 0) AS upi_total
+                    FROM payments
+                    WHERE restaurant_id = $1
+                      AND branch_id = $2
+                      AND created_at::date = CURRENT_DATE
+                      AND status = 'completed'
+                    """,
+                    restaurant_id, branch_id,
+                )
+
+                if payment_totals:
+                    await accounting_engine.record_shift_close(
+                        restaurant_id=restaurant_id,
+                        branch_id=branch_id,
+                        shift_id=str(shift_id),
+                        cash_sales=float(payment_totals["cash_total"]),
+                        card_sales=float(payment_totals["card_total"]),
+                        upi_sales=float(payment_totals["upi_total"]),
+                        created_by=event.user_id or "system",
+                    )
+                    logger.info("erp_shift_cash_drawer_journal", shift_id=shift_id)
+
             elapsed = int((_time.monotonic() - t0) * 1000)
             await _log_event(conn, event, "completed", elapsed_ms=elapsed)
     except Exception:

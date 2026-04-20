@@ -230,11 +230,11 @@ async def profit_and_loss(
     user: UserContext = Depends(require_permission("accounting.read")),
 ):
     """
-    Profit & Loss statement.
+    Profit & Loss (Income Statement) — derived ONLY from journal_lines.
 
-    Revenue  = SUM of credit entries on revenue accounts
-    Expenses = SUM of debit entries on expense accounts
-    Profit   = Revenue − Expenses
+    Revenue  = net credit on revenue accounts
+    Expenses = net debit on expense accounts
+    Net Income = Revenue − Expenses
     """
     restaurant_id = user.restaurant_id
     if not restaurant_id:
@@ -244,7 +244,7 @@ async def profit_and_loss(
     if not to_date:
         to_date = date.today()
     try:
-        return await _svc.get_pnl(
+        return await accounting_engine.get_income_statement(
             restaurant_id=restaurant_id,
             from_date=from_date,
             to_date=to_date,
@@ -341,3 +341,108 @@ async def reverse_journal_entry(
         return {"reversal_journal_entry_id": reversal_id}
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ── Journal Search ─────────────────────────────────────────────────────────────
+
+@router.get("/journals")
+async def search_journals(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    reference_type: Optional[str] = Query(None),
+    reference_id: Optional[str] = Query(None),
+    include_reversed: bool = Query(False),
+    limit: int = Query(50, le=200),
+    offset: int = Query(0, ge=0),
+    user: UserContext = Depends(require_permission("accounting.read")),
+):
+    """
+    Search journal entries with filters. Returns entries with their lines.
+    Every journal entry is traceable to its source event, user, and API.
+    """
+    restaurant_id = user.restaurant_id
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="restaurant_id required")
+    try:
+        return await accounting_engine.search_journals(
+            restaurant_id=restaurant_id,
+            from_date=from_date,
+            to_date=to_date,
+            reference_type=reference_type,
+            reference_id=reference_id,
+            include_reversed=include_reversed,
+            limit=limit,
+            offset=offset,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ── Accounting Period Management ───────────────────────────────────────────────
+
+class PeriodCloseRequest(BaseModel):
+    period_start: date
+    period_end: date
+    notes: str = ""
+
+
+@router.post("/periods/close", status_code=200)
+async def close_period(
+    body: PeriodCloseRequest,
+    user: UserContext = Depends(require_permission("accounting.close_period")),
+):
+    """
+    Close an accounting period. No new journal entries can be created
+    for dates within this period after closing.
+    """
+    uid = user.owner_id if user.is_branch_user else user.user_id
+    restaurant_id = user.restaurant_id
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="restaurant_id required")
+    if body.period_end < body.period_start:
+        raise HTTPException(status_code=400, detail="period_end must be >= period_start")
+    try:
+        return await accounting_engine.close_period(
+            restaurant_id=restaurant_id,
+            period_start=body.period_start,
+            period_end=body.period_end,
+            closed_by=uid,
+            notes=body.notes,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/periods/reopen", status_code=200)
+async def reopen_period(
+    body: PeriodCloseRequest,
+    user: UserContext = Depends(require_permission("accounting.reopen_period")),
+):
+    """
+    Reopen a previously closed period. Locked periods cannot be reopened.
+    """
+    uid = user.owner_id if user.is_branch_user else user.user_id
+    restaurant_id = user.restaurant_id
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="restaurant_id required")
+    try:
+        return await accounting_engine.reopen_period(
+            restaurant_id=restaurant_id,
+            period_start=body.period_start,
+            period_end=body.period_end,
+            reopened_by=uid,
+            notes=body.notes,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/periods")
+async def list_periods(
+    user: UserContext = Depends(require_permission("accounting.read")),
+):
+    """List all accounting periods (open, closed, locked)."""
+    restaurant_id = user.restaurant_id
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="restaurant_id required")
+    return await accounting_engine.list_periods(restaurant_id=restaurant_id)

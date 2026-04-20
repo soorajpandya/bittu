@@ -55,6 +55,7 @@ VALID_REFERENCE_TYPES = {
     "order", "payment", "refund", "discount",
     "grn", "inventory_consumption", "inventory_adjustment",
     "vendor_payment", "expense", "reversal",
+    "shift_close", "period_close",
 }
 
 
@@ -114,6 +115,7 @@ class AccountingEngine:
         entry_date: Optional[date] = None,
         is_reversal: bool = False,
         reversed_entry_id: Optional[str] = None,
+        source_event: Optional[str] = None,
     ) -> Optional[str]:
         """
         Create a balanced, idempotent journal entry.
@@ -227,6 +229,13 @@ class AccountingEngine:
                 await conn.execute(
                     "UPDATE journal_entries SET is_reversed = true, reversed_by = $1 WHERE id = $2",
                     journal_id, reversed_uuid,
+                )
+
+            # Set source_event for audit trail
+            if source_event:
+                await conn.execute(
+                    "UPDATE journal_entries SET source_event = $1 WHERE id = $2",
+                    source_event, journal_id,
                 )
 
             # Audit log
@@ -789,6 +798,415 @@ class AccountingEngine:
             },
             "is_balanced": total_assets == (total_liabilities + total_equity),
             "total_liabilities_and_equity": float(total_liabilities + total_equity),
+        }
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # INCOME STATEMENT (P&L) — Pure ledger-based
+    # ══════════════════════════════════════════════════════════════════════════
+
+    async def get_income_statement(
+        self,
+        restaurant_id: str,
+        from_date: Optional[date] = None,
+        to_date: Optional[date] = None,
+    ) -> dict:
+        """
+        Income Statement (Profit & Loss) — derived ONLY from journal_lines.
+
+        Revenue  = net credit on revenue accounts (credit - debit)
+        Expenses = net debit on expense accounts  (debit - credit)
+        Net Income = Revenue - Expenses
+        """
+        from uuid import UUID
+        restaurant_uuid = UUID(restaurant_id)
+        if not from_date:
+            from_date = date.today().replace(day=1)
+        if not to_date:
+            to_date = date.today()
+
+        async with get_connection() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    coa.id,
+                    coa.account_code,
+                    coa.name,
+                    coa.account_type,
+                    COALESCE(SUM(jl.debit),  0) AS total_debit,
+                    COALESCE(SUM(jl.credit), 0) AS total_credit
+                FROM chart_of_accounts coa
+                JOIN journal_lines jl ON jl.account_id = coa.id
+                JOIN journal_entries je ON je.id = jl.journal_entry_id
+                WHERE je.restaurant_id = $1
+                  AND je.entry_date BETWEEN $2 AND $3
+                  AND je.is_reversed = false
+                  AND coa.account_type IN ('revenue', 'expense')
+                  AND coa.is_active = true
+                GROUP BY coa.id, coa.account_code, coa.name, coa.account_type
+                ORDER BY coa.account_code
+                """,
+                restaurant_uuid, from_date, to_date,
+            )
+
+        revenue_accounts = []
+        expense_accounts = []
+        total_revenue = Decimal("0")
+        total_expenses = Decimal("0")
+
+        for r in rows:
+            d = Decimal(str(r["total_debit"]))
+            c = Decimal(str(r["total_credit"]))
+            entry = {
+                "account_id": str(r["id"]),
+                "account_code": r["account_code"],
+                "name": r["name"],
+            }
+
+            if r["account_type"] == "revenue":
+                net = c - d  # revenue is credit-normal
+                entry["amount"] = float(net)
+                total_revenue += net
+                revenue_accounts.append(entry)
+            elif r["account_type"] == "expense":
+                net = d - c  # expense is debit-normal
+                entry["amount"] = float(net)
+                total_expenses += net
+                expense_accounts.append(entry)
+
+        net_income = total_revenue - total_expenses
+
+        return {
+            "from_date": from_date.isoformat(),
+            "to_date": to_date.isoformat(),
+            "revenue": {"accounts": revenue_accounts, "total": float(total_revenue)},
+            "expenses": {"accounts": expense_accounts, "total": float(total_expenses)},
+            "net_income": float(net_income),
+            "is_profit": net_income > 0,
+        }
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # PERIOD MANAGEMENT — Close / Reopen accounting periods
+    # ══════════════════════════════════════════════════════════════════════════
+
+    async def close_period(
+        self,
+        *,
+        restaurant_id: str,
+        period_start: date,
+        period_end: date,
+        closed_by: str,
+        notes: str = "",
+    ) -> dict:
+        """
+        Close an accounting period. No new journal entries can be created
+        in the date range once closed. DB trigger enforces this.
+        """
+        from uuid import UUID
+        restaurant_uuid = UUID(restaurant_id)
+
+        async with get_serializable_transaction() as conn:
+            # Check if period already exists
+            existing = await conn.fetchrow(
+                "SELECT id, status FROM accounting_periods "
+                "WHERE restaurant_id = $1 AND period_start = $2 AND period_end = $3",
+                restaurant_uuid, period_start, period_end,
+            )
+
+            if existing:
+                if existing["status"] in ("closed", "locked"):
+                    return {
+                        "period_id": str(existing["id"]),
+                        "status": existing["status"],
+                        "message": "Period already closed",
+                    }
+                # Update existing open period to closed
+                await conn.execute(
+                    "UPDATE accounting_periods SET status = 'closed', closed_by = $1, "
+                    "closed_at = NOW(), notes = $2, updated_at = NOW() WHERE id = $3",
+                    closed_by, notes, existing["id"],
+                )
+                period_id = existing["id"]
+            else:
+                period_id = await conn.fetchval(
+                    """INSERT INTO accounting_periods
+                           (restaurant_id, period_start, period_end, status,
+                            closed_by, closed_at, notes)
+                       VALUES ($1, $2, $3, 'closed', $4, NOW(), $5)
+                       RETURNING id""",
+                    restaurant_uuid, period_start, period_end, closed_by, notes,
+                )
+
+        logger.info(
+            "accounting_period_closed",
+            restaurant_id=restaurant_id,
+            period=f"{period_start} to {period_end}",
+            closed_by=closed_by,
+        )
+
+        return {
+            "period_id": str(period_id),
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+            "status": "closed",
+        }
+
+    async def reopen_period(
+        self,
+        *,
+        restaurant_id: str,
+        period_start: date,
+        period_end: date,
+        reopened_by: str,
+        notes: str = "",
+    ) -> dict:
+        """
+        Reopen a previously closed period. Locked periods cannot be reopened.
+        """
+        from uuid import UUID
+        restaurant_uuid = UUID(restaurant_id)
+
+        async with get_serializable_transaction() as conn:
+            existing = await conn.fetchrow(
+                "SELECT id, status FROM accounting_periods "
+                "WHERE restaurant_id = $1 AND period_start = $2 AND period_end = $3",
+                restaurant_uuid, period_start, period_end,
+            )
+
+            if not existing:
+                raise ValidationError("Period not found")
+
+            if existing["status"] == "locked":
+                raise ValidationError(
+                    "Cannot reopen a locked period. Locked periods are permanent."
+                )
+
+            if existing["status"] == "open":
+                return {
+                    "period_id": str(existing["id"]),
+                    "status": "open",
+                    "message": "Period is already open",
+                }
+
+            await conn.execute(
+                "UPDATE accounting_periods SET status = 'open', reopened_by = $1, "
+                "reopened_at = NOW(), notes = $2, updated_at = NOW() WHERE id = $3",
+                reopened_by, notes, existing["id"],
+            )
+
+        logger.info(
+            "accounting_period_reopened",
+            restaurant_id=restaurant_id,
+            period=f"{period_start} to {period_end}",
+            reopened_by=reopened_by,
+        )
+
+        return {
+            "period_id": str(existing["id"]),
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+            "status": "open",
+        }
+
+    async def list_periods(
+        self,
+        restaurant_id: str,
+    ) -> list[dict]:
+        """List all accounting periods for a restaurant."""
+        from uuid import UUID
+        restaurant_uuid = UUID(restaurant_id)
+
+        async with get_connection() as conn:
+            rows = await conn.fetch(
+                """SELECT id, period_start, period_end, status,
+                          closed_by, closed_at, reopened_by, reopened_at, notes
+                   FROM accounting_periods
+                   WHERE restaurant_id = $1
+                   ORDER BY period_start DESC""",
+                restaurant_uuid,
+            )
+
+        return [
+            {
+                "period_id": str(r["id"]),
+                "period_start": r["period_start"].isoformat(),
+                "period_end": r["period_end"].isoformat(),
+                "status": r["status"],
+                "closed_by": r["closed_by"],
+                "closed_at": r["closed_at"].isoformat() if r["closed_at"] else None,
+                "reopened_by": r["reopened_by"],
+                "reopened_at": r["reopened_at"].isoformat() if r["reopened_at"] else None,
+                "notes": r["notes"],
+            }
+            for r in rows
+        ]
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SHIFT CLOSE — Cash drawer → Ledger
+    # ══════════════════════════════════════════════════════════════════════════
+
+    async def record_shift_close(
+        self,
+        *,
+        restaurant_id: str,
+        branch_id: Optional[str],
+        shift_id: str,
+        cash_sales: float = 0,
+        card_sales: float = 0,
+        upi_sales: float = 0,
+        created_by: str = "system",
+    ) -> Optional[str]:
+        """
+        Shift close → DR Cash Drawer (Cash), DR Bank (UPI/Card), CR Revenue Summary.
+        Reconciles physical cash drawer with ledger entries for the shift.
+        Idempotent: one journal per shift.
+        """
+        lines = []
+        total = Decimal("0")
+
+        cash_amt = _quantize(cash_sales)
+        card_amt = _quantize(card_sales)
+        upi_amt = _quantize(upi_sales)
+
+        if cash_amt > 0:
+            lines.append({"account": "CASH", "debit": float(cash_amt), "credit": 0,
+                          "description": "Cash drawer — shift close"})
+            total += cash_amt
+        if card_amt > 0:
+            lines.append({"account": "CARD", "debit": float(card_amt), "credit": 0,
+                          "description": "Card receipts — shift close"})
+            total += card_amt
+        if upi_amt > 0:
+            lines.append({"account": "BANK", "debit": float(upi_amt), "credit": 0,
+                          "description": "UPI receipts — shift close"})
+            total += upi_amt
+
+        if total <= 0:
+            return None
+
+        lines.append({"account": "FOOD_SALES", "debit": 0, "credit": float(total),
+                       "description": f"Revenue summary — shift {shift_id}"})
+
+        return await self.create_journal_entry(
+            reference_type="shift_close",
+            reference_id=shift_id,
+            restaurant_id=restaurant_id,
+            branch_id=branch_id,
+            description=f"Shift close {shift_id}: cash={cash_amt}, card={card_amt}, upi={upi_amt}",
+            created_by=created_by,
+            source_event="SHIFT_CLOSED",
+            lines=lines,
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # JOURNAL SEARCH — Query journal entries with filters
+    # ══════════════════════════════════════════════════════════════════════════
+
+    async def search_journals(
+        self,
+        restaurant_id: str,
+        *,
+        from_date: Optional[date] = None,
+        to_date: Optional[date] = None,
+        reference_type: Optional[str] = None,
+        reference_id: Optional[str] = None,
+        include_reversed: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        """
+        Search journal entries with optional filters.
+        Returns entries with their lines.
+        """
+        from uuid import UUID
+        restaurant_uuid = UUID(restaurant_id)
+        if not from_date:
+            from_date = date.today().replace(day=1)
+        if not to_date:
+            to_date = date.today()
+
+        async with get_connection() as conn:
+            # Build query with filters
+            conditions = ["je.restaurant_id = $1", "je.entry_date BETWEEN $2 AND $3"]
+            params: list = [restaurant_uuid, from_date, to_date]
+            idx = 4
+
+            if not include_reversed:
+                conditions.append("je.is_reversed = false")
+
+            if reference_type:
+                conditions.append(f"je.reference_type = ${idx}")
+                params.append(reference_type)
+                idx += 1
+
+            if reference_id:
+                conditions.append(f"je.reference_id = ${idx}")
+                params.append(reference_id)
+                idx += 1
+
+            where = " AND ".join(conditions)
+            params.extend([limit, offset])
+
+            entries = await conn.fetch(
+                f"""
+                SELECT je.id, je.entry_date, je.reference_type, je.reference_id,
+                       je.description, je.is_reversed, je.reversed_by,
+                       je.created_by, je.created_at, je.source_event
+                FROM journal_entries je
+                WHERE {where}
+                ORDER BY je.created_at DESC
+                LIMIT ${idx} OFFSET ${idx + 1}
+                """,
+                *params,
+            )
+
+            count = await conn.fetchval(
+                f"SELECT COUNT(*) FROM journal_entries je WHERE {where}",
+                *params[:-2],  # exclude limit/offset
+            )
+
+            # Fetch lines for each entry
+            result = []
+            for e in entries:
+                lines = await conn.fetch(
+                    """
+                    SELECT jl.id, coa.account_code, coa.name AS account_name,
+                           jl.debit, jl.credit, jl.description
+                    FROM journal_lines jl
+                    JOIN chart_of_accounts coa ON coa.id = jl.account_id
+                    WHERE jl.journal_entry_id = $1
+                    ORDER BY jl.debit DESC, jl.credit DESC
+                    """,
+                    e["id"],
+                )
+                result.append({
+                    "id": str(e["id"]),
+                    "entry_date": e["entry_date"].isoformat(),
+                    "reference_type": e["reference_type"],
+                    "reference_id": e["reference_id"],
+                    "description": e["description"],
+                    "is_reversed": e["is_reversed"],
+                    "reversed_by": str(e["reversed_by"]) if e["reversed_by"] else None,
+                    "created_by": e["created_by"],
+                    "created_at": e["created_at"].isoformat(),
+                    "source_event": e["source_event"],
+                    "lines": [
+                        {
+                            "id": str(l["id"]),
+                            "account_code": l["account_code"],
+                            "account_name": l["account_name"],
+                            "debit": float(l["debit"]),
+                            "credit": float(l["credit"]),
+                            "description": l["description"],
+                        }
+                        for l in lines
+                    ],
+                })
+
+        return {
+            "total": count,
+            "entries": result,
+            "limit": limit,
+            "offset": offset,
         }
 
 
