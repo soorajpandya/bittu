@@ -99,7 +99,7 @@ CREATE INDEX IF NOT EXISTS idx_sl_aging
 --    Status lifecycle: draft → issued → partially_paid → paid → cancelled
 -- ════════════════════════════════════════════════════════════════════════════
 
-CREATE TABLE IF NOT EXISTS invoices (
+CREATE TABLE IF NOT EXISTS ar_invoices (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     restaurant_id   UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
     branch_id       UUID REFERENCES sub_branches(id),
@@ -148,23 +148,23 @@ CREATE TABLE IF NOT EXISTS invoices (
     updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_inv_number
-    ON invoices(restaurant_id, invoice_number);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_arinv_number
+    ON ar_invoices(restaurant_id, invoice_number);
 
-CREATE INDEX IF NOT EXISTS idx_inv_customer
-    ON invoices(restaurant_id, customer_id) WHERE customer_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_arinv_customer
+    ON ar_invoices(restaurant_id, customer_id) WHERE customer_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_inv_status
-    ON invoices(restaurant_id, status, invoice_date DESC);
+CREATE INDEX IF NOT EXISTS idx_arinv_status
+    ON ar_invoices(restaurant_id, status, invoice_date DESC);
 
-CREATE INDEX IF NOT EXISTS idx_inv_order
-    ON invoices(restaurant_id, order_id) WHERE order_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_arinv_order
+    ON ar_invoices(restaurant_id, order_id) WHERE order_id IS NOT NULL;
 
 
 -- Invoice line items
-CREATE TABLE IF NOT EXISTS invoice_items (
+CREATE TABLE IF NOT EXISTS ar_invoice_items (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    invoice_id      UUID NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+    invoice_id      UUID NOT NULL REFERENCES ar_invoices(id) ON DELETE CASCADE,
     item_name       VARCHAR(200) NOT NULL,
     hsn_code        VARCHAR(20),
     quantity        NUMERIC(10,3) NOT NULL DEFAULT 1,
@@ -182,8 +182,8 @@ CREATE TABLE IF NOT EXISTS invoice_items (
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_invitems_invoice
-    ON invoice_items(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_arinvitems_invoice
+    ON ar_invoice_items(invoice_id);
 
 
 -- ════════════════════════════════════════════════════════════════════════════
@@ -357,7 +357,7 @@ DO $$ BEGIN
         SELECT 1 FROM information_schema.columns
         WHERE table_name = 'payments' AND column_name = 'invoice_id'
     ) THEN
-        ALTER TABLE payments ADD COLUMN invoice_id UUID REFERENCES invoices(id);
+        ALTER TABLE payments ADD COLUMN invoice_id UUID REFERENCES ar_invoices(id);
     END IF;
 END $$;
 

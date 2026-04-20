@@ -311,7 +311,7 @@ class TaxLiabilityService:
                     COALESCE(SUM(igst), 0) AS igst,
                     COALESCE(SUM(total_amount), 0) AS total,
                     COUNT(*) AS invoice_count
-                FROM invoices
+                FROM ar_invoices
                 WHERE restaurant_id = $1
                   AND invoice_date BETWEEN $2 AND $3
                   AND status NOT IN ('draft', 'void', 'cancelled')""",

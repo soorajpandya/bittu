@@ -60,7 +60,7 @@ class InvoiceService:
             prefix = f"INV-{inv_date.strftime('%Y%m%d')}"
 
             count = await conn.fetchval(
-                """SELECT COUNT(*) FROM invoices
+                """SELECT COUNT(*) FROM ar_invoices
                    WHERE restaurant_id = $1 AND invoice_number LIKE $2""",
                 UUID(restaurant_id), f"{prefix}%",
             )
@@ -113,7 +113,7 @@ class InvoiceService:
 
             # Insert invoice header
             inv_row = await conn.fetchrow(
-                """INSERT INTO invoices
+                """INSERT INTO ar_invoices
                     (restaurant_id, branch_id, invoice_number, invoice_date, due_date,
                      customer_id, customer_name, customer_gstin, order_id,
                      subtotal, discount_amount, cgst, sgst, igst,
@@ -140,7 +140,7 @@ class InvoiceService:
             # Insert line items
             for lr in line_rows:
                 await conn.execute(
-                    """INSERT INTO invoice_items
+                    """INSERT INTO ar_invoice_items
                         (invoice_id, item_name, hsn_code, quantity, unit_price,
                          discount, taxable_value,
                          cgst_rate, sgst_rate, igst_rate,
@@ -190,7 +190,7 @@ class InvoiceService:
 
                 if journal_id:
                     await conn.execute(
-                        "UPDATE invoices SET journal_entry_id = $1 WHERE id = $2",
+                        "UPDATE ar_invoices SET journal_entry_id = $1 WHERE id = $2",
                         UUID(journal_id), invoice_id,
                     )
                     await subledger_service.post_customer_entry(
@@ -232,7 +232,7 @@ class InvoiceService:
             inv = await conn.fetchrow(
                 """SELECT id, invoice_number, total_amount, amount_paid,
                        balance_due, status, customer_id
-                FROM invoices
+                FROM ar_invoices
                 WHERE id = $1 AND restaurant_id = $2
                 FOR UPDATE""",
                 UUID(invoice_id), UUID(restaurant_id),
@@ -247,7 +247,7 @@ class InvoiceService:
             new_status = "paid" if new_balance <= 0.005 else "partially_paid"
 
             await conn.execute(
-                """UPDATE invoices
+                """UPDATE ar_invoices
                    SET amount_paid = $1, balance_due = $2, status = $3,
                        updated_at = NOW()
                    WHERE id = $4""",
@@ -301,7 +301,7 @@ class InvoiceService:
             inv = await conn.fetchrow(
                 """SELECT id, invoice_number, status, journal_entry_id,
                        amount_paid, customer_id, total_amount
-                FROM invoices WHERE id = $1 AND restaurant_id = $2
+                FROM ar_invoices WHERE id = $1 AND restaurant_id = $2
                 FOR UPDATE""",
                 UUID(invoice_id), UUID(restaurant_id),
             )
@@ -313,7 +313,7 @@ class InvoiceService:
                 raise ValidationError("Cannot void invoice with payments. Refund first.")
 
             await conn.execute(
-                """UPDATE invoices SET status = 'void', notes = COALESCE(notes,'') || $1,
+                """UPDATE ar_invoices SET status = 'void', notes = COALESCE(notes,'') || $1,
                        updated_at = NOW()
                    WHERE id = $2""",
                 f"\nVoided: {reason}" if reason else "\nVoided",
@@ -349,7 +349,7 @@ class InvoiceService:
         """Get invoice with line items."""
         async with get_connection() as conn:
             inv = await conn.fetchrow(
-                """SELECT * FROM invoices
+                """SELECT * FROM ar_invoices
                    WHERE id = $1 AND restaurant_id = $2""",
                 UUID(invoice_id), UUID(restaurant_id),
             )
@@ -357,7 +357,7 @@ class InvoiceService:
                 raise ValidationError("Invoice not found")
 
             items = await conn.fetch(
-                "SELECT * FROM invoice_items WHERE invoice_id = $1 ORDER BY created_at",
+                "SELECT * FROM ar_invoice_items WHERE invoice_id = $1 ORDER BY created_at",
                 UUID(invoice_id),
             )
 
@@ -404,7 +404,7 @@ class InvoiceService:
                 f"""SELECT id, invoice_number, invoice_date, due_date,
                        customer_name, total_amount, amount_paid,
                        balance_due, status, invoice_type, created_at
-                FROM invoices WHERE {where}
+                FROM ar_invoices WHERE {where}
                 ORDER BY invoice_date DESC, created_at DESC
                 LIMIT ${idx} OFFSET ${idx+1}""",
                 *params, limit, offset,
@@ -431,7 +431,7 @@ class InvoiceService:
                 f"""SELECT id, invoice_number, invoice_date, due_date,
                        customer_id, customer_name, total_amount,
                        amount_paid, balance_due, status
-                FROM invoices WHERE {where}
+                FROM ar_invoices WHERE {where}
                 ORDER BY due_date ASC NULLS LAST, invoice_date ASC""",
                 *params,
             )
