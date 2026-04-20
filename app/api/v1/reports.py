@@ -265,3 +265,64 @@ async def _compute_cash_flow(
         "total_outflow": round(total_outflow, 2),
         "net_cash_flow": round(total_inflow - total_outflow, 2),
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AUDIT DRILLDOWN
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/drilldown")
+async def audit_drilldown(
+    account_id: Optional[str] = Query(None, description="Filter by account (from trial balance)"),
+    reference_type: Optional[str] = Query(None, description="Filter by source type (order, payment, refund, etc.)"),
+    reference_id: Optional[str] = Query(None, description="Filter by specific source document ID"),
+    from_date: Optional[date] = Query(None, description="Entry date from"),
+    to_date: Optional[date] = Query(None, description="Entry date to"),
+    limit: int = Query(50, le=200),
+    offset: int = Query(0, ge=0),
+    user: UserContext = Depends(require_permission("reports.read")),
+):
+    """
+    Audit Drilldown — trace any number back to its source journal entries.
+
+    Usage:
+      - From trial balance → pass account_id to see all entries for that account
+      - From P&L line → pass reference_type to see all entries of that type
+      - From specific transaction → pass reference_id to see the exact entry
+      - CA asks "show me origin of this number" → this endpoint answers it
+    """
+    uid = user.owner_id if user.is_branch_user else user.user_id
+    return await accounting_engine.drilldown(
+        uid,
+        account_id=account_id,
+        reference_type=reference_type,
+        reference_id=reference_id,
+        entry_date_from=from_date,
+        entry_date_to=to_date,
+        limit=limit,
+        offset=offset,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INTEGRITY CHECK
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/integrity-check")
+async def integrity_check(
+    user: UserContext = Depends(require_permission("reports.read")),
+):
+    """
+    Accounting Integrity Validator — run full consistency check.
+
+    Checks:
+      1. Trial balance: sum(debit) == sum(credit) globally
+      2. Entry balance: every individual journal entry balances
+      3. Orphan lines: journal_lines without parent entry
+      4. Broken account refs: lines referencing deleted accounts
+      5. Reversal integrity: reversed entries properly linked
+
+    Returns all_passed=true if system is fully consistent.
+    """
+    uid = user.owner_id if user.is_branch_user else user.user_id
+    return await accounting_engine.check_integrity(uid)

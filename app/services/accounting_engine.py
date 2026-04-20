@@ -1427,6 +1427,127 @@ class AccountingEngine:
             "offset": offset,
         }
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # INTEGRITY VALIDATOR
+    # ══════════════════════════════════════════════════════════════════════════
+
+    async def check_integrity(self, restaurant_id: str) -> dict:
+        """
+        Run full accounting integrity check via DB function.
+        Returns pass/fail for: trial balance, entry balance, orphan lines,
+        broken account refs, reversal linking.
+        """
+        restaurant_uuid = UUID(restaurant_id)
+        async with get_connection() as conn:
+            result = await conn.fetchval(
+                "SELECT fn_check_accounting_integrity($1)",
+                restaurant_uuid,
+            )
+        import json as _j
+        return _j.loads(result) if isinstance(result, str) else dict(result) if result else {}
+
+    async def drilldown(
+        self,
+        restaurant_id: str,
+        *,
+        account_id: Optional[str] = None,
+        reference_type: Optional[str] = None,
+        reference_id: Optional[str] = None,
+        entry_date_from: Optional[date] = None,
+        entry_date_to: Optional[date] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        """
+        Audit drilldown — trace any number back to journal entries + source documents.
+        CA asks "where did this number come from?" → this answers it.
+        Returns journal entries with lines AND source event references.
+        """
+        restaurant_uuid = UUID(restaurant_id)
+        conditions = ["je.restaurant_id = $1"]
+        params: list = [restaurant_uuid]
+        idx = 2
+
+        if account_id:
+            conditions.append(f"jl.account_id = ${idx}")
+            params.append(UUID(account_id))
+            idx += 1
+
+        if reference_type:
+            conditions.append(f"je.reference_type = ${idx}")
+            params.append(reference_type)
+            idx += 1
+
+        if reference_id:
+            conditions.append(f"je.reference_id = ${idx}")
+            params.append(reference_id)
+            idx += 1
+
+        if entry_date_from:
+            conditions.append(f"je.entry_date >= ${idx}")
+            params.append(entry_date_from)
+            idx += 1
+
+        if entry_date_to:
+            conditions.append(f"je.entry_date <= ${idx}")
+            params.append(entry_date_to)
+            idx += 1
+
+        where = " AND ".join(conditions)
+        join_line = "JOIN journal_lines jl ON jl.journal_entry_id = je.id" if account_id else ""
+
+        async with get_connection() as conn:
+            entries = await conn.fetch(
+                f"""SELECT DISTINCT je.id, je.entry_date, je.reference_type,
+                           je.reference_id, je.description, je.is_reversed,
+                           je.reversed_by, je.source_event, je.created_by,
+                           je.created_at
+                    FROM journal_entries je
+                    {join_line}
+                    WHERE {where}
+                    ORDER BY je.entry_date DESC, je.created_at DESC
+                    LIMIT {limit} OFFSET {offset}""",
+                *params,
+            )
+
+            result = []
+            for e in entries:
+                lines = await conn.fetch(
+                    """SELECT jl.id, coa.account_code, coa.name AS account_name,
+                              coa.account_type, jl.debit, jl.credit, jl.description
+                       FROM journal_lines jl
+                       JOIN chart_of_accounts coa ON coa.id = jl.account_id
+                       WHERE jl.journal_entry_id = $1
+                       ORDER BY jl.debit DESC, jl.credit DESC""",
+                    e["id"],
+                )
+                result.append({
+                    "id": str(e["id"]),
+                    "entry_date": e["entry_date"].isoformat(),
+                    "reference_type": e["reference_type"],
+                    "reference_id": e["reference_id"],
+                    "description": e["description"],
+                    "is_reversed": e["is_reversed"],
+                    "reversed_by": str(e["reversed_by"]) if e["reversed_by"] else None,
+                    "source_event": e["source_event"],
+                    "created_by": e["created_by"],
+                    "created_at": e["created_at"].isoformat(),
+                    "lines": [
+                        {
+                            "id": str(l["id"]),
+                            "account_code": l["account_code"],
+                            "account_name": l["account_name"],
+                            "account_type": l["account_type"],
+                            "debit": float(l["debit"]),
+                            "credit": float(l["credit"]),
+                            "description": l["description"],
+                        }
+                        for l in lines
+                    ],
+                })
+
+        return {"entries": result, "count": len(result), "limit": limit, "offset": offset}
+
 
 # Singleton
 accounting_engine = AccountingEngine()
