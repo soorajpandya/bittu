@@ -49,6 +49,9 @@ SYSTEM_ACCOUNTS = {
     "COGS_BEVERAGE":        ("COGS_BEVERAGE",       "5002"),
     "DISCOUNT_EXPENSE":     ("DISCOUNT_EXPENSE",    "5006"),
     "SALES_RETURNS":        ("SALES_RETURNS",       "5007"),
+    "PG_CLEARING":          ("PG_CLEARING",         "1006"),
+    "GATEWAY_CHARGES":      ("GATEWAY_CHARGES",     "5011"),
+    "GATEWAY_TAX":          ("GATEWAY_TAX",         "5012"),
 }
 
 VALID_REFERENCE_TYPES = {
@@ -56,6 +59,7 @@ VALID_REFERENCE_TYPES = {
     "grn", "inventory_consumption", "inventory_adjustment",
     "vendor_payment", "expense", "reversal",
     "shift_close", "period_close",
+    "settlement", "gateway_fee",
 }
 
 
@@ -385,14 +389,26 @@ class AccountingEngine:
         created_by: str = "system",
     ) -> Optional[str]:
         """
-        Payment received → DR Cash/Bank/Card, CR Accounts Receivable.
-        Settles the receivable created when the order was booked.
+        Payment received → settles the receivable.
+
+        For cash: DR Cash, CR Accounts Receivable (immediate)
+        For online (upi/card/etc): DR PG Clearing, CR Accounts Receivable
+          (money sits in gateway clearing until settlement arrives)
         """
+        from app.services.settlement_service import is_online_payment
+
         amt = _quantize(amount)
         if amt <= 0:
             return None
 
-        payment_account = self._payment_method_account(method)
+        if is_online_payment(method):
+            # Online payment → money goes to PG Clearing (not bank yet)
+            debit_account = "PG_CLEARING"
+            debit_desc = f"Gateway capture ({method})"
+        else:
+            # Cash → direct to cash account
+            debit_account = self._payment_method_account(method)
+            debit_desc = f"Payment received ({method})"
 
         return await self.create_journal_entry(
             reference_type="payment",
@@ -401,9 +417,10 @@ class AccountingEngine:
             branch_id=branch_id,
             description=f"Payment {payment_id} for order {order_id} ({method})",
             created_by=created_by,
+            source_event="PAYMENT_COMPLETED",
             lines=[
-                {"account": payment_account, "debit": float(amt), "credit": 0,
-                 "description": f"Payment received ({method})"},
+                {"account": debit_account, "debit": float(amt), "credit": 0,
+                 "description": debit_desc},
                 {"account": "ACCOUNTS_RECEIVABLE", "debit": 0, "credit": float(amt),
                  "description": f"Receivable settled — order {order_id}"},
             ],
@@ -453,14 +470,23 @@ class AccountingEngine:
         created_by: str = "system",
     ) -> Optional[str]:
         """
-        Refund → DR Sales Returns, CR Cash/Bank.
-        Records money going back to customer.
+        Refund → DR Sales Returns, CR Cash/PG Clearing.
+
+        For cash: money leaves cash drawer
+        For online: gateway processes refund from clearing
         """
+        from app.services.settlement_service import is_online_payment
+
         amt = _quantize(amount)
         if amt <= 0:
             return None
 
-        payment_account = self._payment_method_account(method)
+        if is_online_payment(method):
+            credit_account = "PG_CLEARING"
+            credit_desc = f"Refund via gateway ({method})"
+        else:
+            credit_account = self._payment_method_account(method)
+            credit_desc = f"Cash refunded ({method})"
 
         return await self.create_journal_entry(
             reference_type="refund",
@@ -469,11 +495,12 @@ class AccountingEngine:
             branch_id=branch_id,
             description=f"Refund for order {order_id}",
             created_by=created_by,
+            source_event="PAYMENT_REFUNDED",
             lines=[
                 {"account": "SALES_RETURNS", "debit": float(amt), "credit": 0,
                  "description": f"Refund — order {order_id}"},
-                {"account": payment_account, "debit": 0, "credit": float(amt),
-                 "description": f"Cash refunded ({method})"},
+                {"account": credit_account, "debit": 0, "credit": float(amt),
+                 "description": credit_desc},
             ],
         )
 

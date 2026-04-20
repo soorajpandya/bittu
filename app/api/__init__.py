@@ -70,6 +70,7 @@ from app.api.v1 import (
     dinein,
     # ── ERP ──
     accounting,
+    settlements,
     ai_ingredients,
     invoice_import,
     erp,
@@ -159,6 +160,8 @@ router.include_router(dinein.router)
 router.include_router(accounting.router)
 router.include_router(accounting.accounts_router)
 router.include_router(accounting.reports_router)
+router.include_router(settlements.router)
+router.include_router(settlements.rules_router)
 router.include_router(ai_ingredients.router)
 router.include_router(invoice_import.router)
 router.include_router(erp.router)
