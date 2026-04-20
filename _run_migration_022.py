@@ -12,9 +12,9 @@ async def run():
     triggers = await conn.fetch("SELECT tgname FROM pg_trigger WHERE tgname = 'trg_enforce_period_lock'")
     for t in triggers:
         print(f"  Trigger: {t['tgname']}")
-    perms = await conn.fetch("SELECT code FROM permissions WHERE code IN ('bank_recon.read','bank_recon.write','reports.read') ORDER BY code")
+    perms = await conn.fetch("SELECT key FROM permissions WHERE key IN ('bank_recon.read','bank_recon.write','reports.read') ORDER BY key")
     for p in perms:
-        print(f"  Permission: {p['code']}")
+        print(f"  Permission: {p['key']}")
     await conn.close()
 
 asyncio.run(run())
