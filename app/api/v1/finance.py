@@ -1,54 +1,41 @@
 """
-Finance API — Unified Financial Operating System
-─────────────────────────────────────────────────
-Single-prefix /finance/* router that exposes every financial capability:
+Finance API — Financial Operating System (Product Layer)
+────────────────────────────────────────────────────────
+/finance/* router — not just APIs, but opinionated product workflows:
 
-  Dashboard:     GET  /finance/dashboard
-  Reports:       GET  /finance/reports/trial-balance
-                 GET  /finance/reports/balance-sheet
-                 GET  /finance/reports/income-statement
-                 GET  /finance/reports/cash-flow
-  Ledger:        GET  /finance/customers/{id}/ledger
-                 GET  /finance/suppliers/{id}/ledger
-  Aging:         GET  /finance/customers/aging
-                 GET  /finance/suppliers/aging
-  Invoices:      POST /finance/invoices
-                 GET  /finance/invoices
-                 GET  /finance/invoices/unpaid
-                 GET  /finance/invoices/{id}
-                 POST /finance/invoices/{id}/payment
-                 POST /finance/invoices/{id}/void
-  Expenses:      POST /finance/expenses
-                 GET  /finance/expenses
-                 GET  /finance/expenses/summary
-                 GET  /finance/expenses/categories
-                 POST /finance/expenses/categories
-                 GET  /finance/expenses/{id}
-                 POST /finance/expenses/{id}/approve
-  Bank Recon:    GET  /finance/reconciliation/summary
-                 GET  /finance/reconciliation/statements
-                 POST /finance/reconciliation/import-csv
-                 POST /finance/reconciliation/auto-match
-                 POST /finance/reconciliation/match
-                 POST /finance/reconciliation/unmatch
-  GST:           GET  /finance/gst/summary
-                 GET  /finance/gst/liabilities
-                 POST /finance/gst/compute
-                 POST /finance/gst/file
-                 POST /finance/gst/pay
-  Drilldown:     GET  /finance/drilldown
-  Periods:       GET  /finance/periods
-                 POST /finance/periods/close
-                 POST /finance/periods/reopen
-  Journals:      GET  /finance/journals
-                 POST /finance/journals/reverse
-  Integrity:     GET  /finance/integrity-check
-  Alerts:        GET  /finance/alerts
-                 POST /finance/alerts/scan
-                 POST /finance/alerts/{id}/resolve
-  Audit:         GET  /finance/audit-log
-  Trend:         GET  /finance/trend/revenue
-  Views:         POST /finance/views/refresh
+  ─── DASHBOARDS & STATUS ─────────────────────────────────────────────
+  GET  /finance/dashboard              Real-time 17-metric dashboard
+  GET  /finance/trust-status           System health badges (✔️ 🔒 ⚠️)
+  GET  /finance/ca-view                Everything a CA needs in one call
+
+  ─── DAILY CLOSING WORKFLOW ──────────────────────────────────────────
+  POST /finance/daily-close/init       Compute expected cash from ledger
+  POST /finance/daily-close/cash-count Cashier enters actual amounts
+  POST /finance/daily-close/close      Manager locks the day
+  GET  /finance/daily-close/history    Closing history with filters
+
+  ─── GST FILING WORKFLOW ─────────────────────────────────────────────
+  POST /finance/gst/workflow/generate          Generate from ledger
+  POST /finance/gst/workflow/{id}/review       Mark reviewed
+  POST /finance/gst/workflow/{id}/export       Mark exported
+  POST /finance/gst/workflow/{id}/file         Record filing ref
+  POST /finance/gst/workflow/{id}/pay          Record payment
+  GET  /finance/gst/workflow                   List workflows
+
+  ─── INSIGHT ENGINE ──────────────────────────────────────────────────
+  GET  /finance/insights/profit        "Why did profit drop?" with insights
+  GET  /finance/insights/channels      Channel revenue/margin breakdown
+  GET  /finance/insights/cash-mismatch Cash mismatch pattern analysis
+
+  ─── ACTIONABLE ALERTS ───────────────────────────────────────────────
+  GET  /finance/alerts                 List with severity + suggested action
+  GET  /finance/alerts/summary         Quick badge counts
+  POST /finance/alerts/scan            Run anomaly scanner
+  POST /finance/alerts/{id}/resolve    Resolve with notes
+
+  ─── STANDARD FINANCE ────────────────────────────────────────────────
+  Reports, Ledger, Invoices, Expenses, Bank Recon, GST,
+  Drilldown, Periods, Journals, Integrity, Audit Log, Trend
 """
 
 from datetime import date
@@ -643,13 +630,14 @@ async def integrity_check(
 async def list_alerts(
     resolved: Optional[bool] = Query(None),
     alert_type: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
     user: UserContext = Depends(require_permission("finance.dashboard")),
 ):
     return await finance_service.list_alerts(
         _rid(user), resolved=resolved, alert_type=alert_type,
-        limit=limit, offset=offset,
+        severity=severity, limit=limit, offset=offset,
     )
 
 
@@ -665,9 +653,16 @@ async def scan_alerts(
 @router.post("/alerts/{alert_id}/resolve")
 async def resolve_alert(
     alert_id: str,
+    payload: dict = {},
     user: UserContext = Depends(require_permission("finance.audit")),
 ):
-    ok = await finance_service.resolve_alert(_rid(user), alert_id, user.user_id)
+    notes = payload.get("resolution_notes", "")
+    if notes:
+        ok = await finance_service.resolve_alert_with_notes(
+            _rid(user), alert_id, user.user_id, notes,
+        )
+    else:
+        ok = await finance_service.resolve_alert(_rid(user), alert_id, user.user_id)
     return {"resolved": ok}
 
 
@@ -715,3 +710,265 @@ async def refresh_views(
     """Refresh materialized views (dashboard caches)."""
     await finance_service.refresh_views()
     return {"status": "refreshed"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DAILY CLOSING WORKFLOW
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.post("/daily-close/init")
+async def init_daily_closing(
+    payload: dict,
+    user: UserContext = Depends(require_permission("finance.daily_close")),
+):
+    """
+    Step 1: Initialize daily closing — system computes expected cash/card/UPI
+    from the ledger for the given date.
+    """
+    closing_date = date.fromisoformat(payload["date"])
+    bid = payload.get("branch_id") or (user.branch_id if user.is_branch_user else None)
+    result = await finance_service.init_daily_closing(_rid(user), closing_date, bid)
+    return result
+
+
+@router.post("/daily-close/cash-count")
+async def submit_cash_count(
+    payload: dict,
+    user: UserContext = Depends(require_permission("finance.daily_close")),
+):
+    """
+    Step 2: Cashier enters actual counted amounts.
+    Returns difference and mismatch flag.
+    """
+    result = await finance_service.submit_cash_count(
+        _rid(user),
+        payload["closing_id"],
+        user.user_id,
+        payload["actual_cash"],
+        payload["actual_card"],
+        payload["actual_upi"],
+        payload.get("notes"),
+    )
+    # Audit log
+    await finance_service.log_financial_action(
+        _rid(user), user.user_id, "daily_close.cash_count", "daily_closing",
+        payload["closing_id"],
+        new_value={
+            "actual_cash": payload["actual_cash"],
+            "actual_card": payload["actual_card"],
+            "actual_upi": payload["actual_upi"],
+        },
+    )
+    return result
+
+
+@router.post("/daily-close/close")
+async def close_day(
+    payload: dict,
+    user: UserContext = Depends(require_permission("finance.daily_close")),
+):
+    """
+    Step 3: Manager closes the day — locks it, produces summary.
+    """
+    result = await finance_service.close_day(
+        _rid(user), payload["closing_id"], user.user_id,
+    )
+    await finance_service.log_financial_action(
+        _rid(user), user.user_id, "daily_close.close", "daily_closing",
+        payload["closing_id"],
+        new_value={"status": "closed"},
+    )
+    return result
+
+
+@router.get("/daily-close/history")
+async def list_daily_closings(
+    branch_id: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    limit: int = Query(30, le=100),
+    offset: int = Query(0, ge=0),
+    user: UserContext = Depends(require_permission("finance.daily_close")),
+):
+    """List daily closings — filterable by branch and status."""
+    bid = branch_id or (user.branch_id if user.is_branch_user else None)
+    return await finance_service.list_closings(
+        _rid(user), branch_id=bid, status=status, limit=limit, offset=offset,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GST FILING WORKFLOW — pipeline: generate → review → export → file → pay
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.post("/gst/workflow/generate")
+async def gst_workflow_generate(
+    payload: dict,
+    user: UserContext = Depends(require_permission("finance.gst")),
+):
+    """Step 1: Generate GST data for a period from ledger."""
+    return await finance_service.gst_workflow_generate(
+        _rid(user),
+        date.fromisoformat(payload["period_start"]),
+        date.fromisoformat(payload["period_end"]),
+    )
+
+
+@router.post("/gst/workflow/{workflow_id}/review")
+async def gst_workflow_review(
+    workflow_id: str,
+    user: UserContext = Depends(require_permission("finance.gst")),
+):
+    """Step 2: Mark GST data as reviewed."""
+    result = await finance_service.gst_workflow_review(
+        _rid(user), workflow_id, user.user_id,
+    )
+    await finance_service.log_financial_action(
+        _rid(user), user.user_id, "gst_workflow.review", "gst_filing",
+        workflow_id,
+    )
+    return result
+
+
+@router.post("/gst/workflow/{workflow_id}/export")
+async def gst_workflow_export(
+    workflow_id: str,
+    user: UserContext = Depends(require_permission("finance.gst")),
+):
+    """Step 3: Mark as exported for portal filing."""
+    return await finance_service.gst_workflow_export(_rid(user), workflow_id)
+
+
+@router.post("/gst/workflow/{workflow_id}/file")
+async def gst_workflow_file(
+    workflow_id: str,
+    payload: dict,
+    user: UserContext = Depends(require_permission("finance.gst")),
+):
+    """Step 4: Record filing reference from GST portal."""
+    result = await finance_service.gst_workflow_file(
+        _rid(user), workflow_id, payload["filed_reference"],
+    )
+    await finance_service.log_financial_action(
+        _rid(user), user.user_id, "gst_workflow.file", "gst_filing",
+        workflow_id, new_value={"filed_reference": payload["filed_reference"]},
+    )
+    return result
+
+
+@router.post("/gst/workflow/{workflow_id}/pay")
+async def gst_workflow_pay(
+    workflow_id: str,
+    payload: dict,
+    user: UserContext = Depends(require_permission("finance.gst")),
+):
+    """Step 5: Record GST payment."""
+    result = await finance_service.gst_workflow_pay(
+        _rid(user), workflow_id,
+        payload["paid_amount"], payload["paid_reference"],
+    )
+    await finance_service.log_financial_action(
+        _rid(user), user.user_id, "gst_workflow.pay", "gst_filing",
+        workflow_id,
+        new_value={"amount": payload["paid_amount"], "reference": payload["paid_reference"]},
+    )
+    return result
+
+
+@router.get("/gst/workflow")
+async def list_gst_workflows(
+    status: Optional[str] = Query(None),
+    limit: int = Query(20, le=100),
+    offset: int = Query(0, ge=0),
+    user: UserContext = Depends(require_permission("finance.gst")),
+):
+    """List all GST filing workflows."""
+    return await finance_service.list_gst_workflows(
+        _rid(user), status=status, limit=limit, offset=offset,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INSIGHT ENGINE — "WHY" answers
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/insights/profit")
+async def profit_insight(
+    target_date: date = Query(..., description="Date to analyze"),
+    branch_id: Optional[str] = Query(None),
+    user: UserContext = Depends(require_permission("finance.pnl")),
+):
+    """
+    "Why did profit drop?" — compares target date vs same day last week.
+    Breaks down revenue, COGS, expenses by channel with natural-language insights.
+    """
+    bid = branch_id or (user.branch_id if user.is_branch_user else None)
+    return await finance_service.profit_insight(_rid(user), target_date, bid)
+
+
+@router.get("/insights/channels")
+async def channel_analysis(
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    branch_id: Optional[str] = Query(None),
+    user: UserContext = Depends(require_permission("finance.pnl")),
+):
+    """Which channel is making/losing money? Revenue, COGS, margin by channel."""
+    bid = branch_id or (user.branch_id if user.is_branch_user else None)
+    return await finance_service.channel_analysis(_rid(user), from_date, to_date, bid)
+
+
+@router.get("/insights/cash-mismatch")
+async def cash_mismatch_history(
+    branch_id: Optional[str] = Query(None),
+    days: int = Query(30, le=90),
+    user: UserContext = Depends(require_permission("finance.cash")),
+):
+    """Track cash mismatch pattern over time. Identifies systematic issues."""
+    bid = branch_id or (user.branch_id if user.is_branch_user else None)
+    return await finance_service.cash_mismatch_history(
+        _rid(user), branch_id=bid, days=days,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TRUST STATUS — single call for frontend badges
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/trust-status")
+async def trust_status(
+    user: UserContext = Depends(require_permission("finance.trust_status")),
+):
+    """
+    Single call returning system health for frontend badges:
+    ledger balanced ✔️, period locked 🔒, audit safe, alert count.
+    """
+    return await finance_service.trust_status(_rid(user))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ALERT SUMMARY (quick badge data)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/alerts/summary")
+async def alert_summary(
+    user: UserContext = Depends(require_permission("finance.dashboard")),
+):
+    """Quick alert overview: error/warning/info counts for badges."""
+    return await finance_service.alert_summary(_rid(user))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CA VIEW — everything a chartered accountant needs in one call
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/ca-view")
+async def ca_view(
+    period_start: date = Query(...),
+    period_end: date = Query(...),
+    user: UserContext = Depends(require_permission("finance.report")),
+):
+    """
+    Single call for CAs: trial balance, income statement, GST summary,
+    period lock status, journal entry counts, reversal rate.
+    """
+    return await finance_service.ca_view(_rid(user), period_start, period_end)
