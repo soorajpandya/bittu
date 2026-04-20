@@ -591,29 +591,48 @@ async def _create_payment_gst_entries(
 # ═══════════════════════════════════════════════════════════════════════
 
 async def _handle_payment_refunded(event: DomainEvent):
-    """Record refund via accounting engine + reverse original payment journal."""
+    """Record refund via accounting engine. Supports full and partial refunds."""
     from app.services.accounting_engine import accounting_engine
 
     order_id = event.payload.get("order_id")
     amount = event.payload.get("amount", 0)
     payment_id = event.payload.get("payment_id")
     method = event.payload.get("method", "cash")
+    original_amount = event.payload.get("original_amount")
+    is_partial = event.payload.get("is_partial", False)
+    reason = event.payload.get("reason", "")
 
     if not order_id or not amount:
         return
 
     try:
-        # Single path: engine handles idempotency
-        journal_id = await accounting_engine.record_refund(
-            restaurant_id=event.restaurant_id,
-            branch_id=event.branch_id,
-            payment_id=payment_id or order_id,
-            order_id=order_id,
-            amount=float(amount),
-            method=method,
-            created_by=event.user_id or "system",
-        )
-        logger.info("erp_refund_recorded", order_id=order_id, amount=amount, journal_id=journal_id)
+        if is_partial and original_amount:
+            # Partial refund path
+            journal_id = await accounting_engine.record_partial_refund(
+                restaurant_id=event.restaurant_id,
+                branch_id=event.branch_id,
+                payment_id=payment_id or order_id,
+                order_id=order_id,
+                refund_amount=float(amount),
+                original_amount=float(original_amount),
+                method=method,
+                reason=reason,
+                created_by=event.user_id or "system",
+            )
+            logger.info("erp_partial_refund_recorded", order_id=order_id,
+                        amount=amount, original=original_amount, journal_id=journal_id)
+        else:
+            # Full refund path
+            journal_id = await accounting_engine.record_refund(
+                restaurant_id=event.restaurant_id,
+                branch_id=event.branch_id,
+                payment_id=payment_id or order_id,
+                order_id=order_id,
+                amount=float(amount),
+                method=method,
+                created_by=event.user_id or "system",
+            )
+            logger.info("erp_refund_recorded", order_id=order_id, amount=amount, journal_id=journal_id)
 
     except Exception:
         logger.exception("erp_refund_record_failed", order_id=order_id)

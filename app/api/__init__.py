@@ -166,11 +166,15 @@ router.include_router(ai_ingredients.router)
 router.include_router(invoice_import.router)
 router.include_router(erp.router)
 # ── Invoices / Expenses / Sub-Ledger / Tax ──
-from app.api.v1 import invoices, expenses, subledger_tax
+from app.api.v1 import invoices, expenses, subledger_tax, reports, bank_recon
 router.include_router(invoices.router)
 router.include_router(expenses.router)
 router.include_router(subledger_tax.subledger_router)
 router.include_router(subledger_tax.tax_router)
+# ── Financial Reports ──
+router.include_router(reports.router)
+# ── Bank Reconciliation ──
+router.include_router(bank_recon.router)
 # ── Food Images ──
 router.include_router(food_images.router)
 # ── Waitlist ──

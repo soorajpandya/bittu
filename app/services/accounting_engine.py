@@ -65,6 +65,7 @@ VALID_REFERENCE_TYPES = {
     "shift_close", "period_close",
     "settlement", "gateway_fee",
     "invoice", "invoice_void", "tax_payment",
+    "bank_recon", "partial_refund", "chargeback",
 }
 
 
@@ -184,8 +185,23 @@ class AccountingEngine:
         restaurant_uuid = UUID(restaurant_id)
         branch_uuid = UUID(branch_id) if branch_id else None
         reversed_uuid = UUID(reversed_entry_id) if reversed_entry_id else None
+        effective_date = entry_date or date.today()
 
         async with get_serializable_transaction() as conn:
+            # ── Period lock enforcement ──────────────────────────────────
+            locked_period = await conn.fetchrow(
+                "SELECT id, status, period_start, period_end FROM accounting_periods "
+                "WHERE restaurant_id = $1 AND status IN ('closed', 'locked') "
+                "AND $2 BETWEEN period_start AND period_end LIMIT 1",
+                restaurant_uuid, effective_date,
+            )
+            if locked_period:
+                raise ValidationError(
+                    f"Cannot create journal entry: accounting period "
+                    f"{locked_period['period_start']} to {locked_period['period_end']} "
+                    f"is {locked_period['status']}. Reopen the period first."
+                )
+
             # Idempotency check
             existing = await conn.fetchval(
                 "SELECT id FROM journal_entries "
@@ -221,7 +237,7 @@ class AccountingEngine:
                 """,
                 restaurant_uuid,
                 branch_uuid,
-                entry_date or date.today(),
+                effective_date,
                 reference_type,
                 reference_id,
                 description,
@@ -294,6 +310,20 @@ class AccountingEngine:
                 raise ValidationError(f"Journal entry {journal_entry_id} not found")
             if entry["is_reversed"]:
                 raise ValidationError(f"Journal entry {journal_entry_id} is already reversed")
+
+            # ── Period lock: block reversal if original entry date is in closed period
+            locked_period = await conn.fetchrow(
+                "SELECT id, status, period_start, period_end FROM accounting_periods "
+                "WHERE restaurant_id = $1 AND status IN ('closed', 'locked') "
+                "AND $2 BETWEEN period_start AND period_end LIMIT 1",
+                entry["restaurant_id"], entry["entry_date"],
+            )
+            if locked_period:
+                raise ValidationError(
+                    f"Cannot reverse journal entry: accounting period "
+                    f"{locked_period['period_start']} to {locked_period['period_end']} "
+                    f"is {locked_period['status']}. Reopen the period first."
+                )
 
             # Get original lines
             original_lines = await conn.fetch(
@@ -641,6 +671,162 @@ class AccountingEngine:
                  "description": description},
                 {"account": payment_account, "debit": 0, "credit": float(amt),
                  "description": f"Paid — {description}"},
+            ],
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # EDGE CASE HANDLERS — Partial Refund, Split Payment, Chargeback
+    # ══════════════════════════════════════════════════════════════════════════
+
+    async def record_partial_refund(
+        self,
+        *,
+        restaurant_id: str,
+        branch_id: Optional[str],
+        payment_id: str,
+        order_id: str,
+        refund_amount: float,
+        original_amount: float,
+        method: str = "cash",
+        reason: str = "",
+        created_by: str = "system",
+    ) -> Optional[str]:
+        """
+        Partial refund — refund a portion of a payment.
+
+        Creates a journal entry for only the refunded amount.
+        DR Sales Returns (partial), CR Cash/PG Clearing (partial).
+        Uses a unique reference_id so it won't conflict with full refund.
+        """
+        from app.services.settlement_service import is_online_payment
+
+        amt = _quantize(refund_amount)
+        orig = _quantize(original_amount)
+        if amt <= 0 or amt > orig:
+            raise ValidationError(
+                f"Partial refund amount ({amt}) must be > 0 and <= original ({orig})"
+            )
+
+        if is_online_payment(method):
+            credit_account = "PG_CLEARING"
+        else:
+            credit_account = self._payment_method_account(method)
+
+        desc = f"Partial refund ₹{amt} of ₹{orig} for order {order_id}"
+        if reason:
+            desc += f" — {reason}"
+
+        return await self.create_journal_entry(
+            reference_type="partial_refund",
+            reference_id=f"pref_{payment_id}_{amt}",
+            restaurant_id=restaurant_id,
+            branch_id=branch_id,
+            description=desc,
+            created_by=created_by,
+            source_event="PAYMENT_REFUNDED",
+            lines=[
+                {"account": "SALES_RETURNS", "debit": float(amt), "credit": 0,
+                 "description": f"Partial refund — order {order_id}"},
+                {"account": credit_account, "debit": 0, "credit": float(amt),
+                 "description": f"Refunded ₹{amt} ({method})"},
+            ],
+        )
+
+    async def record_split_payment(
+        self,
+        *,
+        restaurant_id: str,
+        branch_id: Optional[str],
+        order_id: str,
+        splits: list[dict],
+        created_by: str = "system",
+    ) -> list[str]:
+        """
+        Split payment — order paid via multiple methods.
+
+        Each split: {method: "cash"|"upi"|"card", amount: float, payment_id: str}
+        Creates one journal entry per split.
+
+        Returns list of journal entry IDs.
+        """
+        from app.services.settlement_service import is_online_payment
+
+        if not splits:
+            raise ValidationError("Split payment requires at least one split")
+
+        journal_ids = []
+        for i, split in enumerate(splits):
+            method = split.get("method", "cash")
+            amount = _quantize(split.get("amount", 0))
+            pid = split.get("payment_id", f"split_{order_id}_{i}")
+
+            if amount <= 0:
+                continue
+
+            if is_online_payment(method):
+                debit_account = "PG_CLEARING"
+            else:
+                debit_account = self._payment_method_account(method)
+
+            jid = await self.create_journal_entry(
+                reference_type="payment",
+                reference_id=f"pay_{pid}",
+                restaurant_id=restaurant_id,
+                branch_id=branch_id,
+                description=f"Split payment {i+1}/{len(splits)} for order {order_id} ({method} ₹{amount})",
+                created_by=created_by,
+                source_event="PAYMENT_COMPLETED",
+                lines=[
+                    {"account": debit_account, "debit": float(amount), "credit": 0,
+                     "description": f"Payment received ({method})"},
+                    {"account": "ACCOUNTS_RECEIVABLE", "debit": 0, "credit": float(amount),
+                     "description": f"Split payment — order {order_id}"},
+                ],
+            )
+            if jid:
+                journal_ids.append(jid)
+
+        return journal_ids
+
+    async def record_chargeback(
+        self,
+        *,
+        restaurant_id: str,
+        branch_id: Optional[str],
+        payment_id: str,
+        order_id: str,
+        amount: float,
+        method: str = "card",
+        reason: str = "",
+        created_by: str = "system",
+    ) -> Optional[str]:
+        """
+        Chargeback — customer disputes a card/online payment.
+
+        DR Chargeback Loss (or Sales Returns), CR PG Clearing.
+        The gateway claws back the money from our clearing account.
+        """
+        amt = _quantize(amount)
+        if amt <= 0:
+            return None
+
+        desc = f"Chargeback for order {order_id} — payment {payment_id}"
+        if reason:
+            desc += f" — {reason}"
+
+        return await self.create_journal_entry(
+            reference_type="chargeback",
+            reference_id=f"cb_{payment_id}",
+            restaurant_id=restaurant_id,
+            branch_id=branch_id,
+            description=desc,
+            created_by=created_by,
+            source_event="PAYMENT_REFUNDED",
+            lines=[
+                {"account": "SALES_RETURNS", "debit": float(amt), "credit": 0,
+                 "description": f"Chargeback loss — order {order_id}"},
+                {"account": "PG_CLEARING", "debit": 0, "credit": float(amt),
+                 "description": f"Gateway chargeback clawback ({method})"},
             ],
         )
 
