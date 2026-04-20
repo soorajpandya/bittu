@@ -52,6 +52,10 @@ SYSTEM_ACCOUNTS = {
     "PG_CLEARING":          ("PG_CLEARING",         "1006"),
     "GATEWAY_CHARGES":      ("GATEWAY_CHARGES",     "5011"),
     "GATEWAY_TAX":          ("GATEWAY_TAX",         "5012"),
+    "RENT_EXPENSE":         ("RENT_EXPENSE",        "5020"),
+    "SALARY_EXPENSE":       ("SALARY_EXPENSE",      "5021"),
+    "UTILITIES_EXPENSE":    ("UTILITIES_EXPENSE",   "5022"),
+    "MISC_EXPENSE":         ("MISC_EXPENSE",        "5030"),
 }
 
 VALID_REFERENCE_TYPES = {
@@ -60,6 +64,7 @@ VALID_REFERENCE_TYPES = {
     "vendor_payment", "expense", "reversal",
     "shift_close", "period_close",
     "settlement", "gateway_fee",
+    "invoice", "invoice_void", "tax_payment",
 }
 
 

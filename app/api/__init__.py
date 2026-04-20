@@ -165,6 +165,12 @@ router.include_router(settlements.rules_router)
 router.include_router(ai_ingredients.router)
 router.include_router(invoice_import.router)
 router.include_router(erp.router)
+# ── Invoices / Expenses / Sub-Ledger / Tax ──
+from app.api.v1 import invoices, expenses, subledger_tax
+router.include_router(invoices.router)
+router.include_router(expenses.router)
+router.include_router(subledger_tax.subledger_router)
+router.include_router(subledger_tax.tax_router)
 # ── Food Images ──
 router.include_router(food_images.router)
 # ── Waitlist ──

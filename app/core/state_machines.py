@@ -97,24 +97,37 @@ def validate_order_transition(current: str, target: str) -> OrderStatus:
 # ═══════════════════════════════════════════════════════════
 
 class PaymentStatus(str, Enum):
-    PENDING = "pending"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    REFUNDED = "refunded"
+    INITIATED = "initiated"       # Payment intent created
+    PENDING = "pending"            # Sent to gateway, awaiting response
+    COMPLETED = "completed"        # Payment successful (a.k.a. "success")
+    FAILED = "failed"              # Gateway rejected / timed out
+    SETTLED = "settled"            # Funds settled by gateway into bank
+    REFUNDED = "refunded"          # Fully refunded
+    RECONCILED = "reconciled"      # Matched in bank statement
 
 
 PAYMENT_TRANSITIONS: dict[PaymentStatus, set[PaymentStatus]] = {
+    PaymentStatus.INITIATED: {
+        PaymentStatus.PENDING,
+        PaymentStatus.FAILED,    # Instant rejection
+    },
     PaymentStatus.PENDING: {
         PaymentStatus.COMPLETED,
         PaymentStatus.FAILED,
     },
     PaymentStatus.COMPLETED: {
+        PaymentStatus.SETTLED,
         PaymentStatus.REFUNDED,
     },
     PaymentStatus.FAILED: {
-        PaymentStatus.PENDING,  # Retry
+        PaymentStatus.PENDING,   # Retry
     },
-    PaymentStatus.REFUNDED: set(),  # Terminal
+    PaymentStatus.SETTLED: {
+        PaymentStatus.REFUNDED,
+        PaymentStatus.RECONCILED,
+    },
+    PaymentStatus.REFUNDED: set(),      # Terminal
+    PaymentStatus.RECONCILED: set(),    # Terminal
 }
 
 

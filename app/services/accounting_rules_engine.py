@@ -218,8 +218,19 @@ class AccountingRulesEngine:
         reference_type_override: Optional[str] = None,
         description_template: Optional[str] = None,
     ) -> dict:
-        """Create a new accounting rule."""
+        """Create a new accounting rule with safety validations."""
         restaurant_uuid = UUID(restaurant_id)
+
+        # SAFETY: debit and credit accounts must differ
+        if debit_account_code == credit_account_code:
+            raise ValidationError(
+                f"Debit and credit accounts cannot be the same ({debit_account_code}). "
+                "This would create a zero-effect journal entry."
+            )
+
+        # SAFETY: multiplier must be positive
+        if amount_multiplier <= 0:
+            raise ValidationError("amount_multiplier must be > 0")
 
         # Validate accounts exist
         async with get_connection() as conn:
@@ -233,6 +244,23 @@ class AccountingRulesEngine:
                     raise ValidationError(
                         f"Account code '{code}' not found in chart of accounts"
                     )
+
+            # SAFETY: detect duplicate priority for same event_type + conditions
+            existing_same_priority = await conn.fetchrow(
+                """SELECT id, rule_name FROM accounting_rules
+                   WHERE restaurant_id = $1 AND event_type = $2
+                     AND priority = $3 AND is_active = true""",
+                restaurant_uuid, event_type, priority,
+            )
+            if existing_same_priority:
+                logger.warning(
+                    "rule_priority_conflict",
+                    new_rule=rule_name,
+                    existing_rule=existing_same_priority["rule_name"],
+                    priority=priority,
+                    event_type=event_type,
+                )
+                # Warn but allow — first-inserted wins at same priority
 
         async with get_serializable_transaction() as conn:
             rule_id = await conn.fetchval(
