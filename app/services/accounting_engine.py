@@ -850,19 +850,26 @@ class AccountingEngine:
         self,
         restaurant_id: str,
         as_of_date: Optional[date] = None,
+        branch_id: Optional[str] = None,
     ) -> dict:
         """
         Trial Balance — SUM(debit) and SUM(credit) per account.
         Balanced books: total_debit == total_credit (always).
+        Optionally filtered by branch_id.
         """
         from uuid import UUID
         restaurant_uuid = UUID(restaurant_id)
         if not as_of_date:
             as_of_date = date.today()
 
+        branch_clause = ""
+        params: list = [restaurant_uuid, as_of_date]
+        if branch_id:
+            branch_clause = "AND je.branch_id = $3"
+            params.append(UUID(branch_id))
+
         async with get_connection() as conn:
-            rows = await conn.fetch(
-                """
+            rows = await conn.fetch(f"""
                 SELECT
                     coa.id,
                     coa.account_code,
@@ -875,13 +882,14 @@ class AccountingEngine:
                 LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id
                     AND je.entry_date <= $2
                     AND je.is_reversed = false
+                    {branch_clause}
                 WHERE coa.restaurant_id = $1
                   AND coa.is_active = true
                 GROUP BY coa.id, coa.account_code, coa.name, coa.account_type
                 HAVING COALESCE(SUM(jl.debit), 0) != 0 OR COALESCE(SUM(jl.credit), 0) != 0
                 ORDER BY coa.account_code
                 """,
-                restaurant_uuid, as_of_date,
+                *params,
             )
 
         total_debit = Decimal("0")
@@ -914,21 +922,27 @@ class AccountingEngine:
         self,
         restaurant_id: str,
         as_of_date: Optional[date] = None,
+        branch_id: Optional[str] = None,
     ) -> dict:
         """
         Balance Sheet — Assets = Liabilities + Equity.
 
         Computes net balance for every asset, liability, and equity account
-        as of the given date.
+        as of the given date. Optionally filtered by branch_id.
         """
         from uuid import UUID
         restaurant_uuid = UUID(restaurant_id)
         if not as_of_date:
             as_of_date = date.today()
 
+        branch_clause = ""
+        params: list = [restaurant_uuid, as_of_date]
+        if branch_id:
+            branch_clause = "AND je.branch_id = $3"
+            params.append(UUID(branch_id))
+
         async with get_connection() as conn:
-            rows = await conn.fetch(
-                """
+            rows = await conn.fetch(f"""
                 SELECT
                     coa.id,
                     coa.account_code,
@@ -941,6 +955,7 @@ class AccountingEngine:
                 LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id
                     AND je.entry_date <= $2
                     AND je.is_reversed = false
+                    {branch_clause}
                 WHERE coa.restaurant_id = $1
                   AND coa.is_active = true
                   AND coa.account_type IN ('asset', 'liability', 'equity')
@@ -948,12 +963,11 @@ class AccountingEngine:
                 HAVING COALESCE(SUM(jl.debit), 0) != 0 OR COALESCE(SUM(jl.credit), 0) != 0
                 ORDER BY coa.account_code
                 """,
-                restaurant_uuid, as_of_date,
+                *params,
             )
 
             # Also compute retained earnings (revenue - expenses) for balance sheet
-            retained = await conn.fetchrow(
-                """
+            retained = await conn.fetchrow(f"""
                 SELECT
                     COALESCE(SUM(jl.credit) FILTER (WHERE coa.account_type = 'revenue'), 0)
                   - COALESCE(SUM(jl.debit)  FILTER (WHERE coa.account_type = 'revenue'), 0)
@@ -963,11 +977,12 @@ class AccountingEngine:
                 FROM journal_lines jl
                 JOIN journal_entries je ON je.id = jl.journal_entry_id
                     AND je.entry_date <= $2 AND je.is_reversed = false
+                    {branch_clause}
                 JOIN chart_of_accounts coa ON coa.id = jl.account_id
                 WHERE je.restaurant_id = $1
                   AND coa.account_type IN ('revenue', 'expense')
                 """,
-                restaurant_uuid, as_of_date,
+                *params,
             )
 
         assets = []
@@ -1027,6 +1042,7 @@ class AccountingEngine:
         restaurant_id: str,
         from_date: Optional[date] = None,
         to_date: Optional[date] = None,
+        branch_id: Optional[str] = None,
     ) -> dict:
         """
         Income Statement (Profit & Loss) — derived ONLY from journal_lines.
@@ -1034,6 +1050,7 @@ class AccountingEngine:
         Revenue  = net credit on revenue accounts (credit - debit)
         Expenses = net debit on expense accounts  (debit - credit)
         Net Income = Revenue - Expenses
+        Optionally filtered by branch_id.
         """
         from uuid import UUID
         restaurant_uuid = UUID(restaurant_id)
@@ -1042,9 +1059,14 @@ class AccountingEngine:
         if not to_date:
             to_date = date.today()
 
+        branch_clause = ""
+        params: list = [restaurant_uuid, from_date, to_date]
+        if branch_id:
+            branch_clause = "AND je.branch_id = $4"
+            params.append(UUID(branch_id))
+
         async with get_connection() as conn:
-            rows = await conn.fetch(
-                """
+            rows = await conn.fetch(f"""
                 SELECT
                     coa.id,
                     coa.account_code,
@@ -1060,10 +1082,11 @@ class AccountingEngine:
                   AND je.is_reversed = false
                   AND coa.account_type IN ('revenue', 'expense')
                   AND coa.is_active = true
+                  {branch_clause}
                 GROUP BY coa.id, coa.account_code, coa.name, coa.account_type
                 ORDER BY coa.account_code
                 """,
-                restaurant_uuid, from_date, to_date,
+                *params,
             )
 
         revenue_accounts = []
