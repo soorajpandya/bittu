@@ -136,9 +136,21 @@ async def exchange_google_code(code: str) -> dict:
 
     logger.info("google_login", email=email, user_id=user_id)
 
-    # Initialize restaurant and primary branch for new/returning user
     if user_id:
-        await _initialize_restaurant_and_branch(user_id, email=email)
+        # Auto-link: accept any pending staff invites for this email
+        accepted = []
+        try:
+            from app.services.invite_service import invite_service
+            accepted = await invite_service.accept_pending_invites(user_id, email)
+            if accepted:
+                logger.info("staff_invites_auto_accepted", user_id=user_id, count=len(accepted))
+        except Exception as exc:
+            logger.warning("invite_auto_link_failed", user_id=user_id, error=str(exc))
+
+        # Initialize restaurant and primary branch for new/returning owner
+        # (skip if user was just linked as staff — they're not an owner)
+        if not accepted:
+            await _initialize_restaurant_and_branch(user_id, email=email)
 
     return data
 

@@ -276,20 +276,10 @@ class OrderService:
 
         logger.info("order_created", order_id=order_id, total=float(total_amount), source=source)
 
-        # Non-blocking accounting: order creation must never fail if accounting is unavailable.
-        try:
-            from app.services.accounting_service import AccountingService
-
-            acct_svc = AccountingService()
-            await acct_svc.record_order_sale_double_entry(
-                user_id=tenant["user_id"],
-                restaurant_id=user.restaurant_id,
-                order_id=order_id,
-                amount=float(total_amount),
-                payment_system_code="CASH_ACCOUNT",
-            )
-        except Exception:
-            logger.exception("order_accounting_post_failed", order_id=order_id)
+        # Accounting is handled by event handlers:
+        #   ORDER_CONFIRMED → COGS journal (via accounting_engine)
+        #   PAYMENT_COMPLETED → revenue journal (via accounting_engine)
+        # No direct accounting call here — avoids duplicate entries.
 
         return {
             "id": order_id,

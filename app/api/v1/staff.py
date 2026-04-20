@@ -1,11 +1,12 @@
 """Staff, Branch & RBAC endpoints."""
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 from app.core.auth import UserContext, get_current_user, require_permission
 from app.core.database import get_connection
 from app.services.staff_service import StaffService
+from app.services.invite_service import invite_service
 
 router = APIRouter(prefix="/staff", tags=["Staff"])
 _svc = StaffService()
@@ -206,3 +207,51 @@ async def deactivate_staff(
     user: UserContext = Depends(require_permission("staff.delete")),
 ):
     return await _svc.deactivate_branch_user(user=user, branch_user_id=staff_id)
+
+
+# ─── Staff invite endpoints ────────────────────────────────
+
+class CreateInviteIn(BaseModel):
+    branch_id: str
+    email: EmailStr
+    role: str = "staff"
+
+
+@router.post("/invites", status_code=201)
+async def create_invite(
+    body: CreateInviteIn,
+    user: UserContext = Depends(require_permission("staff.invites.create")),
+):
+    """Invite a staff member by email. They will be auto-linked on Google login."""
+    return await invite_service.create_invite(
+        owner_id=user.user_id,
+        branch_id=body.branch_id,
+        email=body.email,
+        role=body.role,
+    )
+
+
+@router.get("/invites")
+async def list_invites(
+    branch_id: Optional[str] = None,
+    status: Optional[str] = Query(None, pattern="^(pending|accepted|revoked|expired)$"),
+    user: UserContext = Depends(require_permission("staff.invites.read")),
+):
+    """List staff invites, optionally filtered by branch and status."""
+    return await invite_service.list_invites(
+        owner_id=user.user_id,
+        branch_id=branch_id,
+        status=status,
+    )
+
+
+@router.delete("/invites/{invite_id}")
+async def revoke_invite(
+    invite_id: str,
+    user: UserContext = Depends(require_permission("staff.invites.revoke")),
+):
+    """Revoke a pending invite."""
+    return await invite_service.revoke_invite(
+        owner_id=user.user_id,
+        invite_id=invite_id,
+    )

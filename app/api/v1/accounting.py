@@ -9,6 +9,7 @@ from app.core.database import get_connection
 from app.core.exceptions import ValidationError
 from app.core.logging import get_logger
 from app.services.accounting_service import AccountingService, get_account_by_code
+from app.services.accounting_engine import accounting_engine
 
 router = APIRouter(prefix="/accounting", tags=["Accounting"])
 accounts_router = APIRouter(prefix="/accounts", tags=["Chart of Accounts"])
@@ -95,11 +96,31 @@ async def record_expense(
     body: ExpenseCreate,
     user: UserContext = Depends(require_permission("accounting.write")),
 ):
-    """Manually record an expense."""
+    """Manually record an expense (double-entry via accounting engine)."""
     uid = user.owner_id if user.is_branch_user else user.user_id
-    return await _svc.record_expense(
+    restaurant_id = user.restaurant_id
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="restaurant_id required")
+
+    import uuid as _uuid
+
+    expense_id = body.reference_id or str(_uuid.uuid4())
+    try:
+        journal_id = await accounting_engine.record_expense(
+            restaurant_id=restaurant_id,
+            branch_id=user.branch_id,
+            expense_id=expense_id,
+            amount=body.amount,
+            description=body.description or body.category,
+            created_by=uid,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # Also write legacy row for backward compat
+    legacy_result = await _svc.record_expense(
         user_id=uid,
-        restaurant_id=user.restaurant_id,
+        restaurant_id=restaurant_id,
         branch_id=user.branch_id,
         amount=body.amount,
         category=body.category,
@@ -107,6 +128,8 @@ async def record_expense(
         reference_type=body.reference_type,
         reference_id=body.reference_id,
     )
+
+    return {**legacy_result, "journal_entry_id": journal_id}
 
 
 # ── Chart of Accounts ──────────────────────────────────────────────────────────
@@ -244,3 +267,77 @@ async def cashflow_report(
     if not to_date:
         to_date = date.today()
     return await _svc.get_cash_flow(uid, branch_id or user.branch_id, from_date, to_date)
+
+
+# ── Trial Balance ──────────────────────────────────────────────────────────────
+
+@reports_router.get("/trial-balance")
+async def trial_balance(
+    as_of_date: Optional[date] = Query(None),
+    user: UserContext = Depends(require_permission("accounting.report")),
+):
+    """
+    Trial Balance — every account's total debits and credits.
+    Total debits MUST equal total credits if books are balanced.
+    """
+    restaurant_id = user.restaurant_id
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="restaurant_id required")
+    try:
+        return await accounting_engine.get_trial_balance(
+            restaurant_id=restaurant_id,
+            as_of_date=as_of_date,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ── Balance Sheet ──────────────────────────────────────────────────────────────
+
+@reports_router.get("/balance-sheet")
+async def balance_sheet(
+    as_of_date: Optional[date] = Query(None),
+    user: UserContext = Depends(require_permission("accounting.report")),
+):
+    """
+    Balance Sheet — Assets = Liabilities + Equity.
+    Includes retained earnings (accumulated profit).
+    """
+    restaurant_id = user.restaurant_id
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="restaurant_id required")
+    try:
+        return await accounting_engine.get_balance_sheet(
+            restaurant_id=restaurant_id,
+            as_of_date=as_of_date,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ── Journal Entry Reversal ─────────────────────────────────────────────────────
+
+class ReversalRequest(BaseModel):
+    journal_entry_id: str
+    reason: str = ""
+
+
+@router.post("/reversals", status_code=201)
+async def reverse_journal_entry(
+    body: ReversalRequest,
+    user: UserContext = Depends(require_permission("accounting.write")),
+):
+    """
+    Reverse a journal entry. Creates a new entry with swapped debit/credit.
+    The original entry is marked as reversed.
+    """
+    uid = user.owner_id if user.is_branch_user else user.user_id
+    try:
+        reversal_id = await accounting_engine.reverse_entry(
+            journal_entry_id=body.journal_entry_id,
+            reason=body.reason,
+            created_by=uid,
+        )
+        return {"reversal_journal_entry_id": reversal_id}
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))

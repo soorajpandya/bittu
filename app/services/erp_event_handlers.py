@@ -340,22 +340,15 @@ async def _write_ledger_and_cogs(event: DomainEvent, order_id: str, order_items:
                     total_cogs, order_id,
                 )
 
-            # 4. Journal entry: DR COGS, CR Inventory
+            # 4. Journal entry: DR COGS, CR Inventory (via accounting engine)
             if total_cogs > 0 and restaurant_id:
-                await _create_journal_entry(
-                    conn,
+                from app.services.accounting_engine import accounting_engine
+                await accounting_engine.record_cogs(
                     restaurant_id=restaurant_id,
                     branch_id=branch_id,
-                    ref_type="order",
-                    ref_id=order_id,
-                    description=f"COGS for order {order_id}",
+                    order_id=order_id,
+                    amount=total_cogs,
                     created_by=user_id,
-                    lines=[
-                        {"account_code": "5001", "debit": round(total_cogs, 2), "credit": 0,
-                         "description": "Cost of goods sold"},
-                        {"account_code": "1004", "debit": 0, "credit": round(total_cogs, 2),
-                         "description": "Inventory consumed"},
-                    ],
                 )
 
         logger.info("erp_ledger_cogs_written", order_id=order_id, cogs=total_cogs)
@@ -437,23 +430,38 @@ async def _reverse_ledger_and_cogs(event: DomainEvent, order_id: str):
                 "UPDATE orders SET cost_of_goods_sold = 0 WHERE id = $1", order_id,
             )
 
-            # Reverse COGS journal: DR Inventory, CR COGS
+            # Reverse COGS journal via accounting engine
             if total_cogs_reversed > 0 and restaurant_id:
-                await _create_journal_entry(
-                    conn,
-                    restaurant_id=restaurant_id,
-                    branch_id=branch_id,
-                    ref_type="order_cancel",
-                    ref_id=order_id,
-                    description=f"COGS reversal for cancelled order {order_id}",
-                    created_by=user_id,
-                    lines=[
-                        {"account_code": "1004", "debit": round(total_cogs_reversed, 2), "credit": 0,
-                         "description": "Inventory restored"},
-                        {"account_code": "5001", "debit": 0, "credit": round(total_cogs_reversed, 2),
-                         "description": "COGS reversed"},
-                    ],
+                from app.services.accounting_engine import accounting_engine
+                # Find the original COGS journal entry and reverse it
+                je_row = await conn.fetchrow(
+                    "SELECT id FROM journal_entries WHERE restaurant_id = $1 "
+                    "AND reference_type = 'inventory_consumption' AND reference_id = $2 "
+                    "AND is_reversed = false LIMIT 1",
+                    restaurant_id, f"cogs_{order_id}",
                 )
+                if je_row:
+                    await accounting_engine.reverse_entry(
+                        journal_entry_id=str(je_row["id"]),
+                        reason=f"Order {order_id} cancelled",
+                        created_by=user_id,
+                    )
+                else:
+                    # Fallback: create explicit reversal journal
+                    await accounting_engine.create_journal_entry(
+                        reference_type="inventory_consumption",
+                        reference_id=f"cogs_rev_{order_id}",
+                        restaurant_id=restaurant_id,
+                        branch_id=branch_id,
+                        description=f"COGS reversal for cancelled order {order_id}",
+                        created_by=user_id,
+                        lines=[
+                            {"account": "INVENTORY_FOOD", "debit": round(total_cogs_reversed, 2), "credit": 0,
+                             "description": "Inventory restored"},
+                            {"account": "COGS_FOOD", "debit": 0, "credit": round(total_cogs_reversed, 2),
+                             "description": "COGS reversed"},
+                        ],
+                    )
 
         logger.info("erp_ledger_reversed", order_id=order_id, cogs_reversed=total_cogs_reversed)
     except Exception:
@@ -468,8 +476,8 @@ async def _reverse_ledger_and_cogs(event: DomainEvent, order_id: str):
 # ═══════════════════════════════════════════════════════════════════════
 
 async def _handle_payment_completed(event: DomainEvent):
-    """Insert revenue entry + double-entry journal on successful payment."""
-    from app.services.accounting_service import AccountingService
+    """Record revenue via double-entry accounting engine on successful payment."""
+    from app.services.accounting_engine import accounting_engine
 
     order_id = event.payload.get("order_id")
     amount = event.payload.get("amount", 0)
@@ -481,45 +489,26 @@ async def _handle_payment_completed(event: DomainEvent):
 
     t0 = _time.monotonic()
     try:
-        async with get_connection() as conn:
-            already_posted = await conn.fetchval(
-                """
-                SELECT 1
-                FROM accounting_entries
-                WHERE reference_type = 'order'
-                  AND reference_id = $1
-                  AND journal_entry_id IS NOT NULL
-                  AND entry_side IS NOT NULL
-                LIMIT 1
-                """,
-                order_id,
-            )
-            if already_posted:
-                elapsed = int((_time.monotonic() - t0) * 1000)
-                await _log_event(conn, event, "skipped", "order_already_accounted", elapsed)
-                logger.info("erp_payment_accounting_skipped", order_id=order_id, reason="order_already_accounted")
-                return
-
-            journal_enabled = await _is_flag_enabled(
-                conn, event.restaurant_id, "erp.auto_journal_entries",
-            )
-
-        # 1. Backward-compat single-entry
-        svc = AccountingService()
-        await svc.record_revenue(
-            user_id=event.user_id,
+        # Single path: accounting engine handles idempotency internally.
+        # No more dual single-entry + double-entry writes.
+        journal_id = await accounting_engine.record_payment(
             restaurant_id=event.restaurant_id,
             branch_id=event.branch_id,
+            payment_id=payment_id or order_id,
             order_id=order_id,
-            payment_id=payment_id,
             amount=float(amount),
             method=method,
+            created_by=event.user_id or "system",
         )
-        logger.info("erp_revenue_recorded", order_id=order_id, amount=amount)
 
-        # 2 + 3. Double-entry journal + GST (only if flag enabled)
-        if journal_enabled:
-            await _create_payment_journal(event, order_id, float(amount), method)
+        if journal_id:
+            logger.info("erp_payment_journal_created", order_id=order_id, amount=amount, journal_id=journal_id)
+        else:
+            logger.info("erp_payment_accounting_skipped", order_id=order_id, reason="zero_amount_or_missing_id")
+
+        # GST journal (taxes) — only if taxes apply
+        if event.restaurant_id:
+            await _create_payment_gst_entries(event, order_id, float(amount), method)
 
         elapsed = int((_time.monotonic() - t0) * 1000)
         async with get_connection() as conn:
@@ -529,20 +518,20 @@ async def _handle_payment_completed(event: DomainEvent):
         logger.exception("erp_revenue_record_failed", order_id=order_id)
 
 
-async def _create_payment_journal(
+async def _create_payment_gst_entries(
     event: DomainEvent, order_id: str, amount: float, method: str
 ):
-    """Create double-entry journal for payment with GST breakdown."""
+    """
+    Record GST liability entries for a payment, if the restaurant collects GST.
+    This supplements the main payment journal (DR Cash, CR Receivable) by
+    reclassifying part of revenue into tax payable accounts.
+    """
     restaurant_id = event.restaurant_id
-    branch_id = event.branch_id
-    user_id = event.user_id or ""
-
     if not restaurant_id:
         return
 
     try:
         async with get_connection() as conn:
-            # Fetch order tax details (if already computed at order time)
             tax_details = await conn.fetch(
                 "SELECT * FROM order_tax_details WHERE order_id = $1", order_id,
             )
@@ -552,55 +541,47 @@ async def _create_payment_journal(
             total_igst = sum(float(t["igst_amount"]) for t in tax_details) if tax_details else 0
             total_tax = total_cgst + total_sgst + total_igst
 
-            # If no order_tax_details yet, try to compute from order's tax_amount
             if total_tax == 0:
                 order = await conn.fetchrow(
-                    "SELECT tax_amount, subtotal FROM orders WHERE id = $1", order_id,
+                    "SELECT tax_amount FROM orders WHERE id = $1", order_id,
                 )
                 if order and order["tax_amount"]:
                     total_tax = float(order["tax_amount"])
-                    # Default: split 50/50 as CGST+SGST (intra-state assumption)
                     total_cgst = round(total_tax / 2, 2)
                     total_sgst = total_tax - total_cgst
 
-            revenue_amount = round(amount - total_tax, 2)
+            if total_tax <= 0:
+                return
 
-            # Determine debit account: Cash (1001) or Bank (1002)
-            cash_methods = {"cash", "cod"}
-            debit_account = "1001" if method.lower() in cash_methods else "1002"
-
-            # Build journal lines
+            # Reclassify: DR Food Sales (reduce revenue by tax portion), CR GST Payable
+            from app.services.accounting_engine import accounting_engine
             lines = [
-                {"account_code": debit_account, "debit": round(amount, 2), "credit": 0,
-                 "description": f"Payment via {method}"},
-                {"account_code": "4001", "debit": 0, "credit": round(revenue_amount, 2),
-                 "description": "Sales revenue"},
+                {"account": "FOOD_SALES", "debit": round(total_tax, 2), "credit": 0,
+                 "description": "Revenue reclassified to GST payable"},
             ]
-
             if total_cgst > 0:
-                lines.append({"account_code": "2002", "debit": 0, "credit": round(total_cgst, 2),
+                lines.append({"account": "CGST_PAYABLE", "debit": 0, "credit": round(total_cgst, 2),
                                "description": "CGST collected"})
             if total_sgst > 0:
-                lines.append({"account_code": "2003", "debit": 0, "credit": round(total_sgst, 2),
+                lines.append({"account": "SGST_PAYABLE", "debit": 0, "credit": round(total_sgst, 2),
                                "description": "SGST collected"})
             if total_igst > 0:
-                lines.append({"account_code": "2004", "debit": 0, "credit": round(total_igst, 2),
+                lines.append({"account": "IGST_PAYABLE", "debit": 0, "credit": round(total_igst, 2),
                                "description": "IGST collected"})
 
-            await _create_journal_entry(
-                conn,
+            await accounting_engine.create_journal_entry(
+                reference_type="payment",
+                reference_id=f"gst_{order_id}",
                 restaurant_id=restaurant_id,
-                branch_id=branch_id,
-                ref_type="payment",
-                ref_id=order_id,
-                description=f"Payment for order {order_id} via {method}",
-                created_by=user_id,
+                branch_id=event.branch_id,
+                description=f"GST reclassification for order {order_id}",
+                created_by=event.user_id or "system",
                 lines=lines,
             )
 
-        logger.info("erp_payment_journal_created", order_id=order_id, amount=amount)
+        logger.info("erp_gst_entries_created", order_id=order_id, total_tax=total_tax)
     except Exception:
-        logger.exception("erp_payment_journal_failed", order_id=order_id)
+        logger.exception("erp_gst_entries_failed", order_id=order_id)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -610,90 +591,32 @@ async def _create_payment_journal(
 # ═══════════════════════════════════════════════════════════════════════
 
 async def _handle_payment_refunded(event: DomainEvent):
-    """Insert refund entry + reverse journal on refund."""
-    from app.services.accounting_service import AccountingService
+    """Record refund via accounting engine + reverse original payment journal."""
+    from app.services.accounting_engine import accounting_engine
 
     order_id = event.payload.get("order_id")
     amount = event.payload.get("amount", 0)
     payment_id = event.payload.get("payment_id")
+    method = event.payload.get("method", "cash")
 
     if not order_id or not amount:
         return
 
     try:
-        # 1. Backward-compat single-entry
-        svc = AccountingService()
-        await svc.record_refund(
-            user_id=event.user_id,
+        # Single path: engine handles idempotency
+        journal_id = await accounting_engine.record_refund(
             restaurant_id=event.restaurant_id,
             branch_id=event.branch_id,
+            payment_id=payment_id or order_id,
             order_id=order_id,
-            payment_id=payment_id,
             amount=float(amount),
+            method=method,
+            created_by=event.user_id or "system",
         )
-        logger.info("erp_refund_recorded", order_id=order_id, amount=amount)
-
-        # 2. Reverse journal
-        await _create_refund_journal(event, order_id, float(amount))
+        logger.info("erp_refund_recorded", order_id=order_id, amount=amount, journal_id=journal_id)
 
     except Exception:
         logger.exception("erp_refund_record_failed", order_id=order_id)
-
-
-async def _create_refund_journal(event: DomainEvent, order_id: str, amount: float):
-    """Create reverse journal entry for refund."""
-    restaurant_id = event.restaurant_id
-    branch_id = event.branch_id
-    user_id = event.user_id or ""
-
-    if not restaurant_id:
-        return
-
-    try:
-        async with get_connection() as conn:
-            # Look up original tax breakdown
-            tax_details = await conn.fetch(
-                "SELECT * FROM order_tax_details WHERE order_id = $1", order_id,
-            )
-
-            total_cgst = sum(float(t["cgst_amount"]) for t in tax_details) if tax_details else 0
-            total_sgst = sum(float(t["sgst_amount"]) for t in tax_details) if tax_details else 0
-            total_igst = sum(float(t["igst_amount"]) for t in tax_details) if tax_details else 0
-            total_tax = total_cgst + total_sgst + total_igst
-            revenue_amount = round(amount - total_tax, 2)
-
-            # Reverse: DR Revenue + GST, CR Bank
-            lines = [
-                {"account_code": "4001", "debit": round(revenue_amount, 2), "credit": 0,
-                 "description": "Revenue reversed (refund)"},
-                {"account_code": "1002", "debit": 0, "credit": round(amount, 2),
-                 "description": "Refund disbursed"},
-            ]
-
-            if total_cgst > 0:
-                lines.append({"account_code": "2002", "debit": round(total_cgst, 2), "credit": 0,
-                               "description": "CGST reversed"})
-            if total_sgst > 0:
-                lines.append({"account_code": "2003", "debit": round(total_sgst, 2), "credit": 0,
-                               "description": "SGST reversed"})
-            if total_igst > 0:
-                lines.append({"account_code": "2004", "debit": round(total_igst, 2), "credit": 0,
-                               "description": "IGST reversed"})
-
-            await _create_journal_entry(
-                conn,
-                restaurant_id=restaurant_id,
-                branch_id=branch_id,
-                ref_type="refund",
-                ref_id=order_id,
-                description=f"Refund for order {order_id}",
-                created_by=user_id,
-                lines=lines,
-            )
-
-        logger.info("erp_refund_journal_created", order_id=order_id, amount=amount)
-    except Exception:
-        logger.exception("erp_refund_journal_failed", order_id=order_id)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -764,20 +687,13 @@ async def _handle_grn_verified(event: DomainEvent):
 
             # Journal: DR Inventory (1004), CR Accounts Payable (2001)
             if total_amount > 0:
-                await _create_journal_entry(
-                    conn,
+                from app.services.accounting_engine import accounting_engine
+                await accounting_engine.record_grn(
                     restaurant_id=restaurant_id,
                     branch_id=branch_id,
-                    ref_type="grn",
-                    ref_id=str(grn_id),
-                    description=f"Goods received (GRN {grn_id})",
+                    grn_id=str(grn_id),
+                    amount=total_amount,
                     created_by=user_id,
-                    lines=[
-                        {"account_code": "1004", "debit": round(total_amount, 2), "credit": 0,
-                         "description": "Inventory purchased"},
-                        {"account_code": "2001", "debit": 0, "credit": round(total_amount, 2),
-                         "description": "Accounts payable"},
-                    ],
                 )
 
         logger.info("erp_grn_processed", grn_id=grn_id, total=total_amount)
@@ -807,11 +723,16 @@ def register_erp_handlers():
 # ═══════════════════════════════════════════════════════════════════════
 
 async def _handle_vendor_payment(event: DomainEvent):
-    """Create journal entry for vendor payment."""
+    """Create journal entry for vendor payment via accounting engine."""
+    from app.services.accounting_engine import accounting_engine
+
     payment_id = event.payload.get("payment_id")
+    vendor_id = event.payload.get("vendor_id", "")
+    amount = event.payload.get("amount", 0)
+    method = event.payload.get("method", "cash")
     restaurant_id = event.restaurant_id
 
-    if not payment_id or not restaurant_id:
+    if not payment_id or not restaurant_id or not amount:
         return
 
     t0 = _time.monotonic()
@@ -820,16 +741,21 @@ async def _handle_vendor_payment(event: DomainEvent):
             if not await _is_flag_enabled(conn, restaurant_id, "erp.auto_journal_entries"):
                 return
 
-            je_id = await conn.fetchval(
-                "SELECT fn_vendor_payment_journal($1, $2, $3, $4)",
-                payment_id, restaurant_id, event.branch_id,
-                event.user_id or "system",
-            )
-            logger.info(
-                "erp_vendor_payment_journal",
-                payment_id=payment_id, journal_id=je_id,
-            )
-            elapsed = int((_time.monotonic() - t0) * 1000)
+        journal_id = await accounting_engine.record_vendor_payment(
+            restaurant_id=restaurant_id,
+            branch_id=event.branch_id,
+            payment_id=payment_id,
+            vendor_id=vendor_id,
+            amount=float(amount),
+            method=method,
+            created_by=event.user_id or "system",
+        )
+        logger.info(
+            "erp_vendor_payment_journal",
+            payment_id=payment_id, journal_id=journal_id,
+        )
+        elapsed = int((_time.monotonic() - t0) * 1000)
+        async with get_connection() as conn:
             await _log_event(conn, event, "completed", elapsed_ms=elapsed)
     except Exception:
         logger.exception("erp_vendor_payment_failed", payment_id=payment_id)
