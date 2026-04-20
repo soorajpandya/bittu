@@ -77,7 +77,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_ar_unique_name
 CREATE TABLE IF NOT EXISTS pg_settlements (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     restaurant_id   UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
-    branch_id       UUID REFERENCES branches(id),
+    branch_id       UUID REFERENCES sub_branches(id),
 
     -- Gateway info
     gateway         VARCHAR(50) NOT NULL,  -- 'razorpay', 'cashfree', 'phonepe'
