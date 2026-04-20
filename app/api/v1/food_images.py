@@ -8,7 +8,7 @@ GET  /food-images/{name}      — single lookup by normalized name
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.services.food_image_service import FoodImageService, MAX_BATCH_SIZE
 
 router = APIRouter(prefix="/food-images", tags=["Food Images"])
@@ -30,7 +30,7 @@ class BulkLookupRequest(BaseModel):
 @router.post("/generate")
 async def generate_food_images(
     body: GenerateRequest,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.write")),
 ):
     """
     Batch generate food images. Cached items return instantly.
@@ -49,7 +49,7 @@ async def generate_food_images(
 @router.post("")
 async def bulk_lookup_food_images(
     body: BulkLookupRequest,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "staff")),
+    user: UserContext = Depends(require_permission("menu.read")),
 ):
     """
     Bulk lookup existing food images by normalized names.
@@ -65,7 +65,7 @@ async def bulk_lookup_food_images(
 @router.get("/{name}")
 async def get_food_image(
     name: str,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "staff")),
+    user: UserContext = Depends(require_permission("menu.read")),
 ):
     """
     Single lookup by normalized name.

@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.services.customer_address_service import CustomerAddressService
 
 router = APIRouter(prefix="/customer-addresses", tags=["Customer Addresses"])
@@ -35,7 +35,7 @@ class AddressUpdate(BaseModel):
 @router.get("/{customer_id}")
 async def list_addresses(
     customer_id: int,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier")),
+    user: UserContext = Depends(require_permission("customer.read")),
 ):
     return await _svc.list_addresses(user, customer_id)
 
@@ -44,7 +44,7 @@ async def list_addresses(
 async def create_address(
     customer_id: int,
     body: AddressCreate,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier")),
+    user: UserContext = Depends(require_permission("customer.write")),
 ):
     return await _svc.create_address(user, customer_id, body.model_dump())
 
@@ -53,7 +53,7 @@ async def create_address(
 async def update_address(
     address_id: int,
     body: AddressUpdate,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier")),
+    user: UserContext = Depends(require_permission("customer.write")),
 ):
     return await _svc.update_address(user, address_id, body.model_dump(exclude_unset=True))
 
@@ -61,6 +61,6 @@ async def update_address(
 @router.delete("/address/{address_id}")
 async def delete_address(
     address_id: int,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("customer.write")),
 ):
     return await _svc.delete_address(user, address_id)

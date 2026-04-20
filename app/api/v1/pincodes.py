@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.services.pincode_service import PincodeService
 
 router = APIRouter(prefix="/pincodes", tags=["Deliverable Pincodes"])
@@ -19,7 +19,7 @@ class PincodeCreate(BaseModel):
 
 @router.get("")
 async def list_pincodes(
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("delivery.read")),
 ):
     return await _svc.list_pincodes(user)
 
@@ -27,7 +27,7 @@ async def list_pincodes(
 @router.post("", status_code=201)
 async def create_pincode(
     body: PincodeCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("delivery.write")),
 ):
     return await _svc.create_pincode(user, body.model_dump())
 
@@ -35,6 +35,6 @@ async def create_pincode(
 @router.delete("/{pincode_id}")
 async def delete_pincode(
     pincode_id: int,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("delivery.delete")),
 ):
     return await _svc.delete_pincode(user, pincode_id)

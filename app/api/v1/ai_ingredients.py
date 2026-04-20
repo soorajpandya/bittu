@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.services.ai_ingredient_service import AIIngredientService
 
 router = APIRouter(prefix="/ai-ingredients", tags=["AI Ingredients"])
@@ -21,7 +21,7 @@ class AutoLinkRequest(BaseModel):
 @router.post("/suggest")
 async def suggest_ingredients(
     body: SuggestRequest,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.write")),
 ):
     """AI-powered ingredient suggestions for a dish name (does not save)."""
     return await _svc.suggest_ingredients(body.item_name)
@@ -30,7 +30,7 @@ async def suggest_ingredients(
 @router.post("/auto-link", status_code=201)
 async def auto_link_ingredients(
     body: AutoLinkRequest,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.write")),
 ):
     """AI-suggest ingredients, match/create raw materials, link to item."""
     uid = user.owner_id if user.is_branch_user else user.user_id

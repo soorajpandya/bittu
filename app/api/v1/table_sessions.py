@@ -2,7 +2,7 @@
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, get_current_user
 from app.core.database import get_connection
 from app.core.logging import get_logger
 
@@ -15,7 +15,7 @@ async def list_table_sessions(
     table_ids: Optional[str] = Query(None, description="Comma-separated table UUIDs"),
     is_active: Optional[bool] = Query(None),
     limit: int = Query(50, ge=1, le=200),
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "chef", "waiter", "staff")),
+    user: UserContext = Depends(get_current_user),
 ):
     """List table sessions, optionally filtered by table IDs and active status."""
     try:

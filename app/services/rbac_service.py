@@ -50,6 +50,32 @@ class RBACService:
                 "billing.read": {},
                 # Cash Transactions
                 "cash_transaction.read": {}, "cash_transaction.create": {}, "cash_transaction.delete": {},
+                # Menu
+                "menu.read": {}, "menu.write": {}, "menu.delete": {},
+                # Analytics
+                "analytics.read": {},
+                # Waitlist
+                "waitlist.read": {}, "waitlist.manage": {}, "waitlist.admin": {},
+                # Dinein
+                "dinein.manage": {},
+                # Customers
+                "customer.read": {}, "customer.write": {}, "customer.delete": {},
+                # Promotions
+                "promotion.read": {}, "promotion.write": {}, "promotion.delete": {},
+                # Due Payments
+                "due_payment.read": {}, "due_payment.write": {}, "due_payment.delete": {},
+                # Feedback
+                "feedback.read": {}, "feedback.write": {}, "feedback.delete": {},
+                # Settings
+                "settings.read": {}, "settings.admin": {},
+                # Purchase Orders
+                "purchase_order.read": {}, "purchase_order.write": {}, "purchase_order.delete": {},
+                # Audit
+                "audit.read": {},
+                # Delivery (pincodes)
+                "delivery.read": {}, "delivery.write": {}, "delivery.delete": {},
+                # Favourites
+                "favourites.manage": {},
             },
             "manager": {
                 "order.create": {}, "order.edit": {}, "order.cancel": {}, "order.read": {},
@@ -68,6 +94,30 @@ class RBACService:
                 "erp.read": {}, "erp.write": {}, "erp.shifts.read": {}, "erp.shifts.manage": {},
                 # Cash Transactions
                 "cash_transaction.read": {}, "cash_transaction.create": {}, "cash_transaction.delete": {},
+                # Menu
+                "menu.read": {}, "menu.write": {},
+                # Analytics
+                "analytics.read": {},
+                # Waitlist
+                "waitlist.read": {}, "waitlist.manage": {}, "waitlist.admin": {},
+                # Dinein
+                "dinein.manage": {},
+                # Customers
+                "customer.read": {}, "customer.write": {},
+                # Promotions
+                "promotion.read": {}, "promotion.write": {},
+                # Due Payments
+                "due_payment.read": {}, "due_payment.write": {}, "due_payment.delete": {},
+                # Feedback
+                "feedback.read": {}, "feedback.write": {},
+                # Settings
+                "settings.read": {},
+                # Purchase Orders
+                "purchase_order.read": {}, "purchase_order.write": {},
+                # Delivery
+                "delivery.read": {}, "delivery.write": {},
+                # Favourites
+                "favourites.manage": {},
             },
             "cashier": {
                 "order.read": {}, "order.edit": {}, "orders.read": {}, "orders.update": {},
@@ -77,15 +127,39 @@ class RBACService:
                 # ERP shifts & Cash Transactions
                 "erp.shifts.read": {}, "erp.shifts.manage": {},
                 "cash_transaction.read": {}, "cash_transaction.create": {},
+                # Menu (read-only)
+                "menu.read": {},
+                # Waitlist
+                "waitlist.read": {}, "waitlist.manage": {},
+                # Customers
+                "customer.read": {}, "customer.write": {},
+                # Due Payments
+                "due_payment.read": {}, "due_payment.write": {},
+                # Feedback
+                "feedback.write": {},
+                # Favourites
+                "favourites.manage": {},
             },
             "waiter": {
                 "order.create": {}, "order.read": {}, "orders.create": {}, "orders.read": {},
                 "table.read": {}, "table.start": {}, "table.close": {}, "table.manage": {}, "tables.manage": {},
                 "kitchen.read": {},
+                # Waitlist
+                "waitlist.read": {}, "waitlist.manage": {},
+                # Dinein
+                "dinein.manage": {},
+                # Feedback
+                "feedback.write": {},
+                # Favourites
+                "favourites.manage": {},
             },
             "chef": {"order.read": {}, "orders.read": {}, "kitchen.read": {}, "kitchen.update": {}, "kitchen_station.read": {}},
             "kitchen": {"order.read": {}, "orders.read": {}, "kitchen.read": {}, "kitchen.update": {}, "kitchen_station.read": {}},
-            "staff": {"order.read": {}, "orders.read": {}, "table.read": {}, "kitchen.read": {}},
+            "staff": {
+                "order.read": {}, "orders.read": {}, "table.read": {}, "kitchen.read": {},
+                # Waitlist (read)
+                "waitlist.read": {},
+            },
         }
 
     def _norm(self, permission_key: str) -> str:

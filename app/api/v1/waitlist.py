@@ -21,7 +21,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.services.waitlist_service import WaitlistService
 
 router = APIRouter(prefix="/waitlist", tags=["Waitlist"])
@@ -63,7 +63,7 @@ class NotifyNextRequest(BaseModel):
 @router.post("")
 async def add_to_waitlist(
     body: AddEntryRequest,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter", "staff")),
+    user: UserContext = Depends(require_permission("waitlist.read")),
 ):
     """Add a customer to the waitlist."""
     return await _svc.add_entry(
@@ -81,7 +81,7 @@ async def get_queue(
     status: Optional[str] = Query(None, pattern=r"^(waiting|notified|seated|skipped|cancelled)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter", "staff")),
+    user: UserContext = Depends(require_permission("waitlist.read")),
 ):
     """Get current waitlist queue."""
     return await _svc.get_queue(user, status=status, limit=limit, offset=offset)
@@ -89,7 +89,7 @@ async def get_queue(
 
 @router.get("/stats")
 async def get_stats(
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("waitlist.admin")),
 ):
     """Today's waitlist statistics."""
     return await _svc.get_stats(user)
@@ -101,7 +101,7 @@ async def get_history(
     offset: int = Query(0, ge=0),
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("waitlist.admin")),
 ):
     """Get waitlist history."""
     return await _svc.get_history(user, limit=limit, offset=offset,
@@ -111,7 +111,7 @@ async def get_history(
 @router.post("/notify-next")
 async def notify_next(
     body: NotifyNextRequest = NotifyNextRequest(),
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter")),
+    user: UserContext = Depends(require_permission("waitlist.manage")),
 ):
     """Find best-fit customer for available table and notify them."""
     result = await _svc.notify_next(user, table_id=body.table_id)
@@ -122,7 +122,7 @@ async def notify_next(
 
 @router.post("/expire-check")
 async def expire_check(
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter", "staff")),
+    user: UserContext = Depends(require_permission("waitlist.read")),
 ):
     """Check and expire overdue notified entries."""
     return {"expired": await _svc.expire_overdue(user)}
@@ -131,7 +131,7 @@ async def expire_check(
 @router.post("/{entry_id}/seat")
 async def seat_customer(
     entry_id: UUID,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter")),
+    user: UserContext = Depends(require_permission("waitlist.manage")),
 ):
     """Seat a waitlisted customer."""
     return await _svc.seat_customer(user, entry_id)
@@ -141,7 +141,7 @@ async def seat_customer(
 async def skip_customer(
     entry_id: UUID,
     reason: str = Query("no_show"),
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter")),
+    user: UserContext = Depends(require_permission("waitlist.manage")),
 ):
     """Skip a waitlisted customer (no-show or manual)."""
     return await _svc.skip_customer(user, entry_id, reason=reason)
@@ -150,7 +150,7 @@ async def skip_customer(
 @router.patch("/{entry_id}/cancel")
 async def cancel_entry(
     entry_id: UUID,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter", "staff")),
+    user: UserContext = Depends(require_permission("waitlist.read")),
 ):
     """Cancel a waitlist entry."""
     return await _svc.cancel_entry(user, entry_id)
@@ -159,7 +159,7 @@ async def cancel_entry(
 @router.put("/reorder")
 async def reorder_queue(
     body: ReorderRequest,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("waitlist.admin")),
 ):
     """Admin reorder the waitlist queue."""
     return await _svc.reorder(user, body.ordered_ids)
@@ -167,7 +167,7 @@ async def reorder_queue(
 
 @router.get("/settings")
 async def get_settings(
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("waitlist.admin")),
 ):
     """Get waitlist settings."""
     return await _svc.get_settings(user)
@@ -176,7 +176,7 @@ async def get_settings(
 @router.put("/settings")
 async def update_settings(
     body: SettingsUpdate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("waitlist.admin")),
 ):
     """Update waitlist settings."""
     return await _svc.update_settings(user, body.model_dump(exclude_none=True))

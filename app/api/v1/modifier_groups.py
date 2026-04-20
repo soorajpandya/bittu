@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.services.modifier_service import ModifierService
 
 router = APIRouter(prefix="/modifier-groups", tags=["Modifier Groups"])
@@ -39,7 +39,7 @@ class OptionUpdate(BaseModel):
 
 @router.get("")
 async def list_groups(
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.read")),
 ):
     return await _svc.list_groups(user)
 
@@ -47,7 +47,7 @@ async def list_groups(
 @router.get("/{group_id}")
 async def get_group(
     group_id: int,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.read")),
 ):
     return await _svc.get_group(user, group_id)
 
@@ -55,7 +55,7 @@ async def get_group(
 @router.post("", status_code=201)
 async def create_group(
     body: GroupCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.write")),
 ):
     data = body.model_dump()
     data["options"] = [o.model_dump() for o in body.options] if body.options else []
@@ -66,7 +66,7 @@ async def create_group(
 async def update_group(
     group_id: int,
     body: GroupUpdate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.write")),
 ):
     return await _svc.update_group(user, group_id, body.model_dump(exclude_unset=True))
 
@@ -74,7 +74,7 @@ async def update_group(
 @router.delete("/{group_id}")
 async def delete_group(
     group_id: int,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("menu.delete")),
 ):
     return await _svc.delete_group(user, group_id)
 
@@ -83,7 +83,7 @@ async def delete_group(
 async def add_option(
     group_id: int,
     body: OptionIn,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.write")),
 ):
     return await _svc.add_option(user, group_id, body.model_dump())
 
@@ -92,7 +92,7 @@ async def add_option(
 async def update_option(
     option_id: int,
     body: OptionUpdate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.write")),
 ):
     return await _svc.update_option(user, option_id, body.model_dump(exclude_unset=True))
 
@@ -100,6 +100,6 @@ async def update_option(
 @router.delete("/options/{option_id}")
 async def delete_option(
     option_id: int,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("menu.delete")),
 ):
     return await _svc.delete_option(user, option_id)

@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.services.category_service import CategoryService
 
 router = APIRouter(prefix="/categories", tags=["Categories"])
@@ -31,7 +31,7 @@ class CategoryUpdate(BaseModel):
 @router.get("")
 async def list_categories(
     active_only: bool = False,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier")),
+    user: UserContext = Depends(require_permission("menu.read")),
 ):
     return await _svc.list_categories(user, active_only=active_only)
 
@@ -39,7 +39,7 @@ async def list_categories(
 @router.get("/{category_id}")
 async def get_category(
     category_id: int,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.write")),
 ):
     return await _svc.get_category(user, category_id)
 
@@ -47,7 +47,7 @@ async def get_category(
 @router.post("", status_code=201)
 async def create_category(
     body: CategoryCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.write")),
 ):
     return await _svc.create_category(user, body.model_dump())
 
@@ -56,7 +56,7 @@ async def create_category(
 async def update_category(
     category_id: int,
     body: CategoryUpdate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.write")),
 ):
     return await _svc.update_category(user, category_id, body.model_dump(exclude_unset=True))
 
@@ -64,6 +64,6 @@ async def update_category(
 @router.delete("/{category_id}")
 async def delete_category(
     category_id: int,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("menu.delete")),
 ):
     return await _svc.delete_category(user, category_id)

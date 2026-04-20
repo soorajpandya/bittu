@@ -2,7 +2,7 @@
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, get_current_user
 from app.core.database import get_connection
 from app.core.logging import get_logger
 
@@ -18,7 +18,7 @@ async def list_table_events(
     limit: int = Query(20, ge=1, le=100),
     order_by: str = Query("created_at"),
     ascending: bool = Query(False),
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "chef", "waiter", "staff")),
+    user: UserContext = Depends(get_current_user),
 ):
     """List table events from the table_events table."""
     try:

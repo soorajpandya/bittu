@@ -4,7 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.services.coupon_service import CouponService
 
 router = APIRouter(prefix="/coupons", tags=["Coupons"])
@@ -42,7 +42,7 @@ class CouponUpdate(BaseModel):
 @router.get("")
 async def list_coupons(
     active_only: bool = False,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("promotion.read")),
 ):
     return await _svc.list_coupons(user, active_only=active_only)
 
@@ -50,7 +50,7 @@ async def list_coupons(
 @router.get("/{coupon_id}")
 async def get_coupon(
     coupon_id: int,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("promotion.read")),
 ):
     return await _svc.get_coupon(user, coupon_id)
 
@@ -58,7 +58,7 @@ async def get_coupon(
 @router.get("/{coupon_id}/usage")
 async def get_coupon_usage(
     coupon_id: int,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("promotion.read")),
 ):
     return await _svc.get_coupon_usage(user, coupon_id)
 
@@ -66,7 +66,7 @@ async def get_coupon_usage(
 @router.post("", status_code=201)
 async def create_coupon(
     body: CouponCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("promotion.write")),
 ):
     return await _svc.create_coupon(user, body.model_dump())
 
@@ -75,7 +75,7 @@ async def create_coupon(
 async def update_coupon(
     coupon_id: int,
     body: CouponUpdate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("promotion.write")),
 ):
     return await _svc.update_coupon(user, coupon_id, body.model_dump(exclude_unset=True))
 
@@ -83,6 +83,6 @@ async def update_coupon(
 @router.delete("/{coupon_id}")
 async def delete_coupon(
     coupon_id: int,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("promotion.delete")),
 ):
     return await _svc.delete_coupon(user, coupon_id)

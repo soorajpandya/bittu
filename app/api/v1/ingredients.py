@@ -2,7 +2,7 @@
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, get_current_user
 from app.core.database import get_connection
 from app.core.logging import get_logger
 
@@ -12,7 +12,7 @@ logger = get_logger(__name__)
 
 @router.get("")
 async def list_ingredients(
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "chef", "waiter", "staff")),
+    user: UserContext = Depends(get_current_user),
 ):
     """List all ingredients for the current user's restaurant."""
     try:

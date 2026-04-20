@@ -4,7 +4,7 @@ from datetime import date, time
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.services.purchase_order_service import PurchaseOrderService
 
 router = APIRouter(prefix="/purchase-orders", tags=["Purchase Orders"])
@@ -56,7 +56,7 @@ async def list_orders(
     source_type: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("purchase_order.read")),
 ):
     try:
         return await _svc.list_orders(
@@ -70,7 +70,7 @@ async def list_orders(
 @router.get("/{po_id}")
 async def get_order(
     po_id: int,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("purchase_order.read")),
 ):
     return await _svc.get_order(user, po_id)
 
@@ -78,7 +78,7 @@ async def get_order(
 @router.post("", status_code=201)
 async def create_order(
     body: POCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("purchase_order.write")),
 ):
     data = body.model_dump()
     data["items"] = [i.model_dump() for i in body.items] if body.items else []
@@ -89,7 +89,7 @@ async def create_order(
 async def update_order(
     po_id: int,
     body: POUpdate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("purchase_order.write")),
 ):
     data = body.model_dump(exclude_unset=True)
     if "items" in data and body.items is not None:
@@ -100,6 +100,6 @@ async def update_order(
 @router.delete("/{po_id}")
 async def delete_order(
     po_id: int,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("purchase_order.delete")),
 ):
     return await _svc.delete_order(user, po_id)

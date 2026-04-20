@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.services.combo_service import ComboService
 
 router = APIRouter(prefix="/combos", tags=["Combos"])
@@ -36,14 +36,14 @@ class ComboUpdate(BaseModel):
 @router.get("")
 async def list_combos(
     active_only: bool = False,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier")),
+    user: UserContext = Depends(require_permission("menu.read")),
 ):
     return await _svc.list_combos(user, active_only=active_only)
 
 
 @router.get("/items")
 async def list_combo_items(
-    user: UserContext = Depends(require_role("owner", "manager", "cashier")),
+    user: UserContext = Depends(require_permission("menu.read")),
 ):
     """List all combo-item mappings across all combos."""
     from app.core.database import get_connection
@@ -69,7 +69,7 @@ async def list_combo_items(
 @router.get("/{combo_id}")
 async def get_combo(
     combo_id: int,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier")),
+    user: UserContext = Depends(require_permission("menu.read")),
 ):
     return await _svc.get_combo(user, combo_id)
 
@@ -77,7 +77,7 @@ async def get_combo(
 @router.post("", status_code=201)
 async def create_combo(
     body: ComboCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.write")),
 ):
     data = body.model_dump()
     data["items"] = [i.model_dump() for i in body.items] if body.items else []
@@ -88,7 +88,7 @@ async def create_combo(
 async def update_combo(
     combo_id: int,
     body: ComboUpdate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.write")),
 ):
     data = body.model_dump(exclude_unset=True)
     if "items" in data and data["items"] is not None:
@@ -99,6 +99,6 @@ async def update_combo(
 @router.delete("/{combo_id}")
 async def delete_combo(
     combo_id: int,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("menu.delete")),
 ):
     return await _svc.delete_combo(user, combo_id)

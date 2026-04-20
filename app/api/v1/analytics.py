@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, get_current_user, require_permission
 from app.core.database import get_connection
 from app.core.logging import get_logger
 from app.services.analytics_service import AnalyticsService
@@ -42,7 +42,7 @@ async def _resolve_branch(conn, owner_id: str, branch_id: Optional[str], user_br
 @router.get("/dashboard-counts")
 async def dashboard_counts(
     branch_id: Optional[str] = Query(None),
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "chef", "waiter", "staff")),
+    user: UserContext = Depends(get_current_user),
 ):
     """Return quick dashboard counts (orders, revenue, etc.) for today."""
     try:
@@ -76,7 +76,7 @@ async def dashboard_counts(
 async def daily_analytics(
     target_date: date = Query(default=None, alias="date"),
     branch_id: Optional[str] = Query(None),
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "chef", "waiter", "staff")),
+    user: UserContext = Depends(get_current_user),
 ):
     """Return daily analytics for a specific date."""
     if target_date is None:
@@ -128,7 +128,7 @@ async def dashboard(
     branch_id: str,
     start_date: date = Query(default_factory=lambda: date.today() - timedelta(days=7)),
     end_date: date = Query(default_factory=date.today),
-    user: UserContext = Depends(require_role("manager")),
+    user: UserContext = Depends(require_permission("analytics.read")),
 ):
     return await _svc.get_dashboard(
         user=user,
@@ -145,7 +145,7 @@ async def compare_periods(
     current_end: date = Query(...),
     previous_start: date = Query(...),
     previous_end: date = Query(...),
-    user: UserContext = Depends(require_role("manager")),
+    user: UserContext = Depends(require_permission("analytics.read")),
 ):
     return await _svc.compare_periods(
         branch_id=branch_id,
@@ -160,7 +160,7 @@ async def compare_periods(
 async def hourly_heatmap(
     branch_id: str,
     target_date: date = Query(default_factory=date.today),
-    user: UserContext = Depends(require_role("manager")),
+    user: UserContext = Depends(require_permission("analytics.read")),
 ):
     return await _svc.get_hourly_heatmap(branch_id=branch_id, target_date=target_date)
 
@@ -176,7 +176,7 @@ class FunnelEventIn(BaseModel):
 @router.post("/funnel")
 async def track_funnel(
     body: FunnelEventIn = FunnelEventIn(),
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "chef", "waiter", "staff")),
+    user: UserContext = Depends(get_current_user),
 ):
     """Track a user funnel event (onboarding, feature adoption, etc.)."""
     return await _svc.track_funnel_event(

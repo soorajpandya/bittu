@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.services.item_customization_service import ItemVariantService
 
 router = APIRouter(prefix="/item-variants", tags=["Item Variants"])
@@ -28,7 +28,7 @@ class VariantUpdate(BaseModel):
 @router.get("")
 async def list_variants(
     item_id: Optional[int] = None,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.read")),
 ):
     return await _svc.list_variants(user, item_id=item_id)
 
@@ -36,7 +36,7 @@ async def list_variants(
 @router.post("", status_code=201)
 async def create_variant(
     body: VariantCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.write")),
 ):
     return await _svc.create_variant(user, body.model_dump())
 
@@ -45,7 +45,7 @@ async def create_variant(
 async def update_variant(
     variant_id: int,
     body: VariantUpdate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.write")),
 ):
     return await _svc.update_variant(user, variant_id, body.model_dump(exclude_unset=True))
 
@@ -53,6 +53,6 @@ async def update_variant(
 @router.delete("/{variant_id}")
 async def delete_variant(
     variant_id: int,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("menu.delete")),
 ):
     return await _svc.delete_variant(user, variant_id)

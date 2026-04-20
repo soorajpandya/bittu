@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, get_current_user, require_permission
 from app.core.logging import get_logger
 from app.services.dinein_session_service import DineInSessionService
 
@@ -230,7 +230,7 @@ async def close_session(body: CloseSessionIn):
 
 @router.get("/admin/kitchen-view")
 async def kitchen_table_view(
-    user: UserContext = Depends(require_role("owner", "manager", "chef", "waiter", "staff")),
+    user: UserContext = Depends(get_current_user),
 ):
     """Kitchen display: orders grouped by table, all sessions visible."""
     owner_id = user.owner_id if user.is_branch_user else user.user_id
@@ -243,7 +243,7 @@ async def kitchen_table_view(
 @router.get("/sessions/{session_id}/bill")
 async def get_session_bill(
     session_id: str,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter", "staff")),
+    user: UserContext = Depends(get_current_user),
 ):
     """Get complete bill snapshot for a table session."""
     return await _svc.get_session_bill(session_id=session_id)
@@ -253,7 +253,7 @@ async def get_session_bill(
 async def split_session_bill(
     session_id: str,
     body: SplitBillIn,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter", "staff")),
+    user: UserContext = Depends(get_current_user),
 ):
     """Generate split bill allocations (equal/by_item/by_user)."""
     return await _svc.split_bill(
@@ -269,7 +269,7 @@ async def split_session_bill(
 async def record_session_payment(
     session_id: str,
     body: SessionPaymentIn,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter", "staff")),
+    user: UserContext = Depends(get_current_user),
 ):
     """Record a partial/full payment for session settlement."""
     actor = user.owner_id if user.is_branch_user else user.user_id
@@ -287,7 +287,7 @@ async def record_session_payment(
 @router.post("/sessions/{session_id}/paid-vacate")
 async def paid_vacate_session(
     session_id: str,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier", "waiter")),
+    user: UserContext = Depends(require_permission("dinein.manage")),
 ):
     """Close session and free table after full payment validation."""
     actor = user.owner_id if user.is_branch_user else user.user_id

@@ -3,7 +3,7 @@ from typing import Optional, Any
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.services.restaurant_settings_service import RestaurantSettingsService
 
 router = APIRouter(prefix="/restaurant-settings", tags=["Restaurant Settings"])
@@ -30,7 +30,7 @@ class SettingsUpdate(BaseModel):
 
 @router.get("")
 async def get_settings(
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("settings.read")),
 ):
     return await _svc.get_settings(user)
 
@@ -38,6 +38,6 @@ async def get_settings(
 @router.put("")
 async def update_settings(
     body: SettingsUpdate,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("settings.admin")),
 ):
     return await _svc.upsert_settings(user, body.model_dump(exclude_unset=True))

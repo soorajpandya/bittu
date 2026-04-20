@@ -4,7 +4,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.services.due_payment_service import DuePaymentService
 
 router = APIRouter(prefix="/due-payments", tags=["Due Payments"])
@@ -36,7 +36,7 @@ async def list_due_payments(
     customer_id: Optional[int] = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user: UserContext = Depends(require_role("owner", "manager", "cashier")),
+    user: UserContext = Depends(require_permission("due_payment.read")),
 ):
     return await _svc.list_due_payments(user, status=status, customer_id=customer_id, limit=limit, offset=offset)
 
@@ -44,7 +44,7 @@ async def list_due_payments(
 @router.get("/{dp_id}")
 async def get_due_payment(
     dp_id: int,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier")),
+    user: UserContext = Depends(require_permission("due_payment.read")),
 ):
     return await _svc.get_due_payment(user, dp_id)
 
@@ -52,7 +52,7 @@ async def get_due_payment(
 @router.post("", status_code=201)
 async def create_due_payment(
     body: DuePaymentCreate,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier")),
+    user: UserContext = Depends(require_permission("due_payment.write")),
 ):
     return await _svc.create_due_payment(user, body.model_dump())
 
@@ -61,7 +61,7 @@ async def create_due_payment(
 async def record_payment(
     dp_id: int,
     body: RecordPayment,
-    user: UserContext = Depends(require_role("owner", "manager", "cashier")),
+    user: UserContext = Depends(require_permission("due_payment.write")),
 ):
     return await _svc.record_payment(user, dp_id, body.amount)
 
@@ -70,6 +70,6 @@ async def record_payment(
 async def update_status(
     dp_id: int,
     body: UpdateStatus,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("due_payment.delete")),
 ):
     return await _svc.update_status(user, dp_id, body.status)

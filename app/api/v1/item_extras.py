@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.services.item_customization_service import ItemExtraService
 
 router = APIRouter(prefix="/item-extras", tags=["Item Extras"])
@@ -26,7 +26,7 @@ class ExtraUpdate(BaseModel):
 @router.get("")
 async def list_extras(
     item_id: Optional[int] = None,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.read")),
 ):
     return await _svc.list_extras(user, item_id=item_id)
 
@@ -34,7 +34,7 @@ async def list_extras(
 @router.post("", status_code=201)
 async def create_extra(
     body: ExtraCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.write")),
 ):
     return await _svc.create_extra(user, body.model_dump())
 
@@ -43,7 +43,7 @@ async def create_extra(
 async def update_extra(
     extra_id: int,
     body: ExtraUpdate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("menu.write")),
 ):
     return await _svc.update_extra(user, extra_id, body.model_dump(exclude_unset=True))
 
@@ -51,6 +51,6 @@ async def update_extra(
 @router.delete("/{extra_id}")
 async def delete_extra(
     extra_id: int,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("menu.delete")),
 ):
     return await _svc.delete_extra(user, extra_id)

@@ -4,7 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_role
+from app.core.auth import UserContext, require_permission
 from app.services.offer_service import OfferService
 
 router = APIRouter(prefix="/offers", tags=["Offers"])
@@ -40,7 +40,7 @@ class OfferUpdate(BaseModel):
 @router.get("")
 async def list_offers(
     active_only: bool = False,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("promotion.read")),
 ):
     return await _svc.list_offers(user, active_only=active_only)
 
@@ -48,7 +48,7 @@ async def list_offers(
 @router.get("/{offer_id}")
 async def get_offer(
     offer_id: int,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("promotion.read")),
 ):
     return await _svc.get_offer(user, offer_id)
 
@@ -56,7 +56,7 @@ async def get_offer(
 @router.post("", status_code=201)
 async def create_offer(
     body: OfferCreate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("promotion.write")),
 ):
     return await _svc.create_offer(user, body.model_dump())
 
@@ -65,7 +65,7 @@ async def create_offer(
 async def update_offer(
     offer_id: int,
     body: OfferUpdate,
-    user: UserContext = Depends(require_role("owner", "manager")),
+    user: UserContext = Depends(require_permission("promotion.write")),
 ):
     return await _svc.update_offer(user, offer_id, body.model_dump(exclude_unset=True))
 
@@ -73,6 +73,6 @@ async def update_offer(
 @router.delete("/{offer_id}")
 async def delete_offer(
     offer_id: int,
-    user: UserContext = Depends(require_role("owner")),
+    user: UserContext = Depends(require_permission("promotion.delete")),
 ):
     return await _svc.delete_offer(user, offer_id)
