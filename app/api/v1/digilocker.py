@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, model_validator
 from typing import Optional
 
-from app.core.auth import UserContext, require_permission
+from app.core.auth import UserContext, get_current_user
 from app.core.logging import get_logger
 from app.services.digilocker_service import DigiLockerService
 
@@ -43,7 +43,7 @@ class SaveKycIn(BaseModel):
 @router.post("/verify-account")
 async def verify_account(
     body: VerifyAccountIn,
-    user: UserContext = Depends(require_permission("kyc.manage")),
+    user: UserContext = Depends(get_current_user),
 ):
     """Check if a DigiLocker account exists for the given mobile number."""
     return await _svc.verify_account(body.verification_id, body.mobile_number)
@@ -52,7 +52,7 @@ async def verify_account(
 @router.post("/create-url")
 async def create_digilocker_url(
     body: CreateURLIn,
-    user: UserContext = Depends(require_permission("kyc.manage")),
+    user: UserContext = Depends(get_current_user),
 ):
     return await _svc.create_verification_url(
         verification_id=body.verification_id,
@@ -65,7 +65,7 @@ async def create_digilocker_url(
 @router.get("/status")
 async def get_digilocker_status(
     verification_id: str,
-    user: UserContext = Depends(require_permission("kyc.manage")),
+    user: UserContext = Depends(get_current_user),
 ):
     return await _svc.get_status(verification_id)
 
@@ -74,7 +74,7 @@ async def get_digilocker_status(
 async def get_digilocker_document(
     verification_id: str,
     document_type: str,
-    user: UserContext = Depends(require_permission("kyc.manage")),
+    user: UserContext = Depends(get_current_user),
 ):
     return await _svc.get_document(verification_id, document_type)
 
@@ -82,7 +82,7 @@ async def get_digilocker_document(
 @router.post("/save-kyc")
 async def save_kyc(
     body: SaveKycIn,
-    user: UserContext = Depends(require_permission("kyc.manage")),
+    user: UserContext = Depends(get_current_user),
 ):
     """Check Cashfree status, fetch Aadhaar data, and save KYC to user metadata."""
     uid = body.user_id or user.user_id

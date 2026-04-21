@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.auth import UserContext, require_permission
+from app.core.auth import UserContext, get_current_user, require_permission
 from app.services.cashfree_verify_service import CashfreeVerifyService
 
 router = APIRouter(prefix="/kyc", tags=["KYC / Verification"])
@@ -108,7 +108,7 @@ class DigiLockerVerifyIn(BaseModel):
 @router.post("/digilocker-verify")
 async def digilocker_verify(
     body: DigiLockerVerifyIn = DigiLockerVerifyIn(),
-    user: UserContext = Depends(require_permission("kyc.manage")),
+    user: UserContext = Depends(get_current_user),
 ):
     """Process DigiLocker verification callback data from the frontend."""
     from app.services.digilocker_service import DigiLockerService
