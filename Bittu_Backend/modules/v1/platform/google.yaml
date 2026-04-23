@@ -1,0 +1,516 @@
+# Bittu API — Platform/Google Module
+# ====================================
+# Domain: platform
+# Module: google
+# Version: v1
+# Visibility: internal
+# Tags: Google Business Profile
+# Operations: 14
+# Paths: 13
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: platform
+  module: google
+  version: v1
+  visibility: internal
+  tags:
+  - Google Business Profile
+  operationCount: 14
+  pathCount: 13
+paths:
+  /api/v1/google/connect:
+    get:
+      tags:
+      - Google Business Profile
+      summary: Google Connect
+      description: Generate an OAuth consent URL to connect a Google Business Profile.
+      operationId: google_connect_api_v1_google_connect_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: restaurant_id
+        in: query
+        required: true
+        schema:
+          type: string
+          description: Restaurant to connect
+          title: Restaurant Id
+        description: Restaurant to connect
+      - name: redirect_uri
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Frontend callback URL
+          title: Redirect Uri
+        description: Frontend callback URL
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/google/callback:
+    get:
+      tags:
+      - Google Business Profile
+      summary: Google Callback
+      description: 'Handle OAuth callback — exchange authorization code for tokens.
+
+        Public endpoint: user identity is derived from the server-side state token.'
+      operationId: google_callback_api_v1_google_callback_get
+      parameters:
+      - name: code
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Code
+      - name: state
+        in: query
+        required: true
+        schema:
+          type: string
+          title: State
+      - name: redirect_uri
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Redirect Uri
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/google/status:
+    get:
+      tags:
+      - Google Business Profile
+      summary: Google Connection Status
+      description: Check if a Google account is connected for a restaurant.
+      operationId: google_connection_status_api_v1_google_status_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: restaurant_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Restaurant Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/google/disconnect:
+    post:
+      tags:
+      - Google Business Profile
+      summary: Google Disconnect
+      description: Disconnect a Google account from a restaurant. Never crashes.
+      operationId: google_disconnect_api_v1_google_disconnect_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ConnectRequest
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/google/locations:
+    get:
+      tags:
+      - Google Business Profile
+      summary: Google Locations
+      description: Fetch Google Business accounts and their locations. Rate-limited + cached.
+      operationId: google_locations_api_v1_google_locations_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: restaurant_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Restaurant Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/google/locations/select:
+    post:
+      tags:
+      - Google Business Profile
+      summary: Google Select Location
+      description: Select which Google Business location to use for a restaurant.
+      operationId: google_select_location_api_v1_google_locations_select_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/SelectLocationRequest
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/google/reviews:
+    get:
+      tags:
+      - Google Business Profile
+      summary: Google Reviews
+      description: Fetch reviews for the connected Google Business location.
+      operationId: google_reviews_api_v1_google_reviews_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: restaurant_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Restaurant Id
+      - name: page_size
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 50
+          minimum: 1
+          default: 50
+          title: Page Size
+      - name: page_token
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Page Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/google/review/reply:
+    post:
+      tags:
+      - Google Business Profile
+      summary: Google Reply To Review
+      description: Reply to a Google Business review (duplicate-safe).
+      operationId: google_reply_to_review_api_v1_google_review_reply_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ReviewReplyRequest
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/google/post:
+    post:
+      tags:
+      - Google Business Profile
+      summary: Google Create Post
+      description: Create a promotional post on Google Business Profile. Never crashes.
+      operationId: google_create_post_api_v1_google_post_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CreatePostRequest
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    get:
+      tags:
+      - Google Business Profile
+      summary: Google List Posts Alias
+      description: Alias for GET /posts (singular form).
+      operationId: google_list_posts_alias_api_v1_google_post_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: restaurant_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Restaurant Id
+      - name: page_size
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Page Size
+      - name: page_token
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Page Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/google/posts:
+    get:
+      tags:
+      - Google Business Profile
+      summary: Google List Posts
+      description: List existing Google Business posts for the connected location.
+      operationId: google_list_posts_api_v1_google_posts_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: restaurant_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Restaurant Id
+      - name: page_size
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Page Size
+      - name: page_token
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Page Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/google/insights:
+    get:
+      tags:
+      - Google Business Profile
+      summary: Google Insights
+      description: Fetch performance insights (views, calls, directions, bookings).
+      operationId: google_insights_api_v1_google_insights_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: restaurant_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Restaurant Id
+      - name: start_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: YYYY-MM-DD
+          title: Start Date
+        description: YYYY-MM-DD
+      - name: end_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: YYYY-MM-DD
+          title: End Date
+        description: YYYY-MM-DD
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/google/insights/summary:
+    get:
+      tags:
+      - Google Business Profile
+      summary: Google Insights Summary
+      description: Aggregated summary for the growth dashboard.
+      operationId: google_insights_summary_api_v1_google_insights_summary_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: restaurant_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Restaurant Id
+      - name: days
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 365
+          minimum: 1
+          default: 30
+          title: Days
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/google/sync:
+    post:
+      tags:
+      - Google Business Profile
+      summary: Google Sync Restaurant
+      description: Trigger a full data sync for a restaurant (locations, reviews, posts, insights).
+      operationId: google_sync_restaurant_api_v1_google_sync_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ConnectRequest
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []

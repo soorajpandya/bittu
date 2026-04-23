@@ -1,0 +1,737 @@
+# Bittu API — Operations/Tables Module
+# ======================================
+# Domain: operations
+# Module: tables
+# Version: v1
+# Visibility: public
+# Tags: Restaurant Tables, Table Events, Table Sessions, Tables
+# Operations: 24
+# Paths: 21
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: operations
+  module: tables
+  version: v1
+  visibility: public
+  tags:
+  - Restaurant Tables
+  - Table Events
+  - Table Sessions
+  - Tables
+  operationCount: 24
+  pathCount: 21
+paths:
+  /api/v1/tables:
+    get:
+      tags:
+      - Tables
+      summary: List Tables
+      description: List all tables for the current user's restaurant.
+      operationId: list_tables_api_v1_tables_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - Tables
+      summary: Create Table
+      description: Create a new restaurant table.
+      operationId: create_table_api_v1_tables_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CreateTableIn
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/tables/{table_id}:
+    patch:
+      tags:
+      - Tables
+      summary: Update Table
+      description: Update a restaurant table.
+      operationId: update_table_api_v1_tables__table_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: table_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Table Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/UpdateTableIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Tables
+      summary: Delete Table
+      description: Delete a restaurant table.
+      operationId: delete_table_api_v1_tables__table_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: table_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Table Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tables/sessions:
+    post:
+      tags:
+      - Tables
+      summary: Start Session
+      operationId: start_session_api_v1_tables_sessions_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/StartSessionIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/tables/sessions/join:
+    post:
+      tags:
+      - Tables
+      summary: Join Session
+      operationId: join_session_api_v1_tables_sessions_join_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/JoinSessionIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tables/cart/add:
+    post:
+      tags:
+      - Tables
+      summary: Add To Cart
+      operationId: add_to_cart_api_v1_tables_cart_add_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/AddToCartIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/tables/cart/{session_id}:
+    get:
+      tags:
+      - Tables
+      summary: Get Cart
+      operationId: get_cart_api_v1_tables_cart__session_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tables/cart/remove:
+    delete:
+      tags:
+      - Tables
+      summary: Remove From Cart
+      operationId: remove_from_cart_api_v1_tables_cart_remove_delete
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/RemoveCartItemIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/tables/sessions/{session_id}/end:
+    post:
+      tags:
+      - Tables
+      summary: End Session
+      operationId: end_session_api_v1_tables_sessions__session_id__end_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tables/qr/scan:
+    post:
+      tags:
+      - Tables
+      summary: Qr Scan
+      description: Customer scans QR code — creates or resumes a table session.
+      operationId: qr_scan_api_v1_tables_qr_scan_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/app__api__v1__tables__QRScanIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tables/qr/menu:
+    get:
+      tags:
+      - Tables
+      summary: Qr Menu
+      description: Return full menu for QR ordering.
+      operationId: qr_menu_api_v1_tables_qr_menu_get
+      parameters:
+      - name: restaurant_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Restaurant Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tables/qr/cart:
+    get:
+      tags:
+      - Tables
+      summary: Qr Get Cart
+      description: Get cart contents for a QR session.
+      operationId: qr_get_cart_api_v1_tables_qr_cart_get
+      parameters:
+      - name: session_token
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Session Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Tables
+      summary: Qr Cart Action
+      description: Add / update / remove / clear items in QR cart.
+      operationId: qr_cart_action_api_v1_tables_qr_cart_post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/QRCartActionIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tables/qr/place-order:
+    post:
+      tags:
+      - Tables
+      summary: Qr Place Order
+      description: Place a dine-in order from QR cart.
+      operationId: qr_place_order_api_v1_tables_qr_place_order_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/QRPlaceOrderIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tables/qr/order-status:
+    get:
+      tags:
+      - Tables
+      summary: Qr Order Status
+      description: Get all orders for this session with kitchen status.
+      operationId: qr_order_status_api_v1_tables_qr_order_status_get
+      parameters:
+      - name: session_token
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Session Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tables/qr/call-waiter:
+    post:
+      tags:
+      - Tables
+      summary: Qr Call Waiter
+      description: Customer requests waiter assistance from QR interface.
+      operationId: qr_call_waiter_api_v1_tables_qr_call_waiter_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/QRCallWaiterIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tables/sessions/{session_id}/bill:
+    get:
+      tags:
+      - Tables
+      summary: Get Session Bill
+      description: 'POS alias: get full bill for a table session.'
+      operationId: get_session_bill_api_v1_tables_sessions__session_id__bill_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tables/sessions/{session_id}/split-bill:
+    post:
+      tags:
+      - Tables
+      summary: Split Bill
+      description: 'POS alias: split session bill equally/by-item/by-user.'
+      operationId: split_bill_api_v1_tables_sessions__session_id__split_bill_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/SessionSplitBillIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tables/sessions/{session_id}/payments:
+    post:
+      tags:
+      - Tables
+      summary: Add Session Payment
+      description: 'POS alias: record partial/full payment against session.'
+      operationId: add_session_payment_api_v1_tables_sessions__session_id__payments_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/SessionPaymentIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tables/sessions/{session_id}/paid-vacate:
+    post:
+      tags:
+      - Tables
+      summary: Mark Paid And Vacate
+      description: Mark order as paid and end the table session.
+      operationId: mark_paid_and_vacate_api_v1_tables_sessions__session_id__paid_vacate_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/MarkPaidVacateIn
+              default: {}
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/restaurant-tables:
+    get:
+      tags:
+      - Restaurant Tables
+      summary: List Tables
+      description: List all tables for the current user's restaurant.
+      operationId: list_tables_api_v1_restaurant_tables_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: include_orders
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+          title: Include Orders
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/table-events:
+    get:
+      tags:
+      - Table Events
+      summary: List Table Events
+      description: List table events from the table_events table.
+      operationId: list_table_events_api_v1_table_events_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: table_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Table Id
+      - name: session_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Session Id
+      - name: event_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Event Type
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Limit
+      - name: order_by
+        in: query
+        required: false
+        schema:
+          type: string
+          default: created_at
+          title: Order By
+      - name: ascending
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+          title: Ascending
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/table-sessions:
+    get:
+      tags:
+      - Table Sessions
+      summary: List Table Sessions
+      description: List table sessions, optionally filtered by table IDs and active status.
+      operationId: list_table_sessions_api_v1_table_sessions_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: table_ids
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Comma-separated table UUIDs
+          title: Table Ids
+        description: Comma-separated table UUIDs
+      - name: is_active
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Is Active
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

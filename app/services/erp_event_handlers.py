@@ -204,6 +204,10 @@ async def _handle_order_confirmed(event: DomainEvent):
         if gst_enabled and event.restaurant_id:
             await _create_order_gst_invoice(event, order_id)
 
+        # 5. Order revenue journal: DR Accounts Receivable, CR Food Sales
+        if event.restaurant_id:
+            await _create_order_revenue_journal(event, order_id)
+
         elapsed = int((_time.monotonic() - t0) * 1000)
         async with get_connection() as conn:
             await _log_event(conn, event, "completed", elapsed_ms=elapsed)
@@ -216,6 +220,36 @@ async def _handle_order_confirmed(event: DomainEvent):
                 await _log_event(conn, event, "failed", str(order_id), elapsed)
         except Exception:
             pass
+
+
+async def _create_order_revenue_journal(event: DomainEvent, order_id: str):
+    """Create order-level revenue journal: DR A/R, CR Food Sales (idempotent)."""
+    restaurant_id = event.restaurant_id
+    branch_id = event.branch_id
+    user_id = event.user_id or "system"
+
+    try:
+        async with get_connection() as conn:
+            order = await conn.fetchrow(
+                "SELECT total_amount FROM orders WHERE id = $1", order_id
+            )
+            if not order or not order["total_amount"]:
+                return
+            total_amount = float(order["total_amount"])
+            if total_amount <= 0:
+                return
+
+        from app.services.accounting_engine import accounting_engine
+        await accounting_engine.record_order_created(
+            restaurant_id=restaurant_id,
+            branch_id=branch_id,
+            order_id=order_id,
+            total_amount=total_amount,
+            created_by=user_id,
+        )
+        logger.info("erp_order_revenue_journal_created", order_id=order_id, total=total_amount)
+    except Exception:
+        logger.exception("erp_order_revenue_journal_failed", order_id=order_id)
 
 
 async def _create_order_gst_invoice(event: DomainEvent, order_id: str):

@@ -1,0 +1,667 @@
+# Bittu API — Finance/Accounting Module
+# =======================================
+# Domain: finance
+# Module: accounting
+# Version: v1
+# Visibility: internal
+# Tags: Accounting, Accounting Rules, Chart of Accounts
+# Operations: 17
+# Paths: 15
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: finance
+  module: accounting
+  version: v1
+  visibility: internal
+  tags:
+  - Accounting
+  - Accounting Rules
+  - Chart of Accounts
+  operationCount: 17
+  pathCount: 15
+paths:
+  /api/v1/accounting/cash-flow:
+    get:
+      tags:
+      - Accounting
+      summary: Cash Flow
+      description: 'Revenue vs expenses for a period (default: last 30 days).'
+      operationId: cash_flow_api_v1_accounting_cash_flow_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: start_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Start Date
+      - name: end_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: End Date
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/accounting/entries:
+    get:
+      tags:
+      - Accounting
+      summary: List Entries
+      description: List accounting entries with filters.
+      operationId: list_entries_api_v1_accounting_entries_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: entry_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Entry Type
+      - name: start_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Start Date
+      - name: end_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: End Date
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/accounting/daily-breakdown:
+    get:
+      tags:
+      - Accounting
+      summary: Daily Breakdown
+      description: Revenue and expenses grouped by day.
+      operationId: daily_breakdown_api_v1_accounting_daily_breakdown_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: start_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Start Date
+      - name: end_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: End Date
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/accounting/payment-methods:
+    get:
+      tags:
+      - Accounting
+      summary: Payment Method Breakdown
+      description: Revenue split by payment method.
+      operationId: payment_method_breakdown_api_v1_accounting_payment_methods_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: start_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Start Date
+      - name: end_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: End Date
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/accounting/expenses:
+    post:
+      tags:
+      - Accounting
+      summary: Record Expense
+      description: Manually record an expense (double-entry via accounting engine).
+      operationId: record_expense_api_v1_accounting_expenses_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/app__api__v1__accounting__ExpenseCreate
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/accounting/reversals:
+    post:
+      tags:
+      - Accounting
+      summary: Reverse Journal Entry
+      description: 'Reverse a journal entry. Creates a new entry with swapped debit/credit.
+
+        The original entry is marked as reversed.'
+      operationId: reverse_journal_entry_api_v1_accounting_reversals_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ReversalRequest
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/accounting/journals:
+    get:
+      tags:
+      - Accounting
+      summary: Search Journals
+      description: 'Search journal entries with filters. Returns entries with their lines.
+
+        Every journal entry is traceable to its source event, user, and API.'
+      operationId: search_journals_api_v1_accounting_journals_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      - name: reference_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reference Type
+      - name: reference_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reference Id
+      - name: include_reversed
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+          title: Include Reversed
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/accounting/periods/close:
+    post:
+      tags:
+      - Accounting
+      summary: Close Period
+      description: 'Close an accounting period. No new journal entries can be created
+
+        for dates within this period after closing.'
+      operationId: close_period_api_v1_accounting_periods_close_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/PeriodCloseRequest
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/accounting/periods/reopen:
+    post:
+      tags:
+      - Accounting
+      summary: Reopen Period
+      description: Reopen a previously closed period. Locked periods cannot be reopened.
+      operationId: reopen_period_api_v1_accounting_periods_reopen_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/PeriodCloseRequest
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/accounting/periods:
+    get:
+      tags:
+      - Accounting
+      summary: List Periods
+      description: List all accounting periods (open, closed, locked).
+      operationId: list_periods_api_v1_accounting_periods_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/accounts:
+    get:
+      tags:
+      - Chart of Accounts
+      summary: List Accounts
+      description: List all Chart of Accounts for the restaurant.
+      operationId: list_accounts_api_v1_accounts_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: account_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'Filter by type: asset|liability|equity|revenue|expense'
+          title: Account Type
+        description: 'Filter by type: asset|liability|equity|revenue|expense'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/accounts/tree:
+    get:
+      tags:
+      - Chart of Accounts
+      summary: Accounts Tree
+      description: Return the Chart of Accounts as a hierarchical tree.
+      operationId: accounts_tree_api_v1_accounts_tree_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/accounts/{account_id}/ledger:
+    get:
+      tags:
+      - Chart of Accounts
+      summary: Account Ledger
+      description: 'T-account ledger for a single CoA account.
+
+        Returns all movements with running balance.'
+      operationId: account_ledger_api_v1_accounts__account_id__ledger_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: account_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Account Id
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/accounting/rules:
+    get:
+      tags:
+      - Accounting Rules
+      summary: List Rules
+      description: List accounting rules, optionally filtered by event type.
+      operationId: list_rules_api_v1_accounting_rules_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: event_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Event Type
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Accounting Rules
+      summary: Create Rule
+      description: 'Create a custom accounting rule.
+
+
+        Rules override the default hardcoded journal entry patterns.
+
+        When an event fires, the engine checks custom rules first (by priority),
+
+        and falls back to defaults if no rule matches.'
+      operationId: create_rule_api_v1_accounting_rules_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CreateRuleRequest
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/accounting/rules/{rule_id}:
+    put:
+      tags:
+      - Accounting Rules
+      summary: Update Rule
+      description: Update an existing accounting rule.
+      operationId: update_rule_api_v1_accounting_rules__rule_id__put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: rule_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Rule Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/UpdateRuleRequest
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Accounting Rules
+      summary: Delete Rule
+      description: Soft-delete an accounting rule (deactivates it).
+      operationId: delete_rule_api_v1_accounting_rules__rule_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: rule_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Rule Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

@@ -1,0 +1,100 @@
+# Bittu API — Operations/Inventory Module
+# =========================================
+# Domain: operations
+# Module: inventory
+# Version: v1
+# Visibility: internal
+# Tags: Ingredients, Inventory
+# Operations: 3
+# Paths: 3
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: operations
+  module: inventory
+  version: v1
+  visibility: internal
+  tags:
+  - Ingredients
+  - Inventory
+  operationCount: 3
+  pathCount: 3
+paths:
+  /api/v1/inventory/stock:
+    get:
+      tags:
+      - Inventory
+      summary: Get Stock Levels
+      operationId: get_stock_levels_api_v1_inventory_stock_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      - name: low_only
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+          title: Low Only
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/inventory/receive:
+    post:
+      tags:
+      - Inventory
+      summary: Receive Purchase Order
+      operationId: receive_purchase_order_api_v1_inventory_receive_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ReceivePurchaseIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/ingredients:
+    get:
+      tags:
+      - Ingredients
+      summary: List Ingredients
+      description: List all ingredients for the current user's restaurant.
+      operationId: list_ingredients_api_v1_ingredients_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []

@@ -1,0 +1,1886 @@
+# Bittu API — Platform/Erp Module
+# =================================
+# Domain: platform
+# Module: erp
+# Version: v1
+# Visibility: internal
+# Tags: ERP
+# Operations: 57
+# Paths: 44
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: platform
+  module: erp
+  version: v1
+  visibility: internal
+  tags:
+  - ERP
+  operationCount: 57
+  pathCount: 44
+paths:
+  /api/v1/erp/accounts:
+    get:
+      tags:
+      - ERP
+      summary: List Accounts
+      operationId: list_accounts_api_v1_erp_accounts_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: account_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Account Type
+      - name: is_active
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: true
+          title: Is Active
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - ERP
+      summary: Create Account
+      operationId: create_account_api_v1_erp_accounts_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/AccountCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/accounts/balances:
+    get:
+      tags:
+      - ERP
+      summary: Account Balances
+      operationId: account_balances_api_v1_erp_accounts_balances_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: as_of_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: As Of Date
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/journals:
+    get:
+      tags:
+      - ERP
+      summary: List Journals
+      operationId: list_journals_api_v1_erp_journals_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: reference_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reference Type
+      - name: start_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Start Date
+      - name: end_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: End Date
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - ERP
+      summary: Create Journal
+      operationId: create_journal_api_v1_erp_journals_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/JournalCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/journals/{journal_id}/reverse:
+    post:
+      tags:
+      - ERP
+      summary: Reverse Journal
+      operationId: reverse_journal_api_v1_erp_journals__journal_id__reverse_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: journal_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Journal Id
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/recipes:
+    get:
+      tags:
+      - ERP
+      summary: List Recipes
+      operationId: list_recipes_api_v1_erp_recipes_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Item Id
+      - name: is_active
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: true
+          title: Is Active
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - ERP
+      summary: Create Recipe
+      operationId: create_recipe_api_v1_erp_recipes_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/RecipeCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/recipes/{recipe_id}:
+    patch:
+      tags:
+      - ERP
+      summary: Update Recipe
+      operationId: update_recipe_api_v1_erp_recipes__recipe_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: recipe_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Recipe Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/RecipeUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/inventory-ledger/summary:
+    get:
+      tags:
+      - ERP
+      summary: Inventory Summary
+      operationId: inventory_summary_api_v1_erp_inventory_ledger_summary_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      - name: low_only
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+          title: Low Only
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/inventory-ledger/history:
+    get:
+      tags:
+      - ERP
+      summary: Inventory History
+      operationId: inventory_history_api_v1_erp_inventory_ledger_history_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: ingredient_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Ingredient Id
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      - name: transaction_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Transaction Type
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/inventory-ledger/adjust:
+    post:
+      tags:
+      - ERP
+      summary: Adjust Stock
+      operationId: adjust_stock_api_v1_erp_inventory_ledger_adjust_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/StockAdjust
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/erp/vendors:
+    get:
+      tags:
+      - ERP
+      summary: List Vendors
+      operationId: list_vendors_api_v1_erp_vendors_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: is_active
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: true
+          title: Is Active
+      - name: search
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Search
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - ERP
+      summary: Create Vendor
+      operationId: create_vendor_api_v1_erp_vendors_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/VendorCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/vendors/{vendor_id}:
+    get:
+      tags:
+      - ERP
+      summary: Get Vendor
+      operationId: get_vendor_api_v1_erp_vendors__vendor_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: vendor_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Vendor Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    patch:
+      tags:
+      - ERP
+      summary: Update Vendor
+      operationId: update_vendor_api_v1_erp_vendors__vendor_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: vendor_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Vendor Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/VendorUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/grn:
+    get:
+      tags:
+      - ERP
+      summary: List Grn
+      operationId: list_grn_api_v1_erp_grn_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: vendor_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Vendor Id
+      - name: start_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Start Date
+      - name: end_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: End Date
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - ERP
+      summary: Create Grn
+      operationId: create_grn_api_v1_erp_grn_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/GRNCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/grn/{grn_id}/verify:
+    patch:
+      tags:
+      - ERP
+      summary: Verify Grn
+      operationId: verify_grn_api_v1_erp_grn__grn_id__verify_patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: grn_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Grn Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/vendor-payments:
+    get:
+      tags:
+      - ERP
+      summary: List Vendor Payments
+      operationId: list_vendor_payments_api_v1_erp_vendor_payments_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: vendor_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Vendor Id
+      - name: payment_method
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Payment Method
+      - name: start_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Start Date
+      - name: end_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: End Date
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - ERP
+      summary: Create Vendor Payment
+      operationId: create_vendor_payment_api_v1_erp_vendor_payments_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/VendorPaymentCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/drawers:
+    get:
+      tags:
+      - ERP
+      summary: List Drawers
+      operationId: list_drawers_api_v1_erp_drawers_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - ERP
+      summary: Create Drawer
+      operationId: create_drawer_api_v1_erp_drawers_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/DrawerCreate
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/erp/shifts/open:
+    post:
+      tags:
+      - ERP
+      summary: Open Shift
+      operationId: open_shift_api_v1_erp_shifts_open_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ShiftOpen
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/erp/shifts/current:
+    get:
+      tags:
+      - ERP
+      summary: Current Shift
+      operationId: current_shift_api_v1_erp_shifts_current_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/erp/shifts/{shift_id}/close:
+    post:
+      tags:
+      - ERP
+      summary: Close Shift
+      operationId: close_shift_api_v1_erp_shifts__shift_id__close_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: shift_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Shift Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ShiftClose
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/shifts:
+    get:
+      tags:
+      - ERP
+      summary: List Shifts
+      operationId: list_shifts_api_v1_erp_shifts_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: user_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: User Id
+      - name: start_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Start Date
+      - name: end_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: End Date
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/transfers:
+    get:
+      tags:
+      - ERP
+      summary: List Transfers
+      operationId: list_transfers_api_v1_erp_transfers_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: direction
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Direction
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - ERP
+      summary: Create Transfer
+      operationId: create_transfer_api_v1_erp_transfers_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/TransferCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/transfers/{transfer_id}/approve:
+    patch:
+      tags:
+      - ERP
+      summary: Approve Transfer
+      operationId: approve_transfer_api_v1_erp_transfers__transfer_id__approve_patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: transfer_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Transfer Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/transfers/{transfer_id}/ship:
+    patch:
+      tags:
+      - ERP
+      summary: Ship Transfer
+      operationId: ship_transfer_api_v1_erp_transfers__transfer_id__ship_patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: transfer_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Transfer Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/transfers/{transfer_id}/receive:
+    patch:
+      tags:
+      - ERP
+      summary: Receive Transfer
+      operationId: receive_transfer_api_v1_erp_transfers__transfer_id__receive_patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: transfer_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Transfer Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/TransferReceive
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/tax-rates:
+    get:
+      tags:
+      - ERP
+      summary: List Tax Rates
+      operationId: list_tax_rates_api_v1_erp_tax_rates_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: is_active
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: true
+          title: Is Active
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - ERP
+      summary: Create Tax Rate
+      operationId: create_tax_rate_api_v1_erp_tax_rates_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/TaxRateCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/tax-rates/assign:
+    post:
+      tags:
+      - ERP
+      summary: Assign Tax
+      operationId: assign_tax_api_v1_erp_tax_rates_assign_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/TaxAssign
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/erp/tax-rates/assign/{item_id}/{tax_rate_id}:
+    delete:
+      tags:
+      - ERP
+      summary: Unassign Tax
+      operationId: unassign_tax_api_v1_erp_tax_rates_assign__item_id___tax_rate_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Item Id
+      - name: tax_rate_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Tax Rate Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/gst-reports:
+    get:
+      tags:
+      - ERP
+      summary: List Gst Reports
+      operationId: list_gst_reports_api_v1_erp_gst_reports_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: report_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Report Type
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/gst-reports/generate:
+    post:
+      tags:
+      - ERP
+      summary: Generate Gst Report
+      operationId: generate_gst_report_api_v1_erp_gst_reports_generate_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/GSTReportGenerate
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/erp/gst-reports/{report_id}/filed:
+    patch:
+      tags:
+      - ERP
+      summary: Mark Filed
+      operationId: mark_filed_api_v1_erp_gst_reports__report_id__filed_patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: report_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Report Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/gst-reports/tax-liability:
+    get:
+      tags:
+      - ERP
+      summary: Tax Liability
+      operationId: tax_liability_api_v1_erp_gst_reports_tax_liability_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: start_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Start Date
+      - name: end_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: End Date
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/profitability:
+    get:
+      tags:
+      - ERP
+      summary: Item Profitability
+      operationId: item_profitability_api_v1_erp_profitability_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      - name: period_start
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Period Start
+      - name: period_end
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Period End
+      - name: sort_by
+        in: query
+        required: false
+        schema:
+          type: string
+          default: gross_profit
+          title: Sort By
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/pnl/daily:
+    get:
+      tags:
+      - ERP
+      summary: Daily Pnl
+      operationId: daily_pnl_api_v1_erp_pnl_daily_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      - name: start_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Start Date
+      - name: end_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: End Date
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/tax-rules:
+    get:
+      tags:
+      - ERP
+      summary: List Tax Rules
+      operationId: list_tax_rules_api_v1_erp_tax_rules_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: is_active
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: true
+          title: Is Active
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - ERP
+      summary: Create Tax Rule
+      operationId: create_tax_rule_api_v1_erp_tax_rules_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/TaxRuleCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/tax-rules/{rule_id}:
+    patch:
+      tags:
+      - ERP
+      summary: Update Tax Rule
+      operationId: update_tax_rule_api_v1_erp_tax_rules__rule_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: rule_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Rule Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/TaxRuleCreate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - ERP
+      summary: Delete Tax Rule
+      operationId: delete_tax_rule_api_v1_erp_tax_rules__rule_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: rule_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Rule Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/platform-tax-config:
+    get:
+      tags:
+      - ERP
+      summary: List Platform Tax Config
+      operationId: list_platform_tax_config_api_v1_erp_platform_tax_config_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - ERP
+      summary: Create Platform Tax Config
+      operationId: create_platform_tax_config_api_v1_erp_platform_tax_config_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/PlatformTaxCreate
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/erp/platform-tax-config/{config_id}:
+    patch:
+      tags:
+      - ERP
+      summary: Update Platform Tax Config
+      operationId: update_platform_tax_config_api_v1_erp_platform_tax_config__config_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: config_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Config Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/PlatformTaxCreate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/feature-flags:
+    get:
+      tags:
+      - ERP
+      summary: List Feature Flags
+      operationId: list_feature_flags_api_v1_erp_feature_flags_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/erp/feature-flags/{flag_name}:
+    patch:
+      tags:
+      - ERP
+      summary: Toggle Feature Flag
+      operationId: toggle_feature_flag_api_v1_erp_feature_flags__flag_name__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: flag_name
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Flag Name
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/FeatureFlagUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/consistency-check:
+    get:
+      tags:
+      - ERP
+      summary: Run Consistency Check
+      operationId: run_consistency_check_api_v1_erp_consistency_check_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/erp/event-log:
+    get:
+      tags:
+      - ERP
+      summary: List Event Log
+      operationId: list_event_log_api_v1_erp_event_log_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: event_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Event Type
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/order-summary/{order_id}:
+    get:
+      tags:
+      - ERP
+      summary: Order Erp Summary
+      operationId: order_erp_summary_api_v1_erp_order_summary__order_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Order Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/erp/seed/feature-flags:
+    post:
+      tags:
+      - ERP
+      summary: Seed Feature Flags
+      operationId: seed_feature_flags_api_v1_erp_seed_feature_flags_post
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/erp/seed/chart-of-accounts:
+    post:
+      tags:
+      - ERP
+      summary: Seed Chart Of Accounts
+      operationId: seed_chart_of_accounts_api_v1_erp_seed_chart_of_accounts_post
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/erp/seed/tax-rates:
+    post:
+      tags:
+      - ERP
+      summary: Seed Tax Rates
+      operationId: seed_tax_rates_api_v1_erp_seed_tax_rates_post
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []

@@ -1,0 +1,2188 @@
+# Bittu API — Finance/Finance Module
+# ====================================
+# Domain: finance
+# Module: finance
+# Version: v1
+# Visibility: internal
+# Tags: Financial Operating System
+# Operations: 64
+# Paths: 61
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: finance
+  module: finance
+  version: v1
+  visibility: internal
+  tags:
+  - Financial Operating System
+  operationCount: 64
+  pathCount: 61
+paths:
+  /api/v1/finance/dashboard:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Dashboard
+      description: 'Real-time financial dashboard — all key metrics in a single call.
+
+
+        Revenue (today + MTD), cash/bank/card balances, GST payable,
+
+        AR/AP outstanding, COGS %, trial balance status, unreconciled count.'
+      operationId: dashboard_api_v1_finance_dashboard_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Filter by branch
+          title: Branch Id
+        description: Filter by branch
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/reports/trial-balance:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Trial Balance
+      operationId: trial_balance_api_v1_finance_reports_trial_balance_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: as_of
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: As Of
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/reports/balance-sheet:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Balance Sheet
+      operationId: balance_sheet_api_v1_finance_reports_balance_sheet_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: as_of
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: As Of
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/reports/income-statement:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Income Statement
+      operationId: income_statement_api_v1_finance_reports_income_statement_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/reports/cash-flow:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Cash Flow
+      operationId: cash_flow_api_v1_finance_reports_cash_flow_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/customers/aging:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Customer Aging
+      operationId: customer_aging_api_v1_finance_customers_aging_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: customer_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Customer Id
+      - name: as_of
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: As Of
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/customers/balances:
+    get:
+      tags:
+      - Financial Operating System
+      summary: All Customer Balances
+      operationId: all_customer_balances_api_v1_finance_customers_balances_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/customers/{customer_id}/ledger:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Customer Ledger
+      operationId: customer_ledger_api_v1_finance_customers__customer_id__ledger_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Customer Id
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          default: 200
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/suppliers/aging:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Supplier Aging
+      operationId: supplier_aging_api_v1_finance_suppliers_aging_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: supplier_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Supplier Id
+      - name: as_of
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: As Of
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/suppliers/balances:
+    get:
+      tags:
+      - Financial Operating System
+      summary: All Supplier Balances
+      operationId: all_supplier_balances_api_v1_finance_suppliers_balances_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/suppliers/{supplier_id}/ledger:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Supplier Ledger
+      operationId: supplier_ledger_api_v1_finance_suppliers__supplier_id__ledger_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: supplier_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Supplier Id
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          default: 200
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/invoices:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Create Invoice
+      operationId: create_invoice_api_v1_finance_invoices_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    get:
+      tags:
+      - Financial Operating System
+      summary: List Invoices
+      operationId: list_invoices_api_v1_finance_invoices_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: customer_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Customer Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/invoices/unpaid:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Unpaid Invoices
+      operationId: unpaid_invoices_api_v1_finance_invoices_unpaid_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/invoices/{invoice_id}:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Get Invoice
+      operationId: get_invoice_api_v1_finance_invoices__invoice_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: invoice_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Invoice Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/invoices/{invoice_id}/payment:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Record Invoice Payment
+      operationId: record_invoice_payment_api_v1_finance_invoices__invoice_id__payment_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: invoice_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Invoice Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/invoices/{invoice_id}/void:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Void Invoice
+      operationId: void_invoice_api_v1_finance_invoices__invoice_id__void_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: invoice_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Invoice Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/expenses:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Create Expense
+      operationId: create_expense_api_v1_finance_expenses_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    get:
+      tags:
+      - Financial Operating System
+      summary: List Expenses
+      operationId: list_expenses_api_v1_finance_expenses_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: category_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category Id
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/expenses/summary:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Expense Summary
+      operationId: expense_summary_api_v1_finance_expenses_summary_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/expenses/categories:
+    get:
+      tags:
+      - Financial Operating System
+      summary: List Expense Categories
+      operationId: list_expense_categories_api_v1_finance_expenses_categories_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - Financial Operating System
+      summary: Create Expense Category
+      operationId: create_expense_category_api_v1_finance_expenses_categories_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/expenses/{expense_id}:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Get Expense
+      operationId: get_expense_api_v1_finance_expenses__expense_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: expense_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Expense Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/expenses/{expense_id}/approve:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Approve Expense
+      operationId: approve_expense_api_v1_finance_expenses__expense_id__approve_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: expense_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Expense Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/reconciliation/summary:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Recon Summary
+      operationId: recon_summary_api_v1_finance_reconciliation_summary_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/reconciliation/statements:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Recon Statements
+      operationId: recon_statements_api_v1_finance_reconciliation_statements_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: reconciled
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Reconciled
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          default: 100
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/reconciliation/import-csv:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Recon Import Csv
+      operationId: recon_import_csv_api_v1_finance_reconciliation_import_csv_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: bank_name
+        in: query
+        required: false
+        schema:
+          type: string
+          default: unknown
+          title: Bank Name
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: ../../../components/schemas.yaml#/Body_recon_import_csv_api_v1_finance_reconciliation_import_csv_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/reconciliation/auto-match:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Recon Auto Match
+      operationId: recon_auto_match_api_v1_finance_reconciliation_auto_match_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/reconciliation/match:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Recon Manual Match
+      operationId: recon_manual_match_api_v1_finance_reconciliation_match_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/reconciliation/unmatch:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Recon Unmatch
+      operationId: recon_unmatch_api_v1_finance_reconciliation_unmatch_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/gst/summary:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Gst Summary
+      operationId: gst_summary_api_v1_finance_gst_summary_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: period_start
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          title: Period Start
+      - name: period_end
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          title: Period End
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/gst/liabilities:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Gst Liabilities
+      operationId: gst_liabilities_api_v1_finance_gst_liabilities_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/gst/compute:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Gst Compute
+      operationId: gst_compute_api_v1_finance_gst_compute_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/gst/file:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Gst File
+      operationId: gst_file_api_v1_finance_gst_file_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/gst/pay:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Gst Pay
+      operationId: gst_pay_api_v1_finance_gst_pay_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/drilldown:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Drilldown
+      description: Drill into any number back to its source journal entries.
+      operationId: drilldown_api_v1_finance_drilldown_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: account_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Account Id
+      - name: reference_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reference Type
+      - name: reference_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reference Id
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/periods:
+    get:
+      tags:
+      - Financial Operating System
+      summary: List Periods
+      operationId: list_periods_api_v1_finance_periods_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/periods/close:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Close Period
+      operationId: close_period_api_v1_finance_periods_close_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/periods/reopen:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Reopen Period
+      operationId: reopen_period_api_v1_finance_periods_reopen_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/journals:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Search Journals
+      operationId: search_journals_api_v1_finance_journals_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: reference_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reference Type
+      - name: reference_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reference Id
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/journals/reverse:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Reverse Journal
+      operationId: reverse_journal_api_v1_finance_journals_reverse_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/integrity-check:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Integrity Check
+      operationId: integrity_check_api_v1_finance_integrity_check_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/alerts:
+    get:
+      tags:
+      - Financial Operating System
+      summary: List Alerts
+      operationId: list_alerts_api_v1_finance_alerts_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: resolved
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Resolved
+      - name: alert_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Alert Type
+      - name: severity
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Severity
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/alerts/scan:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Scan Alerts
+      description: Run on-demand financial anomaly scan.
+      operationId: scan_alerts_api_v1_finance_alerts_scan_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/alerts/{alert_id}/resolve:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Resolve Alert
+      operationId: resolve_alert_api_v1_finance_alerts__alert_id__resolve_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: alert_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Alert Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              default: {}
+              title: Payload
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/audit-log:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Audit Log
+      operationId: audit_log_api_v1_finance_audit_log_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: entity_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Entity Type
+      - name: action
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Action
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/trend/revenue:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Revenue Trend
+      operationId: revenue_trend_api_v1_finance_trend_revenue_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: from_date
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          title: From Date
+      - name: to_date
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          title: To Date
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/views/refresh:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Refresh Views
+      description: Refresh materialized views (dashboard caches).
+      operationId: refresh_views_api_v1_finance_views_refresh_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/daily-close/init:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Init Daily Closing
+      description: 'Step 1: Initialize daily closing — system computes expected cash/card/UPI
+
+        from the ledger for the given date.'
+      operationId: init_daily_closing_api_v1_finance_daily_close_init_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/daily-close/cash-count:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Submit Cash Count
+      description: 'Step 2: Cashier enters actual counted amounts.
+
+        Returns difference and mismatch flag.'
+      operationId: submit_cash_count_api_v1_finance_daily_close_cash_count_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/daily-close/close:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Close Day
+      description: 'Step 3: Manager closes the day — locks it, produces summary.'
+      operationId: close_day_api_v1_finance_daily_close_close_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/daily-close/history:
+    get:
+      tags:
+      - Financial Operating System
+      summary: List Daily Closings
+      description: List daily closings — filterable by branch and status.
+      operationId: list_daily_closings_api_v1_finance_daily_close_history_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          default: 30
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/gst/workflow/generate:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Gst Workflow Generate
+      description: 'Step 1: Generate GST data for a period from ledger.'
+      operationId: gst_workflow_generate_api_v1_finance_gst_workflow_generate_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/gst/workflow/{workflow_id}/review:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Gst Workflow Review
+      description: 'Step 2: Mark GST data as reviewed.'
+      operationId: gst_workflow_review_api_v1_finance_gst_workflow__workflow_id__review_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: workflow_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Workflow Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/gst/workflow/{workflow_id}/export:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Gst Workflow Export
+      description: 'Step 3: Mark as exported for portal filing.'
+      operationId: gst_workflow_export_api_v1_finance_gst_workflow__workflow_id__export_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: workflow_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Workflow Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/gst/workflow/{workflow_id}/file:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Gst Workflow File
+      description: 'Step 4: Record filing reference from GST portal.'
+      operationId: gst_workflow_file_api_v1_finance_gst_workflow__workflow_id__file_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: workflow_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Workflow Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/gst/workflow/{workflow_id}/pay:
+    post:
+      tags:
+      - Financial Operating System
+      summary: Gst Workflow Pay
+      description: 'Step 5: Record GST payment.'
+      operationId: gst_workflow_pay_api_v1_finance_gst_workflow__workflow_id__pay_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: workflow_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Workflow Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              title: Payload
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/gst/workflow:
+    get:
+      tags:
+      - Financial Operating System
+      summary: List Gst Workflows
+      description: List all GST filing workflows.
+      operationId: list_gst_workflows_api_v1_finance_gst_workflow_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          default: 20
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/insights/profit:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Profit Insight
+      description: '"Why did profit drop?" — compares target date vs same day last week.
+
+        Breaks down revenue, COGS, expenses by channel with natural-language insights.'
+      operationId: profit_insight_api_v1_finance_insights_profit_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: target_date
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          description: Date to analyze
+          title: Target Date
+        description: Date to analyze
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/insights/channels:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Channel Analysis
+      description: Which channel is making/losing money? Revenue, COGS, margin by channel.
+      operationId: channel_analysis_api_v1_finance_insights_channels_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: from_date
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          title: From Date
+      - name: to_date
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          title: To Date
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/insights/cash-mismatch:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Cash Mismatch History
+      description: Track cash mismatch pattern over time. Identifies systematic issues.
+      operationId: cash_mismatch_history_api_v1_finance_insights_cash_mismatch_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      - name: days
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 90
+          default: 30
+          title: Days
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/finance/trust-status:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Trust Status
+      description: 'Single call returning system health for frontend badges:
+
+        ledger balanced ✔️, period locked 🔒, audit safe, alert count.'
+      operationId: trust_status_api_v1_finance_trust_status_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/alerts/summary:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Alert Summary
+      description: 'Quick alert overview: error/warning/info counts for badges.'
+      operationId: alert_summary_api_v1_finance_alerts_summary_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/finance/ca-view:
+    get:
+      tags:
+      - Financial Operating System
+      summary: Ca View
+      description: 'Single call for CAs: trial balance, income statement, GST summary,
+
+        period lock status, journal entry counts, reversal rate.'
+      operationId: ca_view_api_v1_finance_ca_view_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: period_start
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          title: Period Start
+      - name: period_end
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          title: Period End
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

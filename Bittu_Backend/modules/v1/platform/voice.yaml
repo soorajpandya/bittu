@@ -1,0 +1,68 @@
+# Bittu API — Platform/Voice Module
+# ===================================
+# Domain: platform
+# Module: voice
+# Version: v1
+# Visibility: internal
+# Tags: Voice / TTS
+# Operations: 2
+# Paths: 2
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: platform
+  module: voice
+  version: v1
+  visibility: internal
+  tags:
+  - Voice / TTS
+  operationCount: 2
+  pathCount: 2
+paths:
+  /api/v1/voice/tts:
+    post:
+      tags:
+      - Voice / TTS
+      summary: Text To Speech
+      operationId: text_to_speech_api_v1_voice_tts_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/TTSIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/voice/payment-notification:
+    post:
+      tags:
+      - Voice / TTS
+      summary: Payment Voice Notification
+      operationId: payment_voice_notification_api_v1_voice_payment_notification_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/PaymentVoiceIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []

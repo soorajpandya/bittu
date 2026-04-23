@@ -1,0 +1,247 @@
+# Bittu API — Analytics/Analytics Module
+# ========================================
+# Domain: analytics
+# Module: analytics
+# Version: v1
+# Visibility: internal
+# Tags: Analytics
+# Operations: 6
+# Paths: 6
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: analytics
+  module: analytics
+  version: v1
+  visibility: internal
+  tags:
+  - Analytics
+  operationCount: 6
+  pathCount: 6
+paths:
+  /api/v1/analytics/dashboard-counts:
+    get:
+      tags:
+      - Analytics
+      summary: Dashboard Counts
+      description: Return quick dashboard counts (orders, revenue, etc.) for today.
+      operationId: dashboard_counts_api_v1_analytics_dashboard_counts_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/analytics/daily:
+    get:
+      tags:
+      - Analytics
+      summary: Daily Analytics
+      description: Return daily analytics for a specific date.
+      operationId: daily_analytics_api_v1_analytics_daily_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: date
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+          title: Date
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/analytics/dashboard:
+    get:
+      tags:
+      - Analytics
+      summary: Dashboard
+      operationId: dashboard_api_v1_analytics_dashboard_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Branch Id
+      - name: start_date
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+          title: Start Date
+      - name: end_date
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+          title: End Date
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/analytics/compare:
+    get:
+      tags:
+      - Analytics
+      summary: Compare Periods
+      operationId: compare_periods_api_v1_analytics_compare_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Branch Id
+      - name: current_start
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          title: Current Start
+      - name: current_end
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          title: Current End
+      - name: previous_start
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          title: Previous Start
+      - name: previous_end
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          title: Previous End
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/analytics/heatmap:
+    get:
+      tags:
+      - Analytics
+      summary: Hourly Heatmap
+      operationId: hourly_heatmap_api_v1_analytics_heatmap_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Branch Id
+      - name: target_date
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+          title: Target Date
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/analytics/funnel:
+    post:
+      tags:
+      - Analytics
+      summary: Track Funnel
+      description: Track a user funnel event (onboarding, feature adoption, etc.).
+      operationId: track_funnel_api_v1_analytics_funnel_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/FunnelEventIn
+              default:
+                event: ''
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []

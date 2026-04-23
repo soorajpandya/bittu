@@ -1,0 +1,175 @@
+# Bittu API — Catalog/Combos Module
+# ===================================
+# Domain: catalog
+# Module: combos
+# Version: v1
+# Visibility: internal
+# Tags: Combos
+# Operations: 6
+# Paths: 3
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: catalog
+  module: combos
+  version: v1
+  visibility: internal
+  tags:
+  - Combos
+  operationCount: 6
+  pathCount: 3
+paths:
+  /api/v1/combos:
+    get:
+      tags:
+      - Combos
+      summary: List Combos
+      operationId: list_combos_api_v1_combos_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: active_only
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+          title: Active Only
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Combos
+      summary: Create Combo
+      operationId: create_combo_api_v1_combos_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ComboCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/combos/items:
+    get:
+      tags:
+      - Combos
+      summary: List Combo Items
+      description: List all combo-item mappings across all combos.
+      operationId: list_combo_items_api_v1_combos_items_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/combos/{combo_id}:
+    get:
+      tags:
+      - Combos
+      summary: Get Combo
+      operationId: get_combo_api_v1_combos__combo_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: combo_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Combo Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    patch:
+      tags:
+      - Combos
+      summary: Update Combo
+      operationId: update_combo_api_v1_combos__combo_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: combo_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Combo Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ComboUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Combos
+      summary: Delete Combo
+      operationId: delete_combo_api_v1_combos__combo_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: combo_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Combo Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

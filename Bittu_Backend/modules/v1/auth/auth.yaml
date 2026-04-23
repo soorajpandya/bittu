@@ -1,0 +1,184 @@
+# Bittu API — Auth/Auth Module
+# ==============================
+# Domain: auth
+# Module: auth
+# Version: v1
+# Visibility: public
+# Tags: Auth
+# Operations: 8
+# Paths: 8
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: auth
+  module: auth
+  version: v1
+  visibility: public
+  tags:
+  - Auth
+  operationCount: 8
+  pathCount: 8
+paths:
+  /api/v1/auth/google:
+    get:
+      tags:
+      - Auth
+      summary: Google Redirect
+      description: 'Returns the Supabase Google OAuth URL.
+
+        Frontend should redirect the user''s browser to the returned URL.
+
+        `redirect_to` is where Supabase sends the user after Google consent (your frontend callback page).'
+      operationId: google_redirect_api_v1_auth_google_get
+      parameters:
+      - name: redirect_to
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Redirect To
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/auth/google/callback:
+    post:
+      tags:
+      - Auth
+      summary: Google Callback
+      description: 'Exchange the authorization code from Supabase Google OAuth callback for a session.
+
+        The frontend calls this after being redirected back from Google with the `code` param.
+
+        Returns access_token + refresh_token + user.'
+      operationId: google_callback_api_v1_auth_google_callback_post
+      parameters:
+      - name: code
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Code
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/auth/token/refresh:
+    post:
+      tags:
+      - Auth
+      summary: Refresh Access Token
+      description: Get a new access_token using a refresh_token.
+      operationId: refresh_access_token_api_v1_auth_token_refresh_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/RefreshTokenRequest
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/auth/me:
+    get:
+      tags:
+      - Auth
+      summary: Get Me
+      description: Get current user profile with branch_id. Requires access_token.
+      operationId: get_me_api_v1_auth_me_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+      - HTTPBearer: []
+  /api/v1/auth/permissions/me:
+    get:
+      tags:
+      - Auth
+      summary: Get My Permissions
+      description: 'Return the authenticated user''s resolved permissions and meta constraints.
+
+
+        Frontend uses this to adapt UI (hide buttons, cap discount sliders, etc.).'
+      operationId: get_my_permissions_api_v1_auth_permissions_me_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/auth/initialize-restaurant:
+    post:
+      tags:
+      - Auth
+      summary: Initialize Restaurant
+      description: Initialize restaurant and primary branch for the current user (idempotent).
+      operationId: initialize_restaurant_api_v1_auth_initialize_restaurant_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/auth/debug-db:
+    get:
+      tags:
+      - Auth
+      summary: Debug Db
+      description: Debug database connectivity.
+      operationId: debug_db_api_v1_auth_debug_db_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/v1/auth/logout:
+    post:
+      tags:
+      - Auth
+      summary: Logout Endpoint
+      description: Invalidate current session.
+      operationId: logout_endpoint_api_v1_auth_logout_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []

@@ -1,0 +1,160 @@
+# Bittu API — Customers/Offers Module
+# =====================================
+# Domain: customers
+# Module: offers
+# Version: v1
+# Visibility: internal
+# Tags: Offers
+# Operations: 5
+# Paths: 2
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: customers
+  module: offers
+  version: v1
+  visibility: internal
+  tags:
+  - Offers
+  operationCount: 5
+  pathCount: 2
+paths:
+  /api/v1/offers:
+    get:
+      tags:
+      - Offers
+      summary: List Offers
+      operationId: list_offers_api_v1_offers_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: active_only
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+          title: Active Only
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Offers
+      summary: Create Offer
+      operationId: create_offer_api_v1_offers_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/OfferCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/offers/{offer_id}:
+    get:
+      tags:
+      - Offers
+      summary: Get Offer
+      operationId: get_offer_api_v1_offers__offer_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: offer_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Offer Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    patch:
+      tags:
+      - Offers
+      summary: Update Offer
+      operationId: update_offer_api_v1_offers__offer_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: offer_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Offer Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/OfferUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Offers
+      summary: Delete Offer
+      operationId: delete_offer_api_v1_offers__offer_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: offer_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Offer Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

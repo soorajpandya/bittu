@@ -1,0 +1,48 @@
+# Bittu API — Payments/Paytm Module
+# ===================================
+# Domain: payments
+# Module: paytm
+# Version: v1
+# Visibility: internal
+# Tags: Paytm
+# Operations: 1
+# Paths: 1
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: payments
+  module: paytm
+  version: v1
+  visibility: internal
+  tags:
+  - Paytm
+  operationCount: 1
+  pathCount: 1
+paths:
+  /api/v1/paytm/initiate:
+    post:
+      tags:
+      - Paytm
+      summary: Initiate Paytm Transaction
+      operationId: initiate_paytm_transaction_api_v1_paytm_initiate_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/InitiateIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []

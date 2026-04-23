@@ -1,0 +1,46 @@
+# Bittu API — Platform/Health Module
+# ====================================
+# Domain: platform
+# Module: health
+# Version: v1
+# Visibility: public
+# Tags: Health
+# Operations: 2
+# Paths: 2
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: platform
+  module: health
+  version: v1
+  visibility: public
+  tags:
+  - Health
+  operationCount: 2
+  pathCount: 2
+paths:
+  /api/v1/health:
+    get:
+      tags:
+      - Health
+      summary: Health
+      operationId: health_api_v1_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/v1/ready:
+    get:
+      tags:
+      - Health
+      summary: Readiness
+      operationId: readiness_api_v1_ready_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}

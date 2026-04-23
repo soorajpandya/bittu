@@ -1,0 +1,104 @@
+# Bittu API — Customers/Favourites Module
+# =========================================
+# Domain: customers
+# Module: favourites
+# Version: v1
+# Visibility: internal
+# Tags: Favourite Items, Favourites
+# Operations: 4
+# Paths: 3
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: customers
+  module: favourites
+  version: v1
+  visibility: internal
+  tags:
+  - Favourite Items
+  - Favourites
+  operationCount: 4
+  pathCount: 3
+paths:
+  /api/v1/favourites:
+    get:
+      tags:
+      - Favourites
+      summary: List Favourites
+      operationId: list_favourites_api_v1_favourites_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - Favourites
+      summary: Add Favourite
+      operationId: add_favourite_api_v1_favourites_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/FavouriteIn
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/favourites/{item_id}:
+    delete:
+      tags:
+      - Favourites
+      summary: Remove Favourite
+      operationId: remove_favourite_api_v1_favourites__item_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Item Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/favourite-items:
+    get:
+      tags:
+      - Favourite Items
+      summary: List Favourite Items
+      description: List favourite items for the current user.
+      operationId: list_favourite_items_api_v1_favourite_items_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []

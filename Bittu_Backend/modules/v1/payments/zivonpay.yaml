@@ -1,0 +1,48 @@
+# Bittu API — Payments/Zivonpay Module
+# ======================================
+# Domain: payments
+# Module: zivonpay
+# Version: v1
+# Visibility: internal
+# Tags: Zivonpay
+# Operations: 1
+# Paths: 1
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: payments
+  module: zivonpay
+  version: v1
+  visibility: internal
+  tags:
+  - Zivonpay
+  operationCount: 1
+  pathCount: 1
+paths:
+  /api/v1/zivonpay/create-order:
+    post:
+      tags:
+      - Zivonpay
+      summary: Create Zivonpay Order
+      operationId: create_zivonpay_order_api_v1_zivonpay_create_order_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/app__api__v1__zivonpay__CreateOrderIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []

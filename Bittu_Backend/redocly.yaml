@@ -1,0 +1,25 @@
+# Redocly CLI Configuration
+# ===========================
+# Usage:
+#   npx @redocly/cli lint core.yaml
+#   npx @redocly/cli bundle core.yaml -o bundled.yaml
+#   npx @redocly/cli preview-docs core.yaml
+
+extends:
+- recommended
+apis:
+  bittu@v1:
+    root: core.yaml
+theme:
+  openapi:
+    showExtensions: true
+    generateCodeSamples:
+      languages:
+      - lang: curl
+      - lang: Python
+      - lang: JavaScript
+rules:
+  no-unresolved-refs: error
+  no-unused-components: warn
+  operation-operationId: error
+  tag-description: warn

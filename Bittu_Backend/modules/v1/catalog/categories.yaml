@@ -1,0 +1,160 @@
+# Bittu API — Catalog/Categories Module
+# =======================================
+# Domain: catalog
+# Module: categories
+# Version: v1
+# Visibility: internal
+# Tags: Categories
+# Operations: 5
+# Paths: 2
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: catalog
+  module: categories
+  version: v1
+  visibility: internal
+  tags:
+  - Categories
+  operationCount: 5
+  pathCount: 2
+paths:
+  /api/v1/categories:
+    get:
+      tags:
+      - Categories
+      summary: List Categories
+      operationId: list_categories_api_v1_categories_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: active_only
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+          title: Active Only
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Categories
+      summary: Create Category
+      operationId: create_category_api_v1_categories_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/app__api__v1__categories__CategoryCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/categories/{category_id}:
+    get:
+      tags:
+      - Categories
+      summary: Get Category
+      operationId: get_category_api_v1_categories__category_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: category_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Category Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    patch:
+      tags:
+      - Categories
+      summary: Update Category
+      operationId: update_category_api_v1_categories__category_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: category_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Category Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CategoryUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Categories
+      summary: Delete Category
+      operationId: delete_category_api_v1_categories__category_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: category_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Category Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

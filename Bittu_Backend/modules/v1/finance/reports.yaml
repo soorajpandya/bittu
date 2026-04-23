@@ -1,0 +1,665 @@
+# Bittu API — Finance/Reports Module
+# ====================================
+# Domain: finance
+# Module: reports
+# Version: v1
+# Visibility: internal
+# Tags: Financial Reports, Reports
+# Operations: 14
+# Paths: 14
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: finance
+  module: reports
+  version: v1
+  visibility: internal
+  tags:
+  - Financial Reports
+  - Reports
+  operationCount: 14
+  pathCount: 14
+paths:
+  /api/v1/reports/pnl:
+    get:
+      tags:
+      - Reports
+      summary: Profit And Loss
+      description: 'Profit & Loss (Income Statement) — derived ONLY from journal_lines.
+
+
+        Revenue  = net credit on revenue accounts
+
+        Expenses = net debit on expense accounts
+
+        Net Income = Revenue − Expenses'
+      operationId: profit_and_loss_api_v1_reports_pnl_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/reports/cashflow:
+    get:
+      tags:
+      - Reports
+      summary: Cashflow Report
+      description: Cash inflow vs outflow summary (merges legacy + double-entry rows).
+      operationId: cashflow_report_api_v1_reports_cashflow_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/reports/trial-balance:
+    get:
+      tags:
+      - Financial Reports
+      summary: Trial Balance
+      description: Trial Balance — debit/credit totals per account. Balanced books = totals match.
+      operationId: trial_balance_api_v1_reports_trial_balance_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: as_of
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: As-of date (defaults to today)
+          title: As Of
+        description: As-of date (defaults to today)
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/reports/balance-sheet:
+    get:
+      tags:
+      - Financial Reports
+      summary: Balance Sheet
+      description: Balance Sheet — Assets = Liabilities + Equity.
+      operationId: balance_sheet_api_v1_reports_balance_sheet_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: as_of
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: As-of date (defaults to today)
+          title: As Of
+        description: As-of date (defaults to today)
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/reports/income-statement:
+    get:
+      tags:
+      - Financial Reports
+      summary: Income Statement
+      description: Income Statement (P&L) — Revenue, Expenses, Net Income for a period.
+      operationId: income_statement_api_v1_reports_income_statement_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: Period start
+          title: From Date
+        description: Period start
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: Period end
+          title: To Date
+        description: Period end
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/reports/customer-aging:
+    get:
+      tags:
+      - Financial Reports
+      summary: Customer Aging
+      description: Customer Aging Report — 30/60/90+ day AR buckets.
+      operationId: customer_aging_api_v1_reports_customer_aging_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: customer_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Customer Id
+      - name: as_of
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: As Of
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/reports/supplier-aging:
+    get:
+      tags:
+      - Financial Reports
+      summary: Supplier Aging
+      description: Supplier Aging Report — 30/60/90+ day AP buckets.
+      operationId: supplier_aging_api_v1_reports_supplier_aging_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: supplier_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Supplier Id
+      - name: as_of
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: As Of
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/reports/customer-statement/{customer_id}:
+    get:
+      tags:
+      - Financial Reports
+      summary: Customer Statement
+      description: Customer Statement — full ledger of a customer's transactions + balance.
+      operationId: customer_statement_api_v1_reports_customer_statement__customer_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Customer Id
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          default: 200
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/reports/supplier-statement/{supplier_id}:
+    get:
+      tags:
+      - Financial Reports
+      summary: Supplier Statement
+      description: Supplier Statement — full ledger of a supplier's transactions + balance.
+      operationId: supplier_statement_api_v1_reports_supplier_statement__supplier_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: supplier_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Supplier Id
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          default: 200
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/reports/expense-summary:
+    get:
+      tags:
+      - Financial Reports
+      summary: Expense Summary
+      description: Expense Summary — breakdown by category for a period.
+      operationId: expense_summary_api_v1_reports_expense_summary_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/reports/gst-summary:
+    get:
+      tags:
+      - Financial Reports
+      summary: Gst Summary
+      description: 'GST Summary — GSTR-3B style data for a period.
+
+        Returns CGST/SGST/IGST collected, input credits, and net payable.'
+      operationId: gst_summary_api_v1_reports_gst_summary_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: period_start
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          description: GST period start
+          title: Period Start
+        description: GST period start
+      - name: period_end
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          description: GST period end
+          title: Period End
+        description: GST period end
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/reports/cash-flow:
+    get:
+      tags:
+      - Financial Reports
+      summary: Cash Flow
+      description: 'Cash Flow summary — inflows and outflows from cash/bank accounts.
+
+        Derived from journal entries touching cash, bank, and card accounts.'
+      operationId: cash_flow_api_v1_reports_cash_flow_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/reports/drilldown:
+    get:
+      tags:
+      - Financial Reports
+      summary: Audit Drilldown
+      description: "Audit Drilldown — trace any number back to its source journal entries.\n\nUsage:\n  - From trial balance\
+        \ → pass account_id to see all entries for that account\n  - From P&L line → pass reference_type to see all entries\
+        \ of that type\n  - From specific transaction → pass reference_id to see the exact entry\n  - CA asks \"show me origin\
+        \ of this number\" → this endpoint answers it"
+      operationId: audit_drilldown_api_v1_reports_drilldown_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: account_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Filter by account (from trial balance)
+          title: Account Id
+        description: Filter by account (from trial balance)
+      - name: reference_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Filter by source type (order, payment, refund, etc.)
+          title: Reference Type
+        description: Filter by source type (order, payment, refund, etc.)
+      - name: reference_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Filter by specific source document ID
+          title: Reference Id
+        description: Filter by specific source document ID
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: Entry date from
+          title: From Date
+        description: Entry date from
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: Entry date to
+          title: To Date
+        description: Entry date to
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/reports/integrity-check:
+    get:
+      tags:
+      - Financial Reports
+      summary: Integrity Check
+      description: "Accounting Integrity Validator — run full consistency check.\n\nChecks:\n  1. Trial balance: sum(debit)\
+        \ == sum(credit) globally\n  2. Entry balance: every individual journal entry balances\n  3. Orphan lines: journal_lines\
+        \ without parent entry\n  4. Broken account refs: lines referencing deleted accounts\n  5. Reversal integrity: reversed\
+        \ entries properly linked\n\nReturns all_passed=true if system is fully consistent."
+      operationId: integrity_check_api_v1_reports_integrity_check_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []

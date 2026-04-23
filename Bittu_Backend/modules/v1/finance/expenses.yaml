@@ -1,0 +1,274 @@
+# Bittu API — Finance/Expenses Module
+# =====================================
+# Domain: finance
+# Module: expenses
+# Version: v1
+# Visibility: internal
+# Tags: Expenses
+# Operations: 7
+# Paths: 5
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: finance
+  module: expenses
+  version: v1
+  visibility: internal
+  tags:
+  - Expenses
+  operationCount: 7
+  pathCount: 5
+paths:
+  /api/v1/expenses:
+    post:
+      tags:
+      - Expenses
+      summary: Create Expense
+      description: Create a new expense.
+      operationId: create_expense_api_v1_expenses_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/app__api__v1__expenses__ExpenseCreate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    get:
+      tags:
+      - Expenses
+      summary: List Expenses
+      description: List expenses with filters.
+      operationId: list_expenses_api_v1_expenses_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: category_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category Id
+      - name: vendor_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Vendor Id
+      - name: payment_status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Payment Status
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/expenses/summary:
+    get:
+      tags:
+      - Expenses
+      summary: Expense Summary
+      description: Get expense summary by category.
+      operationId: expense_summary_api_v1_expenses_summary_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/expenses/categories:
+    get:
+      tags:
+      - Expenses
+      summary: List Categories
+      description: List expense categories.
+      operationId: list_categories_api_v1_expenses_categories_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - Expenses
+      summary: Create Category
+      description: Create a new expense category.
+      operationId: create_category_api_v1_expenses_categories_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/app__api__v1__expenses__CategoryCreate
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/expenses/{expense_id}:
+    get:
+      tags:
+      - Expenses
+      summary: Get Expense
+      description: Get expense details.
+      operationId: get_expense_api_v1_expenses__expense_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: expense_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Expense Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/expenses/{expense_id}/approve:
+    post:
+      tags:
+      - Expenses
+      summary: Approve Expense
+      description: Approve an expense.
+      operationId: approve_expense_api_v1_expenses__expense_id__approve_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: expense_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Expense Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

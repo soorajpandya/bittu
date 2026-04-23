@@ -1,0 +1,68 @@
+# Bittu API — Platform/Audit-Logs Module
+# ========================================
+# Domain: platform
+# Module: audit-logs
+# Version: v1
+# Visibility: internal
+# Tags: Audit Logs
+# Operations: 1
+# Paths: 1
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: platform
+  module: audit-logs
+  version: v1
+  visibility: internal
+  tags:
+  - Audit Logs
+  operationCount: 1
+  pathCount: 1
+paths:
+  /api/v1/audit-logs:
+    get:
+      tags:
+      - Audit Logs
+      summary: List Audit Logs
+      operationId: list_audit_logs_api_v1_audit_logs_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: entity_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Entity Type
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

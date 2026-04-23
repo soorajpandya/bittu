@@ -1,0 +1,74 @@
+# Bittu API — Platform/Help Module
+# ==================================
+# Domain: platform
+# Module: help
+# Version: v1
+# Visibility: internal
+# Tags: Help Articles
+# Operations: 2
+# Paths: 2
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: platform
+  module: help
+  version: v1
+  visibility: internal
+  tags:
+  - Help Articles
+  operationCount: 2
+  pathCount: 2
+paths:
+  /api/v1/help:
+    get:
+      tags:
+      - Help Articles
+      summary: List Articles
+      operationId: list_articles_api_v1_help_get
+      parameters:
+      - name: category
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/help/{article_id}:
+    get:
+      tags:
+      - Help Articles
+      summary: Get Article
+      operationId: get_article_api_v1_help__article_id__get
+      parameters:
+      - name: article_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Article Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

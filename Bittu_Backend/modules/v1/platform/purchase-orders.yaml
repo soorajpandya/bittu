@@ -1,0 +1,194 @@
+# Bittu API — Platform/Purchase-Orders Module
+# =============================================
+# Domain: platform
+# Module: purchase-orders
+# Version: v1
+# Visibility: internal
+# Tags: Purchase Orders
+# Operations: 5
+# Paths: 2
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: platform
+  module: purchase-orders
+  version: v1
+  visibility: internal
+  tags:
+  - Purchase Orders
+  operationCount: 5
+  pathCount: 2
+paths:
+  /api/v1/purchase-orders:
+    get:
+      tags:
+      - Purchase Orders
+      summary: List Orders
+      operationId: list_orders_api_v1_purchase_orders_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: payment_status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Payment Status
+      - name: source_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Type
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Purchase Orders
+      summary: Create Order
+      operationId: create_order_api_v1_purchase_orders_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/POCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/purchase-orders/{po_id}:
+    get:
+      tags:
+      - Purchase Orders
+      summary: Get Order
+      operationId: get_order_api_v1_purchase_orders__po_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: po_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Po Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    patch:
+      tags:
+      - Purchase Orders
+      summary: Update Order
+      operationId: update_order_api_v1_purchase_orders__po_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: po_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Po Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/POUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Purchase Orders
+      summary: Delete Order
+      operationId: delete_order_api_v1_purchase_orders__po_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: po_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Po Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

@@ -1,0 +1,48 @@
+# Bittu API — Payments/Webhooks Module
+# ======================================
+# Domain: payments
+# Module: webhooks
+# Version: v1
+# Visibility: public
+# Tags: Webhooks
+# Operations: 2
+# Paths: 2
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: payments
+  module: webhooks
+  version: v1
+  visibility: public
+  tags:
+  - Webhooks
+  operationCount: 2
+  pathCount: 2
+paths:
+  /api/v1/webhooks/razorpay/payment:
+    post:
+      tags:
+      - Webhooks
+      summary: Razorpay Payment Webhook
+      description: Razorpay payment event callback.
+      operationId: razorpay_payment_webhook_api_v1_webhooks_razorpay_payment_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/v1/webhooks/razorpay/subscription:
+    post:
+      tags:
+      - Webhooks
+      summary: Razorpay Subscription Webhook
+      description: Razorpay subscription lifecycle callback.
+      operationId: razorpay_subscription_webhook_api_v1_webhooks_razorpay_subscription_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}

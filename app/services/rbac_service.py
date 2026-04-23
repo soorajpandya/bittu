@@ -1,4 +1,5 @@
 import time
+import json
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +41,7 @@ class RBACService:
                 "staff.read": {}, "staff.create": {}, "staff.update": {}, "staff.delete": {},
                 "staff.branch_users.read": {}, "staff.branch_users.create": {},
                 "staff.branch_users.update": {}, "staff.branch_users.delete": {},
+                "staff.invites.create": {}, "staff.invites.read": {}, "staff.invites.revoke": {},
                 # Accounting
                 "accounting.read": {}, "accounting.write": {},
                 # ERP
@@ -89,6 +91,7 @@ class RBACService:
                 "kitchen_station.read": {}, "kitchen_station.manage": {},
                 # Staff (read-only) + accounting
                 "staff.read": {}, "staff.branch_users.read": {},
+                "staff.invites.read": {},
                 "accounting.read": {}, "accounting.write": {},
                 # ERP
                 "erp.read": {}, "erp.write": {}, "erp.shifts.read": {}, "erp.shifts.manage": {},
@@ -189,6 +192,19 @@ class RBACService:
         resource = key.split(".", 1)[0]
         return f"{resource}.*" in candidates
 
+    def _coerce_meta(self, raw_meta: Any) -> dict[str, Any]:
+        if raw_meta is None:
+            return {}
+        if isinstance(raw_meta, dict):
+            return raw_meta
+        if isinstance(raw_meta, str):
+            try:
+                parsed = json.loads(raw_meta)
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+        return {}
+
     async def _load_permission_map(self, user: "UserContext") -> dict[str, dict[str, Any]]:
         cache_key = f"rbac_perms:{user.user_id}:{user.branch_id or 'none'}"
 
@@ -229,8 +245,43 @@ class RBACService:
                 )
 
                 if not row:
-                    # Owner or non-branch user fallback.
+                    # Owner or non-branch user path.
+                    # Try DB role->permissions first (single source of truth), then fallback.
                     role_name = (user.role or "staff").lower()
+                    role_row = None
+                    if user.branch_id:
+                        role_row = await conn.fetchrow(
+                            """
+                            SELECT id, name, branch_id
+                            FROM roles
+                            WHERE branch_id = $1
+                              AND lower(name) = lower($2)
+                            LIMIT 1
+                            """,
+                            user.branch_id,
+                            role_name,
+                        )
+
+                    if role_row:
+                        rp_rows = await conn.fetch(
+                            """
+                            SELECT p.key, rp.allowed, rp.meta
+                            FROM role_permissions rp
+                            JOIN permissions p ON p.id = rp.permission_id
+                            WHERE rp.role_id = $1
+                            """,
+                            role_row["id"],
+                        )
+                        for rp in rp_rows:
+                            permission_map[self._norm(rp["key"])] = {
+                                "allowed": bool(rp["allowed"]),
+                                "meta": self._coerce_meta(rp["meta"]),
+                                "role_id": str(role_row["id"]),
+                                "role_name": (role_row["name"] or role_name).lower(),
+                                "branch_id": str(role_row["branch_id"]) if role_row["branch_id"] else None,
+                            }
+                        return permission_map
+
                     logger.info("rbac_fallback_used", user_id=user.user_id, role=role_name, reason="no_branch_user_row")
                     self._track_fallback("no_branch_user_row")
                     for k, meta in self._fallback_permissions.get(role_name, {}).items():
@@ -258,7 +309,7 @@ class RBACService:
                     for rp in rp_rows:
                         permission_map[self._norm(rp["key"])] = {
                             "allowed": bool(rp["allowed"]),
-                            "meta": dict(rp["meta"] or {}),
+                            "meta": self._coerce_meta(rp["meta"]),
                             "role_id": str(role_id),
                             "role_name": role_name,
                             "branch_id": str(row["branch_id"]) if row["branch_id"] else None,

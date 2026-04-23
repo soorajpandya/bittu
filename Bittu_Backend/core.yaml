@@ -1,0 +1,731 @@
+# Bittu API — Core Specification
+# =================================
+# OpenAPI 3.1 Root Document
+# 
+# This is the entry point for the modular Bittu API specification.
+# All paths are defined in domain-specific module files under modules/v1/.
+# All schemas are centralized in components/schemas.yaml.
+# 
+# To bundle into a single file, use:
+#   npx @redocly/cli bundle core.yaml -o bundled.yaml
+# 
+# To preview with Redoc:
+#   npx @redocly/cli preview-docs core.yaml
+# 
+# Structure:
+#   core.yaml                          ← You are here
+#   components/
+#     schemas.yaml                     ← 190+ shared schemas
+#     responses.yaml                   ← Common HTTP responses
+#     parameters.yaml                  ← Shared query parameters
+#     security.yaml                    ← JWT security scheme
+#   modules/v1/
+#     {domain}/{module}.yaml           ← Path definitions by domain
+
+openapi: 3.1.0
+info:
+  title: BITTU API
+  description: 'Real-time Restaurant Operating System
+
+
+    ## Architecture
+
+    This API is organized into domain modules:
+
+
+    | Domain | Description |
+
+    | --- | --- |
+
+    | **Analytics** | Analytics & reporting — dashboards, heatmaps, funnels |
+
+    | **Auth** | Authentication, staff management, KYC verification |
+
+    | **Catalog** | Menu & item management — items, categories, combos, modifiers |
+
+    | **Customers** | Customer management — profiles, addresses, coupons, feedback |
+
+    | **Finance** | Financial Operating System — accounting, invoices, GST, reports |
+
+    | **Operations** | Core restaurant operations — orders, kitchen, tables, delivery |
+
+    | **Payments** | Payment gateways — Razorpay, Cashfree, PhonePe, PayU |
+
+    | **Platform** | Platform configuration — restaurants, subscriptions, ERP |
+
+
+    ## Authentication
+
+    All endpoints (except Health and public QR flows) require a Supabase JWT.
+
+    Obtain tokens via `GET /api/v1/auth/google` → Google OAuth → callback.
+
+
+    ## Versioning
+
+    Current version: **v1** — all paths prefixed with `/api/v1/`.
+
+    Module files are in `modules/v1/{domain}/{module}.yaml`.'
+  version: 1.0.0
+  contact:
+    name: Bittu Engineering
+    url: https://www.bittupos.com
+  license:
+    name: Proprietary
+servers:
+- url: https://api.bittupos.com
+  description: Production
+- url: http://localhost:8000
+  description: Local development
+security:
+- HTTPBearer: []
+tags:
+- name: Analytics
+  description: analytics/analytics — Analytics
+- name: Auth
+  description: auth/auth — Auth
+- name: DigiLocker KYC
+  description: auth/kyc — DigiLocker KYC
+- name: KYC / Verification
+  description: auth/kyc — KYC / Verification
+- name: Staff
+  description: auth/staff — Staff
+- name: AI Ingredients
+  description: catalog/ai-menu — AI Ingredients
+- name: AI Menu Scanner
+  description: catalog/ai-menu — AI Menu Scanner
+- name: Categories
+  description: catalog/categories — Categories
+- name: Combos
+  description: catalog/combos — Combos
+- name: Food Images
+  description: catalog/food-images — Food Images
+- name: Item Addons
+  description: catalog/items — Item Addons
+- name: Item Extras
+  description: catalog/items — Item Extras
+- name: Item Ingredients
+  description: catalog/items — Item Ingredients
+- name: Item Station Mapping
+  description: catalog/items — Item Station Mapping
+- name: Item Variants
+  description: catalog/items — Item Variants
+- name: Items
+  description: catalog/items — Items
+- name: Modifier Groups
+  description: catalog/modifiers — Modifier Groups
+- name: Modifiers
+  description: catalog/modifiers — Modifiers
+- name: Coupons
+  description: customers/coupons — Coupons
+- name: Customer Addresses
+  description: customers/customers — Customer Addresses
+- name: Customers
+  description: customers/customers — Customers
+- name: Favourite Items
+  description: customers/favourites — Favourite Items
+- name: Favourites
+  description: customers/favourites — Favourites
+- name: Feedback
+  description: customers/feedback — Feedback
+- name: Notifications
+  description: customers/notifications — Notifications
+- name: Offers
+  description: customers/offers — Offers
+- name: Accounting
+  description: finance/accounting — Accounting
+- name: Accounting Rules
+  description: finance/accounting — Accounting Rules
+- name: Chart of Accounts
+  description: finance/accounting — Chart of Accounts
+- name: Bank Reconciliation
+  description: finance/bank-recon — Bank Reconciliation
+- name: Billing
+  description: finance/billing — Billing
+- name: Cash Transactions
+  description: finance/cash-transactions — Cash Transactions
+- name: Due Payments
+  description: finance/due-payments — Due Payments
+- name: Expenses
+  description: finance/expenses — Expenses
+- name: Financial Operating System
+  description: finance/finance — Financial Operating System
+- name: Invoice Import
+  description: finance/invoices — Invoice Import
+- name: Invoices
+  description: finance/invoices — Invoices
+- name: Financial Reports
+  description: finance/reports — Financial Reports
+- name: Reports
+  description: finance/reports — Reports
+- name: Settlements
+  description: finance/settlements — Settlements
+- name: Sub-Ledger
+  description: finance/tax — Sub-Ledger
+- name: Tax Liability
+  description: finance/tax — Tax Liability
+- name: Deliverable Pincodes
+  description: operations/delivery — Deliverable Pincodes
+- name: Delivery
+  description: operations/delivery — Delivery
+- name: Delivery Partners
+  description: operations/delivery — Delivery Partners
+- name: Dine-In Sessions
+  description: operations/dinein — Dine-In Sessions
+- name: Ingredients
+  description: operations/inventory — Ingredients
+- name: Inventory
+  description: operations/inventory — Inventory
+- name: Kitchen
+  description: operations/kitchen — Kitchen
+- name: Kitchen Stations
+  description: operations/kitchen — Kitchen Stations
+- name: Orders
+  description: operations/orders — Orders
+- name: Restaurant Tables
+  description: operations/tables — Restaurant Tables
+- name: Table Events
+  description: operations/tables — Table Events
+- name: Table Sessions
+  description: operations/tables — Table Sessions
+- name: Tables
+  description: operations/tables — Tables
+- name: Waitlist
+  description: operations/waitlist — Waitlist
+- name: Cashfree PG
+  description: payments/cashfree — Cashfree PG
+- name: Payments
+  description: payments/payments — Payments
+- name: Paytm
+  description: payments/paytm — Paytm
+- name: PayU
+  description: payments/payu — PayU
+- name: PhonePe
+  description: payments/phonepe — PhonePe
+- name: Razorpay Extended
+  description: payments/razorpay — Razorpay Extended
+- name: Webhooks
+  description: payments/webhooks — Webhooks
+- name: Zivonpay
+  description: payments/zivonpay — Zivonpay
+- name: Audit Logs
+  description: platform/audit-logs — Audit Logs
+- name: ERP
+  description: platform/erp — ERP
+- name: Google Business Profile
+  description: platform/google — Google Business Profile
+- name: Health
+  description: platform/health — Health
+- name: Help Articles
+  description: platform/help — Help Articles
+- name: Miscellaneous
+  description: platform/misc — Miscellaneous
+- name: Purchase Orders
+  description: platform/purchase-orders — Purchase Orders
+- name: Restaurant Settings
+  description: platform/restaurants — Restaurant Settings
+- name: Restaurants
+  description: platform/restaurants — Restaurants
+- name: Subscriptions
+  description: platform/subscriptions — Subscriptions
+- name: Voice / TTS
+  description: platform/voice — Voice / TTS
+x-tagGroups:
+- name: Analytics
+  tags:
+  - Analytics
+  description: Analytics & reporting — dashboards, heatmaps, funnels
+- name: Auth
+  tags:
+  - Auth
+  - DigiLocker KYC
+  - KYC / Verification
+  - Staff
+  description: Authentication, staff management, KYC verification
+- name: Catalog
+  tags:
+  - AI Ingredients
+  - AI Menu Scanner
+  - Categories
+  - Combos
+  - Food Images
+  - Item Addons
+  - Item Extras
+  - Item Ingredients
+  - Item Station Mapping
+  - Item Variants
+  - Items
+  - Modifier Groups
+  - Modifiers
+  description: Menu & item management — items, categories, combos, modifiers
+- name: Customers
+  tags:
+  - Coupons
+  - Customer Addresses
+  - Customers
+  - Favourite Items
+  - Favourites
+  - Feedback
+  - Notifications
+  - Offers
+  description: Customer management — profiles, addresses, coupons, feedback
+- name: Finance
+  tags:
+  - Accounting
+  - Accounting Rules
+  - Chart of Accounts
+  - Bank Reconciliation
+  - Billing
+  - Cash Transactions
+  - Due Payments
+  - Expenses
+  - Financial Operating System
+  - Invoice Import
+  - Invoices
+  - Financial Reports
+  - Reports
+  - Settlements
+  - Sub-Ledger
+  - Tax Liability
+  description: Financial Operating System — accounting, invoices, GST, reports
+- name: Operations
+  tags:
+  - Deliverable Pincodes
+  - Delivery
+  - Delivery Partners
+  - Dine-In Sessions
+  - Ingredients
+  - Inventory
+  - Kitchen
+  - Kitchen Stations
+  - Orders
+  - Restaurant Tables
+  - Table Events
+  - Table Sessions
+  - Tables
+  - Waitlist
+  description: Core restaurant operations — orders, kitchen, tables, delivery
+- name: Payments
+  tags:
+  - Cashfree PG
+  - Payments
+  - Paytm
+  - PayU
+  - PhonePe
+  - Razorpay Extended
+  - Webhooks
+  - Zivonpay
+  description: Payment gateways — Razorpay, Cashfree, PhonePe, PayU
+- name: Platform
+  tags:
+  - Audit Logs
+  - ERP
+  - Google Business Profile
+  - Health
+  - Help Articles
+  - Miscellaneous
+  - Purchase Orders
+  - Restaurant Settings
+  - Restaurants
+  - Subscriptions
+  - Voice / TTS
+  description: Platform configuration — restaurants, subscriptions, ERP
+components:
+  securitySchemes:
+    $ref: components/security.yaml#/securitySchemes
+x-modules:
+  analytics:
+  - name: analytics
+    $ref: modules/v1/analytics/analytics.yaml
+    visibility: internal
+    tags:
+    - Analytics
+    paths: 6
+    operations: 6
+  auth:
+  - name: auth
+    $ref: modules/v1/auth/auth.yaml
+    visibility: public
+    tags:
+    - Auth
+    paths: 8
+    operations: 8
+  - name: kyc
+    $ref: modules/v1/auth/kyc.yaml
+    visibility: public
+    tags:
+    - DigiLocker KYC
+    - KYC / Verification
+    paths: 16
+    operations: 16
+  - name: staff
+    $ref: modules/v1/auth/staff.yaml
+    visibility: internal
+    tags:
+    - Staff
+    paths: 9
+    operations: 15
+  catalog:
+  - name: ai-menu
+    $ref: modules/v1/catalog/ai-menu.yaml
+    visibility: internal
+    tags:
+    - AI Ingredients
+    - AI Menu Scanner
+    paths: 5
+    operations: 5
+  - name: categories
+    $ref: modules/v1/catalog/categories.yaml
+    visibility: internal
+    tags:
+    - Categories
+    paths: 2
+    operations: 5
+  - name: combos
+    $ref: modules/v1/catalog/combos.yaml
+    visibility: internal
+    tags:
+    - Combos
+    paths: 3
+    operations: 6
+  - name: food-images
+    $ref: modules/v1/catalog/food-images.yaml
+    visibility: internal
+    tags:
+    - Food Images
+    paths: 3
+    operations: 3
+  - name: items
+    $ref: modules/v1/catalog/items.yaml
+    visibility: internal
+    tags:
+    - Item Addons
+    - Item Extras
+    - Item Ingredients
+    - Item Station Mapping
+    - Item Variants
+    - Items
+    paths: 17
+    operations: 31
+  - name: modifiers
+    $ref: modules/v1/catalog/modifiers.yaml
+    visibility: internal
+    tags:
+    - Modifier Groups
+    - Modifiers
+    paths: 9
+    operations: 17
+  customers:
+  - name: coupons
+    $ref: modules/v1/customers/coupons.yaml
+    visibility: internal
+    tags:
+    - Coupons
+    paths: 3
+    operations: 6
+  - name: customers
+    $ref: modules/v1/customers/customers.yaml
+    visibility: internal
+    tags:
+    - Customer Addresses
+    - Customers
+    paths: 4
+    operations: 9
+  - name: favourites
+    $ref: modules/v1/customers/favourites.yaml
+    visibility: internal
+    tags:
+    - Favourite Items
+    - Favourites
+    paths: 3
+    operations: 4
+  - name: feedback
+    $ref: modules/v1/customers/feedback.yaml
+    visibility: internal
+    tags:
+    - Feedback
+    paths: 3
+    operations: 5
+  - name: notifications
+    $ref: modules/v1/customers/notifications.yaml
+    visibility: internal
+    tags:
+    - Notifications
+    paths: 5
+    operations: 5
+  - name: offers
+    $ref: modules/v1/customers/offers.yaml
+    visibility: internal
+    tags:
+    - Offers
+    paths: 2
+    operations: 5
+  finance:
+  - name: accounting
+    $ref: modules/v1/finance/accounting.yaml
+    visibility: internal
+    tags:
+    - Accounting
+    - Accounting Rules
+    - Chart of Accounts
+    paths: 15
+    operations: 17
+  - name: bank-recon
+    $ref: modules/v1/finance/bank-recon.yaml
+    visibility: internal
+    tags:
+    - Bank Reconciliation
+    paths: 7
+    operations: 8
+  - name: billing
+    $ref: modules/v1/finance/billing.yaml
+    visibility: internal
+    tags:
+    - Billing
+    paths: 4
+    operations: 4
+  - name: cash-transactions
+    $ref: modules/v1/finance/cash-transactions.yaml
+    visibility: internal
+    tags:
+    - Cash Transactions
+    paths: 2
+    operations: 4
+  - name: due-payments
+    $ref: modules/v1/finance/due-payments.yaml
+    visibility: internal
+    tags:
+    - Due Payments
+    paths: 4
+    operations: 5
+  - name: expenses
+    $ref: modules/v1/finance/expenses.yaml
+    visibility: internal
+    tags:
+    - Expenses
+    paths: 5
+    operations: 7
+  - name: finance
+    $ref: modules/v1/finance/finance.yaml
+    visibility: internal
+    tags:
+    - Financial Operating System
+    paths: 61
+    operations: 64
+  - name: invoices
+    $ref: modules/v1/finance/invoices.yaml
+    visibility: internal
+    tags:
+    - Invoice Import
+    - Invoices
+    paths: 10
+    operations: 11
+  - name: reports
+    $ref: modules/v1/finance/reports.yaml
+    visibility: internal
+    tags:
+    - Financial Reports
+    - Reports
+    paths: 14
+    operations: 14
+  - name: settlements
+    $ref: modules/v1/finance/settlements.yaml
+    visibility: internal
+    tags:
+    - Settlements
+    paths: 4
+    operations: 5
+  - name: tax
+    $ref: modules/v1/finance/tax.yaml
+    visibility: internal
+    tags:
+    - Sub-Ledger
+    - Tax Liability
+    paths: 14
+    operations: 14
+  operations:
+  - name: delivery
+    $ref: modules/v1/operations/delivery.yaml
+    visibility: internal
+    tags:
+    - Deliverable Pincodes
+    - Delivery
+    - Delivery Partners
+    paths: 8
+    operations: 12
+  - name: dinein
+    $ref: modules/v1/operations/dinein.yaml
+    visibility: public
+    tags:
+    - Dine-In Sessions
+    paths: 18
+    operations: 18
+  - name: inventory
+    $ref: modules/v1/operations/inventory.yaml
+    visibility: internal
+    tags:
+    - Ingredients
+    - Inventory
+    paths: 3
+    operations: 3
+  - name: kitchen
+    $ref: modules/v1/operations/kitchen.yaml
+    visibility: internal
+    tags:
+    - Kitchen
+    - Kitchen Stations
+    paths: 5
+    operations: 6
+  - name: orders
+    $ref: modules/v1/operations/orders.yaml
+    visibility: internal
+    tags:
+    - Orders
+    paths: 4
+    operations: 8
+  - name: tables
+    $ref: modules/v1/operations/tables.yaml
+    visibility: public
+    tags:
+    - Restaurant Tables
+    - Table Events
+    - Table Sessions
+    - Tables
+    paths: 21
+    operations: 24
+  - name: waitlist
+    $ref: modules/v1/operations/waitlist.yaml
+    visibility: public
+    tags:
+    - Waitlist
+    paths: 12
+    operations: 14
+  payments:
+  - name: cashfree
+    $ref: modules/v1/payments/cashfree.yaml
+    visibility: internal
+    tags:
+    - Cashfree PG
+    paths: 1
+    operations: 1
+  - name: payments
+    $ref: modules/v1/payments/payments.yaml
+    visibility: internal
+    tags:
+    - Payments
+    paths: 5
+    operations: 6
+  - name: paytm
+    $ref: modules/v1/payments/paytm.yaml
+    visibility: internal
+    tags:
+    - Paytm
+    paths: 1
+    operations: 1
+  - name: payu
+    $ref: modules/v1/payments/payu.yaml
+    visibility: internal
+    tags:
+    - PayU
+    paths: 3
+    operations: 3
+  - name: phonepe
+    $ref: modules/v1/payments/phonepe.yaml
+    visibility: internal
+    tags:
+    - PhonePe
+    paths: 2
+    operations: 2
+  - name: razorpay
+    $ref: modules/v1/payments/razorpay.yaml
+    visibility: internal
+    tags:
+    - Razorpay Extended
+    paths: 6
+    operations: 6
+  - name: webhooks
+    $ref: modules/v1/payments/webhooks.yaml
+    visibility: public
+    tags:
+    - Webhooks
+    paths: 2
+    operations: 2
+  - name: zivonpay
+    $ref: modules/v1/payments/zivonpay.yaml
+    visibility: internal
+    tags:
+    - Zivonpay
+    paths: 1
+    operations: 1
+  platform:
+  - name: audit-logs
+    $ref: modules/v1/platform/audit-logs.yaml
+    visibility: internal
+    tags:
+    - Audit Logs
+    paths: 1
+    operations: 1
+  - name: erp
+    $ref: modules/v1/platform/erp.yaml
+    visibility: internal
+    tags:
+    - ERP
+    paths: 44
+    operations: 57
+  - name: google
+    $ref: modules/v1/platform/google.yaml
+    visibility: internal
+    tags:
+    - Google Business Profile
+    paths: 13
+    operations: 14
+  - name: health
+    $ref: modules/v1/platform/health.yaml
+    visibility: public
+    tags:
+    - Health
+    paths: 2
+    operations: 2
+  - name: help
+    $ref: modules/v1/platform/help.yaml
+    visibility: internal
+    tags:
+    - Help Articles
+    paths: 2
+    operations: 2
+  - name: misc
+    $ref: modules/v1/platform/misc.yaml
+    visibility: internal
+    tags:
+    - Miscellaneous
+    paths: 5
+    operations: 5
+  - name: purchase-orders
+    $ref: modules/v1/platform/purchase-orders.yaml
+    visibility: internal
+    tags:
+    - Purchase Orders
+    paths: 2
+    operations: 5
+  - name: restaurants
+    $ref: modules/v1/platform/restaurants.yaml
+    visibility: internal
+    tags:
+    - Restaurant Settings
+    - Restaurants
+    paths: 3
+    operations: 5
+  - name: subscriptions
+    $ref: modules/v1/platform/subscriptions.yaml
+    visibility: internal
+    tags:
+    - Subscriptions
+    paths: 13
+    operations: 13
+  - name: voice
+    $ref: modules/v1/platform/voice.yaml
+    visibility: internal
+    tags:
+    - Voice / TTS
+    paths: 2
+    operations: 2

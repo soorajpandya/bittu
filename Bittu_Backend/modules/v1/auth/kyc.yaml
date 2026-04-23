@@ -1,0 +1,446 @@
+# Bittu API — Auth/Kyc Module
+# =============================
+# Domain: auth
+# Module: kyc
+# Version: v1
+# Visibility: public
+# Tags: DigiLocker KYC, KYC / Verification
+# Operations: 16
+# Paths: 16
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: auth
+  module: kyc
+  version: v1
+  visibility: public
+  tags:
+  - DigiLocker KYC
+  - KYC / Verification
+  operationCount: 16
+  pathCount: 16
+paths:
+  /api/v1/kyc/data-availability:
+    post:
+      tags:
+      - KYC / Verification
+      summary: Check Data Availability
+      operationId: check_data_availability_api_v1_kyc_data_availability_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/DataAvailabilityIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/kyc/oauth/initiate:
+    post:
+      tags:
+      - KYC / Verification
+      summary: Initiate Oauth
+      operationId: initiate_oauth_api_v1_kyc_oauth_initiate_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/InitiateOAuthIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/kyc/oauth/token:
+    post:
+      tags:
+      - KYC / Verification
+      summary: Exchange Token
+      operationId: exchange_token_api_v1_kyc_oauth_token_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ExchangeTokenIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/kyc/oauth/user:
+    post:
+      tags:
+      - KYC / Verification
+      summary: Fetch User
+      operationId: fetch_user_api_v1_kyc_oauth_user_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/FetchUserIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/kyc/verify-gst:
+    post:
+      tags:
+      - KYC / Verification
+      summary: Verify Gst
+      operationId: verify_gst_api_v1_kyc_verify_gst_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/VerifyGSTIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/kyc/bank/reverse-penny-drop:
+    post:
+      tags:
+      - KYC / Verification
+      summary: Bank Reverse Penny Drop
+      operationId: bank_reverse_penny_drop_api_v1_kyc_bank_reverse_penny_drop_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/BankVerifyIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/kyc/bank/status:
+    get:
+      tags:
+      - KYC / Verification
+      summary: Bank Check Status
+      operationId: bank_check_status_api_v1_kyc_bank_status_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: verification_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Verification Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/kyc/digilocker-verify:
+    post:
+      tags:
+      - KYC / Verification
+      summary: Digilocker Verify
+      description: Process DigiLocker verification callback data from the frontend.
+      operationId: digilocker_verify_api_v1_kyc_digilocker_verify_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/DigiLockerVerifyIn
+              default: {}
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/digilocker/verify-account:
+    post:
+      tags:
+      - DigiLocker KYC
+      summary: Verify Account
+      description: Check if a DigiLocker account exists for the given mobile number.
+      operationId: verify_account_api_v1_digilocker_verify_account_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/VerifyAccountIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/digilocker/create-url:
+    post:
+      tags:
+      - DigiLocker KYC
+      summary: Create Digilocker Url
+      operationId: create_digilocker_url_api_v1_digilocker_create_url_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CreateURLIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/digilocker/status:
+    get:
+      tags:
+      - DigiLocker KYC
+      summary: Get Digilocker Status
+      operationId: get_digilocker_status_api_v1_digilocker_status_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: verification_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Verification Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/digilocker/document:
+    get:
+      tags:
+      - DigiLocker KYC
+      summary: Get Digilocker Document
+      operationId: get_digilocker_document_api_v1_digilocker_document_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: verification_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Verification Id
+      - name: document_type
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Document Type
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/digilocker/save-kyc:
+    post:
+      tags:
+      - DigiLocker KYC
+      summary: Save Kyc
+      description: Check Cashfree status, fetch Aadhaar data, and save KYC to user metadata.
+      operationId: save_kyc_api_v1_digilocker_save_kyc_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/SaveKycIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/digilocker/webhook:
+    post:
+      tags:
+      - DigiLocker KYC
+      summary: Digilocker Webhook
+      description: Cashfree DigiLocker webhook callback.
+      operationId: digilocker_webhook_api_v1_digilocker_webhook_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/v1/digilocker/callback:
+    get:
+      tags:
+      - DigiLocker KYC
+      summary: Digilocker Callback
+      description: 'Redirect endpoint after DigiLocker flow completes.
+
+        Cashfree redirects the user here with ?verification_id=...
+
+        Fetches status and shows a result page / deep-links back to the app.'
+      operationId: digilocker_callback_api_v1_digilocker_callback_get
+      parameters:
+      - name: verification_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Verification Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/onboard/callback:
+    get:
+      tags:
+      - DigiLocker KYC
+      summary: Digilocker Callback
+      description: 'Redirect endpoint after DigiLocker flow completes.
+
+        Cashfree redirects the user here with ?verification_id=...
+
+        Fetches status and shows a result page / deep-links back to the app.'
+      operationId: digilocker_callback_api_v1_onboard_callback_get
+      parameters:
+      - name: verification_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Verification Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

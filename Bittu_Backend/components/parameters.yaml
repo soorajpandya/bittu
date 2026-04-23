@@ -1,0 +1,70 @@
+# Bittu API — Shared Parameters
+# ================================
+# Common query parameters shared across multiple modules.
+# Referenced via: $ref: '../../../components/parameters.yaml#/Limit'
+
+BranchId:
+  name: branch_id
+  in: query
+  required: false
+  schema:
+    type: string
+    format: uuid
+  description: Filter results by branch ID
+RestaurantId:
+  name: restaurant_id
+  in: query
+  required: false
+  schema:
+    type: string
+    format: uuid
+  description: Restaurant context (resolved from auth if omitted)
+Limit:
+  name: limit
+  in: query
+  required: false
+  schema:
+    type: integer
+    default: 50
+    minimum: 1
+    maximum: 500
+  description: Maximum number of results to return
+Offset:
+  name: offset
+  in: query
+  required: false
+  schema:
+    type: integer
+    default: 0
+    minimum: 0
+  description: Number of results to skip for pagination
+FromDate:
+  name: from_date
+  in: query
+  required: false
+  schema:
+    type: string
+    format: date
+  description: Start date filter (YYYY-MM-DD)
+ToDate:
+  name: to_date
+  in: query
+  required: false
+  schema:
+    type: string
+    format: date
+  description: End date filter (YYYY-MM-DD)
+Status:
+  name: status
+  in: query
+  required: false
+  schema:
+    type: string
+  description: Filter by status value
+Search:
+  name: search
+  in: query
+  required: false
+  schema:
+    type: string
+  description: Free-text search query

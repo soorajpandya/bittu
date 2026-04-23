@@ -1,0 +1,212 @@
+# Bittu API — Finance/Settlements Module
+# ========================================
+# Domain: finance
+# Module: settlements
+# Version: v1
+# Visibility: internal
+# Tags: Settlements
+# Operations: 5
+# Paths: 4
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: finance
+  module: settlements
+  version: v1
+  visibility: internal
+  tags:
+  - Settlements
+  operationCount: 5
+  pathCount: 4
+paths:
+  /api/v1/settlements:
+    get:
+      tags:
+      - Settlements
+      summary: List Settlements
+      description: List payment gateway settlements with filters.
+      operationId: list_settlements_api_v1_settlements_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: pending|received|reconciled|disputed
+          title: Status
+        description: pending|received|reconciled|disputed
+      - name: gateway
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Gateway
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Settlements
+      summary: Record Settlement
+      description: "Record a payment gateway settlement.\n\nCreates journal entries:\n  1. DR Bank, CR PG Clearing (net amount\
+        \ deposited)\n  2. DR Gateway Charges + Tax, CR PG Clearing (fees deducted)"
+      operationId: record_settlement_api_v1_settlements_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/RecordSettlementRequest
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/settlements/{settlement_id}/reconcile:
+    post:
+      tags:
+      - Settlements
+      summary: Reconcile Settlement
+      description: Mark a settlement as reconciled (verified against bank statement).
+      operationId: reconcile_settlement_api_v1_settlements__settlement_id__reconcile_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: settlement_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Settlement Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ReconcileRequest
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/settlements/clearing-balance:
+    get:
+      tags:
+      - Settlements
+      summary: Clearing Balance
+      description: 'Get current PG Clearing account balance.
+
+        Positive = money captured by gateways but not yet settled to bank.'
+      operationId: clearing_balance_api_v1_settlements_clearing_balance_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/settlements/unsettled-payments:
+    get:
+      tags:
+      - Settlements
+      summary: Unsettled Payments
+      description: Find online payments not yet included in any settlement batch.
+      operationId: unsettled_payments_api_v1_settlements_unsettled_payments_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: gateway
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Gateway
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          default: 100
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

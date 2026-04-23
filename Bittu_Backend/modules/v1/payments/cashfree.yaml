@@ -1,0 +1,48 @@
+# Bittu API — Payments/Cashfree Module
+# ======================================
+# Domain: payments
+# Module: cashfree
+# Version: v1
+# Visibility: internal
+# Tags: Cashfree PG
+# Operations: 1
+# Paths: 1
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: payments
+  module: cashfree
+  version: v1
+  visibility: internal
+  tags:
+  - Cashfree PG
+  operationCount: 1
+  pathCount: 1
+paths:
+  /api/v1/cashfree/create-order:
+    post:
+      tags:
+      - Cashfree PG
+      summary: Create Cashfree Order
+      operationId: create_cashfree_order_api_v1_cashfree_create_order_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/app__api__v1__cashfree__CreateOrderIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []

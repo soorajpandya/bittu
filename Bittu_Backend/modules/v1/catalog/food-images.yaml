@@ -1,0 +1,112 @@
+# Bittu API — Catalog/Food-Images Module
+# ========================================
+# Domain: catalog
+# Module: food-images
+# Version: v1
+# Visibility: internal
+# Tags: Food Images
+# Operations: 3
+# Paths: 3
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: catalog
+  module: food-images
+  version: v1
+  visibility: internal
+  tags:
+  - Food Images
+  operationCount: 3
+  pathCount: 3
+paths:
+  /api/v1/food-images/generate:
+    post:
+      tags:
+      - Food Images
+      summary: Generate Food Images
+      description: 'Batch generate food images. Cached items return instantly.
+
+        Keys in results = raw food name (NOT normalized).
+
+        Max 50 items per request, 5 minute timeout.'
+      operationId: generate_food_images_api_v1_food_images_generate_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/GenerateRequest
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/food-images:
+    post:
+      tags:
+      - Food Images
+      summary: Bulk Lookup Food Images
+      description: 'Bulk lookup existing food images by normalized names.
+
+        Missing names are silently omitted.'
+      operationId: bulk_lookup_food_images_api_v1_food_images_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/BulkLookupRequest
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/food-images/{name}:
+    get:
+      tags:
+      - Food Images
+      summary: Get Food Image
+      description: 'Single lookup by normalized name.
+
+        Returns 404 if not found.'
+      operationId: get_food_image_api_v1_food_images__name__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Name
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

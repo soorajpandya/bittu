@@ -1,0 +1,51 @@
+# Bittu API — Shared Responses
+# ==============================
+# Common HTTP response definitions shared across all modules.
+# Referenced via: $ref: '../../../components/responses.yaml#/Unauthorized'
+
+Unauthorized:
+  description: Not authenticated — missing or invalid JWT token
+  content:
+    application/json:
+      schema:
+        type: object
+        properties:
+          detail:
+            type: string
+            example: Not authenticated
+Forbidden:
+  description: Permission denied — insufficient RBAC permissions
+  content:
+    application/json:
+      schema:
+        type: object
+        properties:
+          detail:
+            type: string
+            example: Permission denied
+NotFound:
+  description: Resource not found
+  content:
+    application/json:
+      schema:
+        type: object
+        properties:
+          detail:
+            type: string
+            example: Not found
+ValidationError:
+  description: Request validation error
+  content:
+    application/json:
+      schema:
+        $ref: ./schemas.yaml#/HTTPValidationError
+ServerError:
+  description: Internal server error
+  content:
+    application/json:
+      schema:
+        type: object
+        properties:
+          detail:
+            type: string
+            example: Internal server error

@@ -1,0 +1,36 @@
+# Bittu API — Public Modules Manifest
+
+description: Public API modules — some endpoints accessible without authentication
+modules:
+- module: auth/auth
+  path: modules/v1/auth/auth.yaml
+  tags:
+  - Auth
+- module: auth/kyc
+  path: modules/v1/auth/kyc.yaml
+  tags:
+  - DigiLocker KYC
+  - KYC / Verification
+- module: operations/dinein
+  path: modules/v1/operations/dinein.yaml
+  tags:
+  - Dine-In Sessions
+- module: operations/tables
+  path: modules/v1/operations/tables.yaml
+  tags:
+  - Restaurant Tables
+  - Table Events
+  - Table Sessions
+  - Tables
+- module: operations/waitlist
+  path: modules/v1/operations/waitlist.yaml
+  tags:
+  - Waitlist
+- module: payments/webhooks
+  path: modules/v1/payments/webhooks.yaml
+  tags:
+  - Webhooks
+- module: platform/health
+  path: modules/v1/platform/health.yaml
+  tags:
+  - Health

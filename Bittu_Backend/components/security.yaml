@@ -1,0 +1,13 @@
+# Bittu API — Security Definitions
+# ===================================
+# Authentication and authorization configuration.
+# JWT tokens issued by Supabase Auth (Google OAuth / PKCE flow).
+
+securitySchemes:
+  HTTPBearer:
+    type: http
+    scheme: bearer
+    bearerFormat: JWT
+    description: Supabase JWT access token. Obtain via /api/v1/auth/google OAuth flow.
+defaultSecurity:
+- HTTPBearer: []

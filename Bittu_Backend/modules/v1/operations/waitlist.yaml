@@ -1,0 +1,424 @@
+# Bittu API — Operations/Waitlist Module
+# ========================================
+# Domain: operations
+# Module: waitlist
+# Version: v1
+# Visibility: public
+# Tags: Waitlist
+# Operations: 14
+# Paths: 12
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: operations
+  module: waitlist
+  version: v1
+  visibility: public
+  tags:
+  - Waitlist
+  operationCount: 14
+  pathCount: 12
+paths:
+  /api/v1/waitlist:
+    post:
+      tags:
+      - Waitlist
+      summary: Add To Waitlist
+      description: Add a customer to the waitlist.
+      operationId: add_to_waitlist_api_v1_waitlist_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/AddEntryRequest
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    get:
+      tags:
+      - Waitlist
+      summary: Get Queue
+      description: Get current waitlist queue.
+      operationId: get_queue_api_v1_waitlist_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            pattern: ^(waiting|notified|seated|skipped|cancelled)$
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/waitlist/stats:
+    get:
+      tags:
+      - Waitlist
+      summary: Get Stats
+      description: Today's waitlist statistics.
+      operationId: get_stats_api_v1_waitlist_stats_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/waitlist/history:
+    get:
+      tags:
+      - Waitlist
+      summary: Get History
+      description: Get waitlist history.
+      operationId: get_history_api_v1_waitlist_history_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      - name: date_from
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Date From
+      - name: date_to
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Date To
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/waitlist/notify-next:
+    post:
+      tags:
+      - Waitlist
+      summary: Notify Next
+      description: Find best-fit customer for available table and notify them.
+      operationId: notify_next_api_v1_waitlist_notify_next_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/NotifyNextRequest
+              default: {}
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/waitlist/expire-check:
+    post:
+      tags:
+      - Waitlist
+      summary: Expire Check
+      description: Check and expire overdue notified entries.
+      operationId: expire_check_api_v1_waitlist_expire_check_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/waitlist/{entry_id}/seat:
+    post:
+      tags:
+      - Waitlist
+      summary: Seat Customer
+      description: Seat a waitlisted customer.
+      operationId: seat_customer_api_v1_waitlist__entry_id__seat_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: entry_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Entry Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/waitlist/{entry_id}/skip:
+    post:
+      tags:
+      - Waitlist
+      summary: Skip Customer
+      description: Skip a waitlisted customer (no-show or manual).
+      operationId: skip_customer_api_v1_waitlist__entry_id__skip_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: entry_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Entry Id
+      - name: reason
+        in: query
+        required: false
+        schema:
+          type: string
+          default: no_show
+          title: Reason
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/waitlist/{entry_id}/cancel:
+    patch:
+      tags:
+      - Waitlist
+      summary: Cancel Entry
+      description: Cancel a waitlist entry.
+      operationId: cancel_entry_api_v1_waitlist__entry_id__cancel_patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: entry_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Entry Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/waitlist/reorder:
+    put:
+      tags:
+      - Waitlist
+      summary: Reorder Queue
+      description: Admin reorder the waitlist queue.
+      operationId: reorder_queue_api_v1_waitlist_reorder_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ReorderRequest
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/waitlist/settings:
+    get:
+      tags:
+      - Waitlist
+      summary: Get Settings
+      description: Get waitlist settings.
+      operationId: get_settings_api_v1_waitlist_settings_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+    put:
+      tags:
+      - Waitlist
+      summary: Update Settings
+      description: Update waitlist settings.
+      operationId: update_settings_api_v1_waitlist_settings_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/app__api__v1__waitlist__SettingsUpdate
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/waitlist/display/{restaurant_id}:
+    get:
+      tags:
+      - Waitlist
+      summary: Display Screen
+      description: Public display screen data — shows 'now serving' and queue.
+      operationId: display_screen_api_v1_waitlist_display__restaurant_id__get
+      parameters:
+      - name: restaurant_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Restaurant Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/waitlist/status/{entry_id}:
+    get:
+      tags:
+      - Waitlist
+      summary: Entry Status
+      description: Public entry status — for QR customer to check their position.
+      operationId: entry_status_api_v1_waitlist_status__entry_id__get
+      parameters:
+      - name: entry_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Entry Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

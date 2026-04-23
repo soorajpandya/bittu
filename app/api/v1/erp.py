@@ -1573,30 +1573,90 @@ async def item_profitability(
     if sort_by not in allowed_sort:
         sort_by = "gross_profit"
 
-    clauses = ["ip.restaurant_id = $1", "ip.period_start >= $2", "ip.period_end <= $3"]
+    # Compute live from order_items + orders instead of the pre-aggregated
+    # item_profitability table (which has no background job to populate it).
+    clauses = [
+        "o.restaurant_id = $1",
+        "o.created_at::date >= $2",
+        "o.created_at::date <= $3",
+        "o.status != 'cancelled'",  # Include all non-cancelled orders (pending, preparing, ready, completed)
+        "oi.item_id IS NOT NULL",
+    ]
     params: list = [rid, period_start, period_end]
     if bid:
         params.append(bid)
-        clauses.append(f"ip.branch_id = ${len(params)}::uuid")
+        clauses.append(f"o.branch_id = ${len(params)}::uuid")
     params.append(limit)
+    limit_idx = len(params)
+
     sql = f"""
-        SELECT ip.item_id, i."Item_Name" AS item_name,
-               SUM(ip.quantity_sold) AS quantity_sold,
-               SUM(ip.total_revenue) AS total_revenue,
-               SUM(ip.total_cogs) AS total_cogs,
-               SUM(ip.gross_profit) AS gross_profit,
-               CASE WHEN SUM(ip.total_revenue) > 0
-                    THEN ROUND(SUM(ip.gross_profit) * 100.0 / SUM(ip.total_revenue), 2)
-                    ELSE 0 END AS margin_percent
-          FROM item_profitability ip
-          LEFT JOIN items i ON i."Item_ID" = ip.item_id
-         WHERE {' AND '.join(clauses)}
-         GROUP BY ip.item_id, i."Item_Name"
-         ORDER BY {sort_by} DESC
-         LIMIT ${len(params)}
+        WITH recipe_cost AS (
+            SELECT
+                r.item_id,
+                SUM(ri.quantity_required * (1 + ri.waste_percent / 100.0)
+                    * COALESCE(ing.cost_per_unit, 0))
+                / NULLIF(MAX(r.yield_quantity), 0) AS cost_per_portion
+            FROM recipes r
+            JOIN recipe_ingredients ri ON ri.recipe_id = r.id
+            JOIN ingredients ing ON ing.id = ri.ingredient_id
+            WHERE r.restaurant_id = $1
+              AND r.is_active = true
+            GROUP BY r.item_id
+        )
+        SELECT
+            oi.item_id,
+            COALESCE(i."Item_Name", oi.item_name) AS item_name,
+            SUM(oi.quantity)::int AS quantity_sold,
+            SUM(oi.total_price) AS total_revenue,
+            COALESCE(SUM(oi.quantity * rc.cost_per_portion), 0) AS total_cogs,
+            SUM(oi.total_price) - COALESCE(SUM(oi.quantity * rc.cost_per_portion), 0) AS gross_profit,
+            CASE WHEN SUM(oi.total_price) > 0
+                 THEN ROUND(
+                     (SUM(oi.total_price) - COALESCE(SUM(oi.quantity * rc.cost_per_portion), 0))
+                     * 100.0 / SUM(oi.total_price), 2)
+                 ELSE 0 END AS margin_percent
+        FROM order_items oi
+        JOIN orders o ON o.id = oi.order_id
+        LEFT JOIN items i ON i."Item_ID" = oi.item_id
+        LEFT JOIN recipe_cost rc ON rc.item_id = oi.item_id
+        WHERE {' AND '.join(clauses)}
+        GROUP BY oi.item_id, COALESCE(i."Item_Name", oi.item_name)
+        ORDER BY {sort_by} DESC
+        LIMIT ${limit_idx}
     """
     async with get_connection() as conn:
         rows = await conn.fetch(sql, *params)
+    
+    # Debug logging
+    logger.info(
+        "item_profitability_query",
+        sql_result_count=len(rows),
+        restaurant_id=rid,
+        branch_id=bid,
+        period_start=period_start,
+        period_end=period_end,
+        clauses=clauses,
+        params=params[:3],  # Log first 3 params (rid, start, end) for safety
+        order_count_debug=len(rows),
+    )
+    
+    if len(rows) == 0:
+        # If no results, check if orders exist
+        async with get_connection() as conn:
+            count_sql = """
+                SELECT COUNT(*) as cnt FROM orders 
+                WHERE restaurant_id = $1 
+                AND created_at::date >= $2 
+                AND created_at::date <= $3 
+                AND status != 'cancelled'
+            """
+            count_result = await conn.fetchval(count_sql, rid, period_start, period_end)
+            logger.warning(
+                "item_profitability_no_results",
+                matching_orders_count=count_result,
+                restaurant_id=rid,
+            )
+    
     return [dict(r) for r in rows]
 
 

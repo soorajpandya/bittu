@@ -1,0 +1,417 @@
+# Bittu API — Finance/Invoices Module
+# =====================================
+# Domain: finance
+# Module: invoices
+# Version: v1
+# Visibility: internal
+# Tags: Invoice Import, Invoices
+# Operations: 11
+# Paths: 10
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: finance
+  module: invoices
+  version: v1
+  visibility: internal
+  tags:
+  - Invoice Import
+  - Invoices
+  operationCount: 11
+  pathCount: 10
+paths:
+  /api/v1/invoice-import/parse:
+    post:
+      tags:
+      - Invoice Import
+      summary: Parse Invoice Base64
+      description: 'Parse a sales invoice image (base64) using OCR + AI.
+
+        Returns structured data for preview. Does NOT save to DB.'
+      operationId: parse_invoice_base64_api_v1_invoice_import_parse_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ParseInvoiceBase64In
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/invoice-import/parse/upload:
+    post:
+      tags:
+      - Invoice Import
+      summary: Parse Invoice Upload
+      description: 'Parse a sales invoice uploaded as multipart file (image/PDF).
+
+        Returns structured data for preview. Does NOT save to DB.'
+      operationId: parse_invoice_upload_api_v1_invoice_import_parse_upload_post
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: ../../../components/schemas.yaml#/Body_parse_invoice_upload_api_v1_invoice_import_parse_upload_post
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/invoice-import/confirm:
+    post:
+      tags:
+      - Invoice Import
+      summary: Confirm Invoice
+      description: 'Confirm and save parsed invoice data.
+
+        Creates: purchase_invoice, inventory updates, expense record.
+
+        Frontend sends the (potentially edited) parsed data back.'
+      operationId: confirm_invoice_api_v1_invoice_import_confirm_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ConfirmInvoiceIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/invoice-import/:
+    get:
+      tags:
+      - Invoice Import
+      summary: List Invoices
+      description: List all imported invoices for the current tenant.
+      operationId: list_invoices_api_v1_invoice_import__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/invoice-import/{invoice_id}:
+    get:
+      tags:
+      - Invoice Import
+      summary: Get Invoice
+      description: Get a specific invoice with line items.
+      operationId: get_invoice_api_v1_invoice_import__invoice_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: invoice_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Invoice Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/invoices:
+    post:
+      tags:
+      - Invoices
+      summary: Create Invoice
+      description: Create a new invoice.
+      operationId: create_invoice_api_v1_invoices_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/InvoiceCreate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    get:
+      tags:
+      - Invoices
+      summary: List Invoices
+      description: List invoices with optional filters.
+      operationId: list_invoices_api_v1_invoices_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: customer_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Customer Id
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/invoices/unpaid:
+    get:
+      tags:
+      - Invoices
+      summary: Get Unpaid Invoices
+      description: Get all invoices with outstanding balance.
+      operationId: get_unpaid_invoices_api_v1_invoices_unpaid_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: customer_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Customer Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/invoices/{invoice_id}:
+    get:
+      tags:
+      - Invoices
+      summary: Get Invoice
+      description: Get invoice with line items.
+      operationId: get_invoice_api_v1_invoices__invoice_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: invoice_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Invoice Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/invoices/{invoice_id}/payment:
+    post:
+      tags:
+      - Invoices
+      summary: Record Invoice Payment
+      description: Record a payment against an invoice.
+      operationId: record_invoice_payment_api_v1_invoices__invoice_id__payment_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: invoice_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Invoice Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/InvoicePaymentCreate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/invoices/{invoice_id}/void:
+    post:
+      tags:
+      - Invoices
+      summary: Void Invoice
+      description: Void an invoice (must have no payments).
+      operationId: void_invoice_api_v1_invoices__invoice_id__void_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: invoice_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Invoice Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/InvoiceVoidRequest
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

@@ -1,0 +1,297 @@
+# Bittu API — Customers/Customers Module
+# ========================================
+# Domain: customers
+# Module: customers
+# Version: v1
+# Visibility: internal
+# Tags: Customer Addresses, Customers
+# Operations: 9
+# Paths: 4
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: customers
+  module: customers
+  version: v1
+  visibility: internal
+  tags:
+  - Customer Addresses
+  - Customers
+  operationCount: 9
+  pathCount: 4
+paths:
+  /api/v1/customers:
+    get:
+      tags:
+      - Customers
+      summary: List Customers
+      operationId: list_customers_api_v1_customers_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: search
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Search
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Customers
+      summary: Create Customer
+      operationId: create_customer_api_v1_customers_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CustomerCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/customers/{customer_id}:
+    get:
+      tags:
+      - Customers
+      summary: Get Customer
+      operationId: get_customer_api_v1_customers__customer_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Customer Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    patch:
+      tags:
+      - Customers
+      summary: Update Customer
+      operationId: update_customer_api_v1_customers__customer_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Customer Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CustomerUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Customers
+      summary: Delete Customer
+      operationId: delete_customer_api_v1_customers__customer_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Customer Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/customer-addresses/{customer_id}:
+    get:
+      tags:
+      - Customer Addresses
+      summary: List Addresses
+      operationId: list_addresses_api_v1_customer_addresses__customer_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Customer Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Customer Addresses
+      summary: Create Address
+      operationId: create_address_api_v1_customer_addresses__customer_id__post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Customer Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/AddressCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/customer-addresses/address/{address_id}:
+    patch:
+      tags:
+      - Customer Addresses
+      summary: Update Address
+      operationId: update_address_api_v1_customer_addresses_address__address_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: address_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Address Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/AddressUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Customer Addresses
+      summary: Delete Address
+      operationId: delete_address_api_v1_customer_addresses_address__address_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: address_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Address Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

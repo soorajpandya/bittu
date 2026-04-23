@@ -1,0 +1,5221 @@
+# Bittu API — Shared Schemas
+# ===========================
+# Single source of truth for all request/response schemas.
+# Referenced by modules via: $ref: '../../../components/schemas.yaml#/SchemaName'
+# Total schemas: 190
+
+AccountCreate:
+  properties:
+    account_code:
+      type: string
+      title: Account Code
+    name:
+      type: string
+      title: Name
+    account_type:
+      type: string
+      title: Account Type
+    parent_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Parent Id
+    description:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description
+  type: object
+  required:
+  - account_code
+  - name
+  - account_type
+  title: AccountCreate
+AddBranchUserIn:
+  properties:
+    branch_id:
+      type: string
+      title: Branch Id
+    user_id:
+      type: string
+      title: User Id
+    role:
+      type: string
+      title: Role
+      default: manager
+  type: object
+  required:
+  - branch_id
+  - user_id
+  title: AddBranchUserIn
+AddEntryRequest:
+  properties:
+    customer_name:
+      type: string
+      maxLength: 100
+      minLength: 1
+      title: Customer Name
+    party_size:
+      type: integer
+      maximum: 50.0
+      minimum: 1.0
+      title: Party Size
+    phone:
+      anyOf:
+      - type: string
+        maxLength: 20
+      - type: 'null'
+      title: Phone
+    source:
+      type: string
+      pattern: ^(staff|qr)$
+      title: Source
+      default: staff
+    notes:
+      anyOf:
+      - type: string
+        maxLength: 500
+      - type: 'null'
+      title: Notes
+  type: object
+  required:
+  - customer_name
+  - party_size
+  title: AddEntryRequest
+AddToCartIn:
+  properties:
+    session_id:
+      type: string
+      title: Session Id
+    items:
+      items:
+        $ref: '#/CartItemIn'
+      type: array
+      title: Items
+  type: object
+  required:
+  - session_id
+  - items
+  title: AddToCartIn
+AddonCreate:
+  properties:
+    item_id:
+      type: integer
+      title: Item Id
+    name:
+      type: string
+      title: Name
+    price:
+      type: number
+      title: Price
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+      default: true
+  type: object
+  required:
+  - item_id
+  - name
+  - price
+  title: AddonCreate
+AddonUpdate:
+  properties:
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    price:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Price
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+  type: object
+  title: AddonUpdate
+AddressCreate:
+  properties:
+    label:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Label
+      default: Home
+    address_line:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Address Line
+    city:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: City
+    state:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: State
+    pincode:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Pincode
+    lat:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Lat
+    lng:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Lng
+    is_default:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Default
+      default: false
+  type: object
+  title: AddressCreate
+AddressUpdate:
+  properties:
+    label:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Label
+    address_line:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Address Line
+    city:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: City
+    state:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: State
+    pincode:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Pincode
+    lat:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Lat
+    lng:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Lng
+    is_default:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Default
+  type: object
+  title: AddressUpdate
+AdminUpdatePlanIn:
+  properties:
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    price:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Price
+    monthly_price:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Monthly Price
+    description:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description
+    features:
+      anyOf:
+      - items: {}
+        type: array
+      - type: 'null'
+      title: Features
+    limits:
+      anyOf:
+      - items: {}
+        type: array
+      - type: 'null'
+      title: Limits
+    not_included:
+      anyOf:
+      - items: {}
+        type: array
+      - type: 'null'
+      title: Not Included
+    highlight:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Highlight
+    highlight_label:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Highlight Label
+    cta_text:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Cta Text
+    discount_label:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Discount Label
+    razorpay_plan_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Razorpay Plan Id
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+  type: object
+  title: AdminUpdatePlanIn
+ApplyDiscountIn:
+  properties:
+    discount_percent:
+      type: number
+      maximum: 100.0
+      exclusiveMinimum: 0.0
+      title: Discount Percent
+    reason:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Reason
+  type: object
+  required:
+  - discount_percent
+  title: ApplyDiscountIn
+AssignPartnerIn:
+  properties:
+    partner_id:
+      type: string
+      title: Partner Id
+  type: object
+  required:
+  - partner_id
+  title: AssignPartnerIn
+AutoLinkRequest:
+  properties:
+    item_id:
+      type: integer
+      title: Item Id
+    item_name:
+      type: string
+      title: Item Name
+  type: object
+  required:
+  - item_id
+  - item_name
+  title: AutoLinkRequest
+BankVerifyIn:
+  properties:
+    verification_id:
+      type: string
+      title: Verification Id
+    name:
+      type: string
+      title: Name
+  type: object
+  required:
+  - verification_id
+  - name
+  title: BankVerifyIn
+Body_import_csv_api_v1_bank_recon_import_csv_post:
+  properties:
+    file:
+      type: string
+      format: binary
+      title: File
+  type: object
+  required:
+  - file
+  title: Body_import_csv_api_v1_bank_recon_import_csv_post
+Body_parse_invoice_upload_api_v1_invoice_import_parse_upload_post:
+  properties:
+    file:
+      type: string
+      format: binary
+      title: File
+  type: object
+  required:
+  - file
+  title: Body_parse_invoice_upload_api_v1_invoice_import_parse_upload_post
+Body_recon_import_csv_api_v1_finance_reconciliation_import_csv_post:
+  properties:
+    file:
+      type: string
+      format: binary
+      title: File
+  type: object
+  required:
+  - file
+  title: Body_recon_import_csv_api_v1_finance_reconciliation_import_csv_post
+Body_scan_menu_upload_api_v1_menu_scan_upload_post:
+  properties:
+    file:
+      type: string
+      format: binary
+      title: File
+  type: object
+  required:
+  - file
+  title: Body_scan_menu_upload_api_v1_menu_scan_upload_post
+BulkImportItem:
+  properties:
+    item_name:
+      type: string
+      title: Item Name
+    description:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description
+    price:
+      type: number
+      title: Price
+    category:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Category
+    subcategory:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Subcategory
+    cuisine:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Cuisine
+    spice_level:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Spice Level
+    prep_time_min:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Prep Time Min
+    image_url:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Image Url
+    is_veg:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Veg
+    short_code:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Short Code
+  type: object
+  required:
+  - item_name
+  - price
+  title: BulkImportItem
+BulkImportRequest:
+  properties:
+    items:
+      items:
+        $ref: '#/BulkImportItem'
+      type: array
+      title: Items
+    skip_duplicates:
+      type: boolean
+      title: Skip Duplicates
+      default: true
+  type: object
+  required:
+  - items
+  title: BulkImportRequest
+BulkImportResult:
+  properties:
+    total_submitted:
+      type: integer
+      title: Total Submitted
+    created:
+      type: integer
+      title: Created
+    skipped_duplicates:
+      type: integer
+      title: Skipped Duplicates
+    created_items:
+      items:
+        type: object
+      type: array
+      title: Created Items
+    skipped_items:
+      items:
+        type: object
+      type: array
+      title: Skipped Items
+  type: object
+  required:
+  - total_submitted
+  - created
+  - skipped_duplicates
+  - created_items
+  - skipped_items
+  title: BulkImportResult
+BulkLookupRequest:
+  properties:
+    names:
+      items:
+        type: string
+      type: array
+      title: Names
+  type: object
+  required:
+  - names
+  title: BulkLookupRequest
+CallWaiterIn:
+  properties:
+    session_token:
+      type: string
+      title: Session Token
+    request_type:
+      type: string
+      title: Request Type
+      default: assistance
+  type: object
+  required:
+  - session_token
+  title: CallWaiterIn
+CartAddIn:
+  properties:
+    session_token:
+      type: string
+      title: Session Token
+    item_id:
+      type: integer
+      title: Item Id
+    quantity:
+      type: integer
+      minimum: 1.0
+      title: Quantity
+      default: 1
+    variant_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Variant Id
+    addons:
+      anyOf:
+      - items: {}
+        type: array
+      - type: 'null'
+      title: Addons
+    extras:
+      anyOf:
+      - items: {}
+        type: array
+      - type: 'null'
+      title: Extras
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+    device_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Device Id
+    request_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Request Id
+  type: object
+  required:
+  - session_token
+  - item_id
+  title: CartAddIn
+CartItemIn:
+  properties:
+    item_id:
+      type: string
+      title: Item Id
+    variant_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Variant Id
+    quantity:
+      type: integer
+      minimum: 1.0
+      title: Quantity
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+  type: object
+  required:
+  - item_id
+  - quantity
+  title: CartItemIn
+CartRemoveIn:
+  properties:
+    session_token:
+      type: string
+      title: Session Token
+    cart_item_id:
+      type: string
+      title: Cart Item Id
+  type: object
+  required:
+  - session_token
+  - cart_item_id
+  title: CartRemoveIn
+CartUpdateIn:
+  properties:
+    session_token:
+      type: string
+      title: Session Token
+    cart_item_id:
+      type: string
+      title: Cart Item Id
+    quantity:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Quantity
+    addons:
+      anyOf:
+      - items: {}
+        type: array
+      - type: 'null'
+      title: Addons
+    extras:
+      anyOf:
+      - items: {}
+        type: array
+      - type: 'null'
+      title: Extras
+    request_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Request Id
+  type: object
+  required:
+  - session_token
+  - cart_item_id
+  title: CartUpdateIn
+CashTxCreate:
+  properties:
+    type:
+      type: string
+      title: Type
+    amount:
+      type: number
+      title: Amount
+    description:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description
+    category:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Category
+    payment_method:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Payment Method
+      default: cash
+  type: object
+  required:
+  - type
+  - amount
+  title: CashTxCreate
+CategoryUpdate:
+  properties:
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    slug:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Slug
+    description:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description
+    image_url:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Image Url
+    sort_order:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Sort Order
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+  type: object
+  title: CategoryUpdate
+CheckStatusIn:
+  properties:
+    merchant_order_id:
+      type: string
+      title: Merchant Order Id
+  type: object
+  required:
+  - merchant_order_id
+  title: CheckStatusIn
+CloseSessionIn:
+  properties:
+    session_token:
+      type: string
+      title: Session Token
+    reason:
+      type: string
+      title: Reason
+      default: completed
+  type: object
+  required:
+  - session_token
+  title: CloseSessionIn
+ComboCreate:
+  properties:
+    name:
+      type: string
+      title: Name
+    description:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description
+    price:
+      type: number
+      title: Price
+    image_url:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Image Url
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+      default: true
+    items:
+      anyOf:
+      - items:
+          $ref: '#/ComboItemIn'
+        type: array
+      - type: 'null'
+      title: Items
+      default: []
+  type: object
+  required:
+  - name
+  - price
+  title: ComboCreate
+ComboItemIn:
+  properties:
+    item_id:
+      type: integer
+      title: Item Id
+    quantity:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Quantity
+      default: 1
+  type: object
+  required:
+  - item_id
+  title: ComboItemIn
+ComboUpdate:
+  properties:
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    description:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description
+    price:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Price
+    image_url:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Image Url
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+    items:
+      anyOf:
+      - items:
+          $ref: '#/ComboItemIn'
+        type: array
+      - type: 'null'
+      title: Items
+  type: object
+  title: ComboUpdate
+ConfirmInvoiceIn:
+  properties:
+    vendor_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Vendor Name
+    vendor_gstin:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Vendor Gstin
+    invoice_number:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Invoice Number
+    invoice_date:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Invoice Date
+    items:
+      items:
+        $ref: '#/InvoiceItemIn'
+      type: array
+      title: Items
+    subtotal:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Subtotal
+    tax_amount:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Tax Amount
+    total_amount:
+      type: number
+      title: Total Amount
+      default: 0
+    payment_status:
+      type: string
+      title: Payment Status
+      default: unpaid
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+    idempotency_key:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Idempotency Key
+    ocr_text:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Ocr Text
+    purchase_order_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Purchase Order Id
+  type: object
+  required:
+  - items
+  title: ConfirmInvoiceIn
+ConnectRequest:
+  properties:
+    restaurant_id:
+      type: string
+      title: Restaurant Id
+  type: object
+  required:
+  - restaurant_id
+  title: ConnectRequest
+CouponCreate:
+  properties:
+    code:
+      type: string
+      title: Code
+    title:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Title
+    type:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Type
+      default: percentage
+    discount_value:
+      type: number
+      title: Discount Value
+    min_order_value:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Min Order Value
+      default: 0
+    max_discount:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Max Discount
+    usage_limit:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Usage Limit
+    user_usage_limit:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: User Usage Limit
+    valid_from:
+      anyOf:
+      - type: string
+        format: date-time
+      - type: 'null'
+      title: Valid From
+    valid_until:
+      anyOf:
+      - type: string
+        format: date-time
+      - type: 'null'
+      title: Valid Until
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+      default: true
+  type: object
+  required:
+  - code
+  - discount_value
+  title: CouponCreate
+CouponUpdate:
+  properties:
+    code:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Code
+    title:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Title
+    type:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Type
+    discount_value:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Discount Value
+    min_order_value:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Min Order Value
+    max_discount:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Max Discount
+    usage_limit:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Usage Limit
+    user_usage_limit:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: User Usage Limit
+    valid_from:
+      anyOf:
+      - type: string
+        format: date-time
+      - type: 'null'
+      title: Valid From
+    valid_until:
+      anyOf:
+      - type: string
+        format: date-time
+      - type: 'null'
+      title: Valid Until
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+  type: object
+  title: CouponUpdate
+CreateBranchIn:
+  properties:
+    name:
+      type: string
+      title: Name
+    manager_user_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Manager User Id
+    address:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Address
+    phone:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Phone
+  type: object
+  required:
+  - name
+  title: CreateBranchIn
+CreateCustomerIn:
+  properties:
+    name:
+      type: string
+      title: Name
+    email:
+      type: string
+      title: Email
+    contact:
+      type: string
+      title: Contact
+  type: object
+  required:
+  - name
+  - email
+  - contact
+  title: CreateCustomerIn
+CreateDeliveryIn:
+  properties:
+    order_id:
+      type: string
+      title: Order Id
+    delivery_address:
+      type: string
+      title: Delivery Address
+    delivery_phone:
+      type: string
+      title: Delivery Phone
+    pickup_address:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Pickup Address
+  type: object
+  required:
+  - order_id
+  - delivery_address
+  - delivery_phone
+  title: CreateDeliveryIn
+CreateInviteIn:
+  properties:
+    branch_id:
+      type: string
+      title: Branch Id
+    email:
+      type: string
+      format: email
+      title: Email
+    role:
+      type: string
+      title: Role
+      default: staff
+  type: object
+  required:
+  - branch_id
+  - email
+  title: CreateInviteIn
+CreateKitchenStationIn:
+  properties:
+    name:
+      type: string
+      title: Name
+  type: object
+  required:
+  - name
+  title: CreateKitchenStationIn
+CreatePartnerIn:
+  properties:
+    name:
+      type: string
+      title: Name
+    phone:
+      type: string
+      title: Phone
+  type: object
+  required:
+  - name
+  - phone
+  title: CreatePartnerIn
+CreatePlanIn:
+  properties:
+    plan_name:
+      type: string
+      title: Plan Name
+    amount_paise:
+      type: integer
+      title: Amount Paise
+    period:
+      type: string
+      title: Period
+      default: monthly
+    interval:
+      type: integer
+      title: Interval
+      default: 1
+    description:
+      type: string
+      title: Description
+      default: ''
+  type: object
+  required:
+  - plan_name
+  - amount_paise
+  title: CreatePlanIn
+CreatePostRequest:
+  properties:
+    restaurant_id:
+      type: string
+      title: Restaurant Id
+    summary:
+      type: string
+      maxLength: 1500
+      minLength: 1
+      title: Summary
+    action_type:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Action Type
+    action_url:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Action Url
+    image_url:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Image Url
+    event:
+      anyOf:
+      - type: object
+      - type: 'null'
+      title: Event
+    offer:
+      anyOf:
+      - type: object
+      - type: 'null'
+      title: Offer
+  type: object
+  required:
+  - restaurant_id
+  - summary
+  title: CreatePostRequest
+CreateQRIn:
+  properties:
+    name:
+      type: string
+      title: Name
+    amount_paise:
+      type: integer
+      title: Amount Paise
+    description:
+      type: string
+      title: Description
+      default: ''
+    close_by:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Close By
+  type: object
+  required:
+  - name
+  - amount_paise
+  title: CreateQRIn
+CreateRestaurantIn:
+  properties:
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+  type: object
+  title: CreateRestaurantIn
+CreateRuleRequest:
+  properties:
+    event_type:
+      type: string
+      title: Event Type
+    rule_name:
+      type: string
+      title: Rule Name
+    debit_account_code:
+      type: string
+      title: Debit Account Code
+    credit_account_code:
+      type: string
+      title: Credit Account Code
+    amount_field:
+      type: string
+      title: Amount Field
+      default: amount
+    amount_multiplier:
+      type: number
+      title: Amount Multiplier
+      default: 1.0
+    conditions:
+      anyOf:
+      - type: object
+      - type: 'null'
+      title: Conditions
+    priority:
+      type: integer
+      title: Priority
+      default: 100
+    description:
+      type: string
+      title: Description
+      default: ''
+    reference_type_override:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Reference Type Override
+    description_template:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description Template
+  type: object
+  required:
+  - event_type
+  - rule_name
+  - debit_account_code
+  - credit_account_code
+  title: CreateRuleRequest
+CreateStaffIn:
+  properties:
+    branch_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Branch Id
+    email:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Email
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    role:
+      type: string
+      title: Role
+      default: staff
+    phone:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Phone
+  type: object
+  title: CreateStaffIn
+CreateSubscriptionIn:
+  properties:
+    plan_id:
+      type: string
+      title: Plan Id
+    total_count:
+      type: integer
+      title: Total Count
+    user_id:
+      type: string
+      title: User Id
+      default: ''
+    plan_name:
+      type: string
+      title: Plan Name
+      default: ''
+    user_email:
+      type: string
+      title: User Email
+      default: ''
+  type: object
+  required:
+  - plan_id
+  - total_count
+  title: CreateSubscriptionIn
+CreateTableIn:
+  properties:
+    table_number:
+      type: string
+      title: Table Number
+    capacity:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Capacity
+      default: 4
+    status:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Status
+      default: available
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+      default: true
+  type: object
+  required:
+  - table_number
+  title: CreateTableIn
+CreateURLIn:
+  properties:
+    verification_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Verification Id
+    documents:
+      items:
+        type: string
+      type: array
+      title: Documents
+      default:
+      - AADHAAR
+      - PAN
+      - DRIVING_LICENSE
+    redirect_url:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Redirect Url
+    redirect_to:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Redirect To
+    user_flow:
+      type: string
+      title: User Flow
+      default: signin
+  type: object
+  title: CreateURLIn
+CustomerCreate:
+  properties:
+    name:
+      type: string
+      title: Name
+    email:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Email
+    phone_number:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Phone Number
+    address:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Address
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+  type: object
+  required:
+  - name
+  title: CustomerCreate
+CustomerUpdate:
+  properties:
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    email:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Email
+    phone_number:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Phone Number
+    address:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Address
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+  type: object
+  title: CustomerUpdate
+DataAvailabilityIn:
+  properties:
+    verification_id:
+      type: string
+      title: Verification Id
+    phone:
+      type: string
+      title: Phone
+  type: object
+  required:
+  - verification_id
+  - phone
+  title: DataAvailabilityIn
+DigiLockerVerifyIn:
+  properties:
+    verification_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Verification Id
+    code:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Code
+    status:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Status
+    message:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Message
+  type: object
+  title: DigiLockerVerifyIn
+DowngradeIn:
+  properties:
+    new_plan_slug:
+      type: string
+      title: New Plan Slug
+  type: object
+  required:
+  - new_plan_slug
+  title: DowngradeIn
+DrawerCreate:
+  properties:
+    name:
+      type: string
+      title: Name
+    branch_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Branch Id
+  type: object
+  required:
+  - name
+  title: DrawerCreate
+DuePaymentCreate:
+  properties:
+    customer_id:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Customer Id
+    order_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Order Id
+    total_amount:
+      type: number
+      title: Total Amount
+    paid_amount:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Paid Amount
+      default: 0
+    due_amount:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Due Amount
+    status:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Status
+      default: pending
+    due_date:
+      anyOf:
+      - type: string
+        format: date
+      - type: 'null'
+      title: Due Date
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+  type: object
+  required:
+  - total_amount
+  title: DuePaymentCreate
+ExchangeTokenIn:
+  properties:
+    auth_code:
+      type: string
+      title: Auth Code
+  type: object
+  required:
+  - auth_code
+  title: ExchangeTokenIn
+ExtraCreate:
+  properties:
+    item_id:
+      type: integer
+      title: Item Id
+    name:
+      type: string
+      title: Name
+    price:
+      type: number
+      title: Price
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+      default: true
+  type: object
+  required:
+  - item_id
+  - name
+  - price
+  title: ExtraCreate
+ExtraUpdate:
+  properties:
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    price:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Price
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+  type: object
+  title: ExtraUpdate
+FavouriteIn:
+  properties:
+    item_id:
+      type: integer
+      title: Item Id
+  type: object
+  required:
+  - item_id
+  title: FavouriteIn
+FeatureFlagUpdate:
+  properties:
+    is_enabled:
+      type: boolean
+      title: Is Enabled
+  type: object
+  required:
+  - is_enabled
+  title: FeatureFlagUpdate
+FeedbackCreate:
+  properties:
+    customer_id:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Customer Id
+    order_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Order Id
+    rating:
+      type: integer
+      maximum: 5.0
+      minimum: 1.0
+      title: Rating
+    food_rating:
+      anyOf:
+      - type: integer
+        maximum: 5.0
+        minimum: 1.0
+      - type: 'null'
+      title: Food Rating
+    service_rating:
+      anyOf:
+      - type: integer
+        maximum: 5.0
+        minimum: 1.0
+      - type: 'null'
+      title: Service Rating
+    ambience_rating:
+      anyOf:
+      - type: integer
+        maximum: 5.0
+        minimum: 1.0
+      - type: 'null'
+      title: Ambience Rating
+    comment:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Comment
+    source:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Source
+      default: pos
+  type: object
+  required:
+  - rating
+  title: FeedbackCreate
+FeedbackRespond:
+  properties:
+    staff_response:
+      type: string
+      title: Staff Response
+  type: object
+  required:
+  - staff_response
+  title: FeedbackRespond
+FetchUserIn:
+  properties:
+    access_token:
+      type: string
+      title: Access Token
+  type: object
+  required:
+  - access_token
+  title: FetchUserIn
+FunnelEventIn:
+  properties:
+    event:
+      type: string
+      title: Event
+      default: ''
+    step:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Step
+    metadata:
+      anyOf:
+      - type: object
+      - type: 'null'
+      title: Metadata
+    screen:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Screen
+    action:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Action
+  type: object
+  title: FunnelEventIn
+GRNCreate:
+  properties:
+    purchase_order_id:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Purchase Order Id
+    vendor_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Vendor Id
+    branch_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Branch Id
+    received_date:
+      anyOf:
+      - type: string
+        format: date
+      - type: 'null'
+      title: Received Date
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+    items:
+      items:
+        $ref: '#/GRNItemIn'
+      type: array
+      title: Items
+      default: []
+  type: object
+  title: GRNCreate
+GRNItemIn:
+  properties:
+    ingredient_id:
+      type: string
+      title: Ingredient Id
+    ordered_quantity:
+      type: number
+      title: Ordered Quantity
+      default: 0
+    received_quantity:
+      type: number
+      title: Received Quantity
+    rejected_quantity:
+      type: number
+      title: Rejected Quantity
+      default: 0
+    unit:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Unit
+    unit_cost:
+      type: number
+      title: Unit Cost
+      default: 0
+    batch_number:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Batch Number
+    expiry_date:
+      anyOf:
+      - type: string
+        format: date
+      - type: 'null'
+      title: Expiry Date
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+  type: object
+  required:
+  - ingredient_id
+  - received_quantity
+  title: GRNItemIn
+GSTReportGenerate:
+  properties:
+    report_type:
+      type: string
+      title: Report Type
+    period_start:
+      type: string
+      format: date
+      title: Period Start
+    period_end:
+      type: string
+      format: date
+      title: Period End
+  type: object
+  required:
+  - report_type
+  - period_start
+  - period_end
+  title: GSTReportGenerate
+GenerateRequest:
+  properties:
+    food_names:
+      items:
+        type: string
+      type: array
+      maxItems: 50
+      title: Food Names
+  type: object
+  required:
+  - food_names
+  title: GenerateRequest
+GroupCreate:
+  properties:
+    name:
+      type: string
+      title: Name
+    is_required:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Required
+      default: false
+    min_selections:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Min Selections
+      default: 0
+    max_selections:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Max Selections
+    options:
+      anyOf:
+      - items:
+          $ref: '#/OptionIn'
+        type: array
+      - type: 'null'
+      title: Options
+      default: []
+  type: object
+  required:
+  - name
+  title: GroupCreate
+GroupUpdate:
+  properties:
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    is_required:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Required
+    min_selections:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Min Selections
+    max_selections:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Max Selections
+  type: object
+  title: GroupUpdate
+HTTPValidationError:
+  properties:
+    detail:
+      items:
+        $ref: '#/ValidationError'
+      type: array
+      title: Detail
+  type: object
+  title: HTTPValidationError
+IngredientLink:
+  properties:
+    item_id:
+      type: integer
+      title: Item Id
+    ingredient_id:
+      type: integer
+      title: Ingredient Id
+    quantity_used:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Quantity Used
+      default: 0
+    unit:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Unit
+  type: object
+  required:
+  - item_id
+  - ingredient_id
+  title: IngredientLink
+IngredientLinkUpdate:
+  properties:
+    quantity_used:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Quantity Used
+    unit:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Unit
+  type: object
+  title: IngredientLinkUpdate
+InitiateIn:
+  properties:
+    order_id:
+      type: string
+      title: Order Id
+    amount:
+      type: string
+      title: Amount
+    cust_id:
+      type: string
+      title: Cust Id
+    callback_url:
+      type: string
+      title: Callback Url
+  type: object
+  required:
+  - order_id
+  - amount
+  - cust_id
+  - callback_url
+  title: InitiateIn
+InitiateOAuthIn:
+  properties:
+    verification_id:
+      type: string
+      title: Verification Id
+    phone:
+      type: string
+      title: Phone
+    redirect_url:
+      type: string
+      title: Redirect Url
+  type: object
+  required:
+  - verification_id
+  - phone
+  - redirect_url
+  title: InitiateOAuthIn
+InitiatePaymentIn:
+  properties:
+    order_id:
+      type: string
+      title: Order Id
+    payment_mode:
+      type: string
+      title: Payment Mode
+    amount:
+      type: number
+      title: Amount
+    tip:
+      type: number
+      title: Tip
+      default: 0
+  type: object
+  required:
+  - order_id
+  - payment_mode
+  - amount
+  title: InitiatePaymentIn
+InvoiceCreate:
+  properties:
+    customer_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Customer Id
+    customer_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Customer Name
+    customer_gstin:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Customer Gstin
+    order_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Order Id
+    invoice_date:
+      anyOf:
+      - type: string
+        format: date
+      - type: 'null'
+      title: Invoice Date
+    due_date:
+      anyOf:
+      - type: string
+        format: date
+      - type: 'null'
+      title: Due Date
+    invoice_type:
+      type: string
+      title: Invoice Type
+      default: tax_invoice
+    items:
+      items:
+        $ref: '#/InvoiceItemCreate'
+      type: array
+      title: Items
+      default: []
+    notes:
+      type: string
+      title: Notes
+      default: ''
+    terms:
+      type: string
+      title: Terms
+      default: ''
+  type: object
+  title: InvoiceCreate
+InvoiceItemCreate:
+  properties:
+    item_name:
+      type: string
+      title: Item Name
+    hsn_code:
+      type: string
+      title: Hsn Code
+      default: ''
+    quantity:
+      type: number
+      title: Quantity
+      default: 1
+    unit_price:
+      type: number
+      title: Unit Price
+      default: 0
+    discount:
+      type: number
+      title: Discount
+      default: 0
+    cgst_rate:
+      type: number
+      title: Cgst Rate
+      default: 0
+    sgst_rate:
+      type: number
+      title: Sgst Rate
+      default: 0
+    igst_rate:
+      type: number
+      title: Igst Rate
+      default: 0
+  type: object
+  required:
+  - item_name
+  title: InvoiceItemCreate
+InvoiceItemIn:
+  properties:
+    name:
+      type: string
+      title: Name
+    ingredient_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Ingredient Id
+    match_status:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Match Status
+    hsn_code:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Hsn Code
+    quantity:
+      type: number
+      title: Quantity
+      default: 0
+    unit:
+      type: string
+      title: Unit
+      default: pcs
+    unit_price:
+      type: number
+      title: Unit Price
+      default: 0
+    discount_percent:
+      type: number
+      title: Discount Percent
+      default: 0
+    tax_percent:
+      type: number
+      title: Tax Percent
+      default: 0
+    tax_amount:
+      type: number
+      title: Tax Amount
+      default: 0
+    line_total:
+      type: number
+      title: Line Total
+      default: 0
+  type: object
+  required:
+  - name
+  title: InvoiceItemIn
+InvoicePaymentCreate:
+  properties:
+    amount:
+      type: number
+      title: Amount
+    payment_method:
+      type: string
+      title: Payment Method
+      default: cash
+    payment_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Payment Id
+  type: object
+  required:
+  - amount
+  title: InvoicePaymentCreate
+InvoiceVoidRequest:
+  properties:
+    reason:
+      type: string
+      title: Reason
+      default: ''
+  type: object
+  title: InvoiceVoidRequest
+ItemCreate:
+  properties:
+    Item_Name:
+      type: string
+      title: Item Name
+    Description:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description
+    price:
+      type: number
+      title: Price
+    Available_Status:
+      type: boolean
+      title: Available Status
+      default: true
+    Category:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Category
+    Subcategory:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Subcategory
+    Cuisine:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Cuisine
+    Spice_Level:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Spice Level
+    Prep_Time_Min:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Prep Time Min
+    Image_url:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Image Url
+    is_veg:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Veg
+    tags:
+      anyOf:
+      - items:
+          type: string
+        type: array
+      - type: 'null'
+      title: Tags
+    sort_order:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Sort Order
+    dine_in_available:
+      type: boolean
+      title: Dine In Available
+      default: true
+    takeaway_available:
+      type: boolean
+      title: Takeaway Available
+      default: true
+    delivery_available:
+      type: boolean
+      title: Delivery Available
+      default: true
+  type: object
+  required:
+  - Item_Name
+  - price
+  title: ItemCreate
+ItemResponse:
+  properties:
+    Item_ID:
+      type: integer
+      title: Item Id
+    Item_Name:
+      type: string
+      title: Item Name
+    Description:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description
+    price:
+      title: Price
+    Available_Status:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Available Status
+    Category:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Category
+    Subcategory:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Subcategory
+    Cuisine:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Cuisine
+    Spice_Level:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Spice Level
+    Prep_Time_Min:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Prep Time Min
+    Image_url:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Image Url
+    is_veg:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Veg
+    tags:
+      anyOf:
+      - items:
+          type: string
+        type: array
+      - type: 'null'
+      title: Tags
+    sort_order:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Sort Order
+    dine_in_available:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Dine In Available
+    takeaway_available:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Takeaway Available
+    delivery_available:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Delivery Available
+    restaurant_id:
+      anyOf:
+      - type: string
+        format: uuid
+      - type: 'null'
+      title: Restaurant Id
+    branch_id:
+      anyOf:
+      - type: string
+        format: uuid
+      - type: 'null'
+      title: Branch Id
+    user_id:
+      anyOf:
+      - type: string
+        format: uuid
+      - type: 'null'
+      title: User Id
+    created_at:
+      anyOf:
+      - {}
+      - type: 'null'
+      title: Created At
+    updated_at:
+      anyOf:
+      - {}
+      - type: 'null'
+      title: Updated At
+  type: object
+  required:
+  - Item_ID
+  - Item_Name
+  - price
+  title: ItemResponse
+ItemUpdate:
+  properties:
+    Item_Name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Item Name
+    Description:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description
+    price:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Price
+    Available_Status:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Available Status
+    Category:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Category
+    Subcategory:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Subcategory
+    Cuisine:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Cuisine
+    Spice_Level:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Spice Level
+    Prep_Time_Min:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Prep Time Min
+    Image_url:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Image Url
+    is_veg:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Veg
+    tags:
+      anyOf:
+      - items:
+          type: string
+        type: array
+      - type: 'null'
+      title: Tags
+    sort_order:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Sort Order
+    dine_in_available:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Dine In Available
+    takeaway_available:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Takeaway Available
+    delivery_available:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Delivery Available
+  type: object
+  title: ItemUpdate
+JoinSessionIn:
+  properties:
+    session_token:
+      type: string
+      title: Session Token
+    device_id:
+      type: string
+      title: Device Id
+  type: object
+  required:
+  - session_token
+  - device_id
+  title: JoinSessionIn
+JournalCreate:
+  properties:
+    entry_date:
+      anyOf:
+      - type: string
+        format: date
+      - type: 'null'
+      title: Entry Date
+    reference_type:
+      type: string
+      title: Reference Type
+      default: adjustment
+    description:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description
+    lines:
+      items:
+        $ref: '#/JournalLineIn'
+      type: array
+      title: Lines
+  type: object
+  required:
+  - lines
+  title: JournalCreate
+JournalLineIn:
+  properties:
+    account_code:
+      type: string
+      title: Account Code
+    debit:
+      type: number
+      title: Debit
+      default: 0
+    credit:
+      type: number
+      title: Credit
+      default: 0
+    description:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description
+  type: object
+  required:
+  - account_code
+  title: JournalLineIn
+ManualMatchRequest:
+  properties:
+    bank_statement_id:
+      type: string
+      title: Bank Statement Id
+    journal_entry_id:
+      type: string
+      title: Journal Entry Id
+    notes:
+      type: string
+      title: Notes
+      default: ''
+  type: object
+  required:
+  - bank_statement_id
+  - journal_entry_id
+  title: ManualMatchRequest
+MappingCreate:
+  properties:
+    item_id:
+      type: integer
+      title: Item Id
+    station_id:
+      type: integer
+      title: Station Id
+  type: object
+  required:
+  - item_id
+  - station_id
+  title: MappingCreate
+MarkPaidVacateIn:
+  properties:
+    order_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Order Id
+  type: object
+  title: MarkPaidVacateIn
+MergeSessionsIn:
+  properties:
+    source_session_token:
+      type: string
+      title: Source Session Token
+    target_session_token:
+      type: string
+      title: Target Session Token
+  type: object
+  required:
+  - source_session_token
+  - target_session_token
+  title: MergeSessionsIn
+NotifyNextRequest:
+  properties:
+    table_id:
+      anyOf:
+      - type: string
+        format: uuid
+      - type: 'null'
+      title: Table Id
+  type: object
+  title: NotifyNextRequest
+OfferCreate:
+  properties:
+    title:
+      type: string
+      title: Title
+    description:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description
+    discount:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Discount
+      default: 0
+    code:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Code
+    type:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Type
+      default: percentage
+    icon:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Icon
+    expiry_days:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Expiry Days
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+      default: true
+    valid_from:
+      anyOf:
+      - type: string
+        format: date-time
+      - type: 'null'
+      title: Valid From
+    valid_until:
+      anyOf:
+      - type: string
+        format: date-time
+      - type: 'null'
+      title: Valid Until
+  type: object
+  required:
+  - title
+  title: OfferCreate
+OfferUpdate:
+  properties:
+    title:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Title
+    description:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description
+    discount:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Discount
+    code:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Code
+    type:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Type
+    icon:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Icon
+    expiry_days:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Expiry Days
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+    valid_from:
+      anyOf:
+      - type: string
+        format: date-time
+      - type: 'null'
+      title: Valid From
+    valid_until:
+      anyOf:
+      - type: string
+        format: date-time
+      - type: 'null'
+      title: Valid Until
+  type: object
+  title: OfferUpdate
+OptionIn:
+  properties:
+    name:
+      type: string
+      title: Name
+    price:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Price
+      default: 0
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+      default: true
+  type: object
+  required:
+  - name
+  title: OptionIn
+OptionUpdate:
+  properties:
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    price:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Price
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+  type: object
+  title: OptionUpdate
+OrderItemIn:
+  properties:
+    item_id:
+      anyOf:
+      - {}
+      - type: 'null'
+      title: Item Id
+    item_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Item Name
+    variant_id:
+      anyOf:
+      - {}
+      - type: 'null'
+      title: Variant Id
+    variant_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Variant Name
+    quantity:
+      type: integer
+      minimum: 1.0
+      title: Quantity
+      default: 1
+    price:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Price
+    addons:
+      anyOf:
+      - items: {}
+        type: array
+      - type: 'null'
+      title: Addons
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+  additionalProperties: true
+  type: object
+  title: OrderItemIn
+POCreate:
+  properties:
+    source_type:
+      type: string
+      enum:
+      - supplier
+      - restaurant
+      - kitchen
+      title: Source Type
+      default: supplier
+    source_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Source Id
+    source_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Source Name
+    supplier_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Supplier Name
+    supplier_contact:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Supplier Contact
+    status:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Status
+      default: draft
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+    expected_delivery_date:
+      anyOf:
+      - type: string
+        format: date
+      - type: 'null'
+      title: Expected Delivery Date
+    delivery_time:
+      anyOf:
+      - type: string
+        format: time
+      - type: 'null'
+      title: Delivery Time
+    delivery_charges:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Delivery Charges
+      default: 0
+    payment_status:
+      type: string
+      enum:
+      - unpaid
+      - paid
+      title: Payment Status
+      default: unpaid
+    items:
+      anyOf:
+      - items:
+          $ref: '#/POItemIn'
+        type: array
+      - type: 'null'
+      title: Items
+      default: []
+  type: object
+  title: POCreate
+POItemIn:
+  properties:
+    ingredient_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Ingredient Id
+    ingredient_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Ingredient Name
+    quantity_ordered:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Quantity Ordered
+      default: 0
+    unit:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Unit
+    unit_price:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Unit Price
+      default: 0
+  type: object
+  title: POItemIn
+POUpdate:
+  properties:
+    source_type:
+      anyOf:
+      - type: string
+        enum:
+        - supplier
+        - restaurant
+        - kitchen
+      - type: 'null'
+      title: Source Type
+    source_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Source Id
+    source_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Source Name
+    supplier_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Supplier Name
+    supplier_contact:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Supplier Contact
+    status:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Status
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+    expected_delivery_date:
+      anyOf:
+      - type: string
+        format: date
+      - type: 'null'
+      title: Expected Delivery Date
+    delivery_time:
+      anyOf:
+      - type: string
+        format: time
+      - type: 'null'
+      title: Delivery Time
+    delivery_charges:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Delivery Charges
+    payment_status:
+      anyOf:
+      - type: string
+        enum:
+        - unpaid
+        - paid
+      - type: 'null'
+      title: Payment Status
+    items:
+      anyOf:
+      - items:
+          $ref: '#/POItemIn'
+        type: array
+      - type: 'null'
+      title: Items
+  type: object
+  title: POUpdate
+ParseInvoiceBase64In:
+  properties:
+    image_base64:
+      type: string
+      title: Image Base64
+    mime_type:
+      type: string
+      title: Mime Type
+      default: image/jpeg
+    idempotency_key:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Idempotency Key
+  type: object
+  required:
+  - image_base64
+  title: ParseInvoiceBase64In
+PaymentVoiceIn:
+  properties:
+    amount:
+      type: number
+      title: Amount
+    language:
+      type: string
+      title: Language
+      default: en
+  type: object
+  required:
+  - amount
+  title: PaymentVoiceIn
+PeriodCloseRequest:
+  properties:
+    period_start:
+      type: string
+      format: date
+      title: Period Start
+    period_end:
+      type: string
+      format: date
+      title: Period End
+    notes:
+      type: string
+      title: Notes
+      default: ''
+  type: object
+  required:
+  - period_start
+  - period_end
+  title: PeriodCloseRequest
+PincodeCreate:
+  properties:
+    pincode:
+      type: string
+      title: Pincode
+    area_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Area Name
+    city:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: City
+    state:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: State
+  type: object
+  required:
+  - pincode
+  title: PincodeCreate
+PlaceOrderIn:
+  properties:
+    session_token:
+      type: string
+      title: Session Token
+    device_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Device Id
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+    customer_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Customer Name
+    customer_phone:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Customer Phone
+    payment_method:
+      type: string
+      title: Payment Method
+      default: cash
+    request_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Request Id
+  type: object
+  required:
+  - session_token
+  title: PlaceOrderIn
+PlatformTaxCreate:
+  properties:
+    platform:
+      type: string
+      title: Platform
+    gst_handled_by_platform:
+      type: boolean
+      title: Gst Handled By Platform
+      default: false
+    commission_rate:
+      type: number
+      title: Commission Rate
+      default: 0
+    tcs_rate:
+      type: number
+      title: Tcs Rate
+      default: 0
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+  type: object
+  required:
+  - platform
+  title: PlatformTaxCreate
+PurchaseAddonIn:
+  properties:
+    addon_slug:
+      type: string
+      title: Addon Slug
+    quantity:
+      type: integer
+      title: Quantity
+      default: 1
+    shipping_address:
+      anyOf:
+      - type: object
+      - type: 'null'
+      title: Shipping Address
+  type: object
+  required:
+  - addon_slug
+  title: PurchaseAddonIn
+QRCallWaiterIn:
+  properties:
+    session_token:
+      type: string
+      title: Session Token
+    request_type:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Request Type
+      default: assistance
+  type: object
+  required:
+  - session_token
+  title: QRCallWaiterIn
+QRCartActionIn:
+  properties:
+    session_token:
+      type: string
+      title: Session Token
+    action:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Action
+      default: add
+    item_id:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Item Id
+    variant_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Variant Id
+    quantity:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Quantity
+      default: 1
+    addons:
+      anyOf:
+      - items: {}
+        type: array
+      - type: 'null'
+      title: Addons
+      default: []
+    extras:
+      anyOf:
+      - items: {}
+        type: array
+      - type: 'null'
+      title: Extras
+      default: []
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+    device_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Device Id
+    cart_item_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Cart Item Id
+    item_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Item Name
+    unit_price:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Unit Price
+  type: object
+  required:
+  - session_token
+  title: QRCartActionIn
+QRPlaceOrderIn:
+  properties:
+    session_token:
+      type: string
+      title: Session Token
+    device_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Device Id
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+    customer_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Customer Name
+    customer_phone:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Customer Phone
+    payment_method:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Payment Method
+      default: cash
+  type: object
+  required:
+  - session_token
+  title: QRPlaceOrderIn
+ReceivePurchaseIn:
+  properties:
+    purchase_order_id:
+      type: string
+      title: Purchase Order Id
+  type: object
+  required:
+  - purchase_order_id
+  title: ReceivePurchaseIn
+RecipeCreate:
+  properties:
+    item_id:
+      type: integer
+      title: Item Id
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    yield_quantity:
+      type: number
+      title: Yield Quantity
+      default: 1
+    yield_unit:
+      type: string
+      title: Yield Unit
+      default: portion
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+    ingredients:
+      items:
+        $ref: '#/RecipeIngredientIn'
+      type: array
+      title: Ingredients
+      default: []
+  type: object
+  required:
+  - item_id
+  title: RecipeCreate
+RecipeIngredientIn:
+  properties:
+    ingredient_id:
+      type: string
+      title: Ingredient Id
+    quantity_required:
+      type: number
+      title: Quantity Required
+    unit:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Unit
+    waste_percent:
+      type: number
+      title: Waste Percent
+      default: 0
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+  type: object
+  required:
+  - ingredient_id
+  - quantity_required
+  title: RecipeIngredientIn
+RecipeUpdate:
+  properties:
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    yield_quantity:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Yield Quantity
+    yield_unit:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Yield Unit
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+    ingredients:
+      anyOf:
+      - items:
+          $ref: '#/RecipeIngredientIn'
+        type: array
+      - type: 'null'
+      title: Ingredients
+  type: object
+  title: RecipeUpdate
+ReconcileRequest:
+  properties:
+    notes:
+      type: string
+      title: Notes
+      default: ''
+  type: object
+  title: ReconcileRequest
+RecordPayment:
+  properties:
+    amount:
+      type: number
+      title: Amount
+  type: object
+  required:
+  - amount
+  title: RecordPayment
+RecordPaymentIn:
+  properties:
+    order_id:
+      type: string
+      title: Order Id
+    method:
+      type: string
+      title: Method
+      default: cash
+    amount:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Amount
+  type: object
+  required:
+  - order_id
+  title: RecordPaymentIn
+RecordSettlementRequest:
+  properties:
+    gateway:
+      type: string
+      title: Gateway
+    settlement_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Settlement Id
+    settlement_date:
+      anyOf:
+      - type: string
+        format: date
+      - type: 'null'
+      title: Settlement Date
+    gross_amount:
+      type: number
+      title: Gross Amount
+    gateway_fee:
+      type: number
+      title: Gateway Fee
+      default: 0
+    tax_on_fee:
+      type: number
+      title: Tax On Fee
+      default: 0
+    net_amount:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Net Amount
+    payment_ids:
+      anyOf:
+      - items:
+          type: string
+        type: array
+      - type: 'null'
+      title: Payment Ids
+    notes:
+      type: string
+      title: Notes
+      default: ''
+  type: object
+  required:
+  - gateway
+  - gross_amount
+  title: RecordSettlementRequest
+RefreshTokenRequest:
+  properties:
+    refresh_token:
+      type: string
+      title: Refresh Token
+  type: object
+  required:
+  - refresh_token
+  title: RefreshTokenRequest
+RefundIn:
+  properties:
+    payment_id:
+      type: string
+      title: Payment Id
+    amount:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Amount
+    reason:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Reason
+  type: object
+  required:
+  - payment_id
+  title: RefundIn
+RemoveCartItemIn:
+  properties:
+    session_id:
+      type: string
+      title: Session Id
+    item_id:
+      type: string
+      title: Item Id
+  type: object
+  required:
+  - session_id
+  - item_id
+  title: RemoveCartItemIn
+ReorderRequest:
+  properties:
+    ordered_ids:
+      items:
+        type: string
+        format: uuid
+      type: array
+      minItems: 1
+      title: Ordered Ids
+  type: object
+  required:
+  - ordered_ids
+  title: ReorderRequest
+ReversalRequest:
+  properties:
+    journal_entry_id:
+      type: string
+      title: Journal Entry Id
+    reason:
+      type: string
+      title: Reason
+      default: ''
+  type: object
+  required:
+  - journal_entry_id
+  title: ReversalRequest
+ReviewReplyRequest:
+  properties:
+    restaurant_id:
+      type: string
+      title: Restaurant Id
+    review_id:
+      type: string
+      title: Review Id
+    reply_text:
+      type: string
+      maxLength: 4096
+      minLength: 1
+      title: Reply Text
+  type: object
+  required:
+  - restaurant_id
+  - review_id
+  - reply_text
+  title: ReviewReplyRequest
+SaveKycIn:
+  properties:
+    verification_id:
+      type: string
+      title: Verification Id
+    user_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: User Id
+  type: object
+  required:
+  - verification_id
+  title: SaveKycIn
+ScanBase64In:
+  properties:
+    image_base64:
+      type: string
+      title: Image Base64
+    mime_type:
+      type: string
+      title: Mime Type
+      default: image/jpeg
+  type: object
+  required:
+  - image_base64
+  title: ScanBase64In
+SelectLocationRequest:
+  properties:
+    restaurant_id:
+      type: string
+      title: Restaurant Id
+    account_id:
+      type: string
+      title: Account Id
+    location_id:
+      type: string
+      title: Location Id
+    location_name:
+      type: string
+      title: Location Name
+      default: ''
+  type: object
+  required:
+  - restaurant_id
+  - account_id
+  - location_id
+  title: SelectLocationRequest
+SessionPaymentIn:
+  properties:
+    amount:
+      type: number
+      exclusiveMinimum: 0.0
+      title: Amount
+    payment_method:
+      type: string
+      title: Payment Method
+    transaction_ref:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Transaction Ref
+    paid_by:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Paid By
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+  type: object
+  required:
+  - amount
+  - payment_method
+  title: SessionPaymentIn
+SessionSplitBillIn:
+  properties:
+    split_type:
+      type: string
+      title: Split Type
+      default: equal
+    parts:
+      type: integer
+      title: Parts
+      default: 1
+    item_splits:
+      anyOf:
+      - items:
+          type: object
+        type: array
+      - type: 'null'
+      title: Item Splits
+    user_splits:
+      anyOf:
+      - items:
+          type: object
+        type: array
+      - type: 'null'
+      title: User Splits
+  type: object
+  title: SessionSplitBillIn
+ShiftClose:
+  properties:
+    closing_cash:
+      type: number
+      title: Closing Cash
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+  type: object
+  required:
+  - closing_cash
+  title: ShiftClose
+ShiftOpen:
+  properties:
+    drawer_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Drawer Id
+    opening_cash:
+      type: number
+      title: Opening Cash
+      default: 0
+  type: object
+  title: ShiftOpen
+SplitBillIn:
+  properties:
+    split_type:
+      type: string
+      title: Split Type
+      default: equal
+    parts:
+      type: integer
+      title: Parts
+      default: 1
+    item_splits:
+      anyOf:
+      - items:
+          type: object
+        type: array
+      - type: 'null'
+      title: Item Splits
+    user_splits:
+      anyOf:
+      - items:
+          type: object
+        type: array
+      - type: 'null'
+      title: User Splits
+  type: object
+  title: SplitBillIn
+StartSessionIn:
+  properties:
+    branch_id:
+      type: string
+      title: Branch Id
+    table_id:
+      type: string
+      title: Table Id
+    customer_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Customer Name
+  type: object
+  required:
+  - branch_id
+  - table_id
+  title: StartSessionIn
+StatementLineCreate:
+  properties:
+    statement_date:
+      type: string
+      format: date
+      title: Statement Date
+    description:
+      type: string
+      title: Description
+    amount:
+      type: number
+      title: Amount
+    reference:
+      type: string
+      title: Reference
+      default: ''
+    bank_account:
+      type: string
+      title: Bank Account
+      default: ''
+    transaction_type:
+      type: string
+      title: Transaction Type
+      default: ''
+    value_date:
+      anyOf:
+      - type: string
+        format: date
+      - type: 'null'
+      title: Value Date
+  type: object
+  required:
+  - statement_date
+  - description
+  - amount
+  title: StatementLineCreate
+StockAdjust:
+  properties:
+    ingredient_id:
+      type: string
+      title: Ingredient Id
+    branch_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Branch Id
+    transaction_type:
+      type: string
+      title: Transaction Type
+    quantity:
+      type: number
+      title: Quantity
+    unit_cost:
+      type: number
+      title: Unit Cost
+      default: 0
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+  type: object
+  required:
+  - ingredient_id
+  - transaction_type
+  - quantity
+  title: StockAdjust
+SubscribeIn:
+  properties:
+    plan_slug:
+      type: string
+      title: Plan Slug
+  type: object
+  required:
+  - plan_slug
+  title: SubscribeIn
+SuggestRequest:
+  properties:
+    item_name:
+      type: string
+      title: Item Name
+  type: object
+  required:
+  - item_name
+  title: SuggestRequest
+TTSIn:
+  properties:
+    text:
+      type: string
+      title: Text
+    voice_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Voice Id
+    stability:
+      type: number
+      title: Stability
+      default: 0.5
+    similarity_boost:
+      type: number
+      title: Similarity Boost
+      default: 0.75
+  type: object
+  required:
+  - text
+  title: TTSIn
+TaxAssign:
+  properties:
+    item_id:
+      type: integer
+      title: Item Id
+    tax_rate_id:
+      type: string
+      title: Tax Rate Id
+  type: object
+  required:
+  - item_id
+  - tax_rate_id
+  title: TaxAssign
+TaxComputeRequest:
+  properties:
+    period_start:
+      type: string
+      format: date
+      title: Period Start
+    period_end:
+      type: string
+      format: date
+      title: Period End
+    period_label:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Period Label
+  type: object
+  required:
+  - period_start
+  - period_end
+  title: TaxComputeRequest
+TaxPaymentRequest:
+  properties:
+    payment_method:
+      type: string
+      title: Payment Method
+      default: bank
+    payment_reference:
+      type: string
+      title: Payment Reference
+      default: ''
+  type: object
+  title: TaxPaymentRequest
+TaxRateCreate:
+  properties:
+    name:
+      type: string
+      title: Name
+    hsn_code:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Hsn Code
+    rate_percentage:
+      type: number
+      title: Rate Percentage
+    cgst_percentage:
+      type: number
+      title: Cgst Percentage
+      default: 0
+    sgst_percentage:
+      type: number
+      title: Sgst Percentage
+      default: 0
+    igst_percentage:
+      type: number
+      title: Igst Percentage
+      default: 0
+    is_inclusive:
+      type: boolean
+      title: Is Inclusive
+      default: false
+    applicable_on:
+      type: string
+      title: Applicable On
+      default: all
+  type: object
+  required:
+  - name
+  - rate_percentage
+  title: TaxRateCreate
+TaxRuleCreate:
+  properties:
+    name:
+      type: string
+      title: Name
+    priority:
+      type: integer
+      title: Priority
+      default: 100
+    tax_rate_id:
+      type: string
+      title: Tax Rate Id
+    order_type:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Order Type
+    platform:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Platform
+    is_interstate:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Interstate
+    applicable_on:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Applicable On
+    min_order_value:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Min Order Value
+    max_order_value:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Max Order Value
+    time_from:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Time From
+    time_to:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Time To
+  type: object
+  required:
+  - name
+  - tax_rate_id
+  title: TaxRuleCreate
+TransferCreate:
+  properties:
+    from_branch_id:
+      type: string
+      title: From Branch Id
+    to_branch_id:
+      type: string
+      title: To Branch Id
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+    items:
+      items:
+        $ref: '#/TransferItemIn'
+      type: array
+      title: Items
+      default: []
+  type: object
+  required:
+  - from_branch_id
+  - to_branch_id
+  title: TransferCreate
+TransferItemIn:
+  properties:
+    ingredient_id:
+      type: string
+      title: Ingredient Id
+    quantity_sent:
+      type: number
+      title: Quantity Sent
+    unit:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Unit
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+  type: object
+  required:
+  - ingredient_id
+  - quantity_sent
+  title: TransferItemIn
+TransferReceive:
+  properties:
+    items:
+      items:
+        $ref: '#/TransferReceiveItem'
+      type: array
+      title: Items
+      default: []
+  type: object
+  title: TransferReceive
+TransferReceiveItem:
+  properties:
+    ingredient_id:
+      type: string
+      title: Ingredient Id
+    quantity_received:
+      type: number
+      title: Quantity Received
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+  type: object
+  required:
+  - ingredient_id
+  - quantity_received
+  title: TransferReceiveItem
+UnmatchRequest:
+  properties:
+    bank_statement_id:
+      type: string
+      title: Bank Statement Id
+    journal_entry_id:
+      type: string
+      title: Journal Entry Id
+  type: object
+  required:
+  - bank_statement_id
+  - journal_entry_id
+  title: UnmatchRequest
+UpdateBranchIn:
+  properties:
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+  type: object
+  title: UpdateBranchIn
+UpdateBranchUserIn:
+  properties:
+    role:
+      type: string
+      title: Role
+  type: object
+  required:
+  - role
+  title: UpdateBranchUserIn
+UpdateDeliveryStatusIn:
+  properties:
+    status:
+      type: string
+      title: Status
+  type: object
+  required:
+  - status
+  title: UpdateDeliveryStatusIn
+UpdateItemStatusIn:
+  properties:
+    status:
+      type: string
+      title: Status
+  type: object
+  required:
+  - status
+  title: UpdateItemStatusIn
+UpdateKitchenOrderStatusIn:
+  properties:
+    status:
+      type: string
+      title: Status
+  type: object
+  required:
+  - status
+  title: UpdateKitchenOrderStatusIn
+UpdateLocationIn:
+  properties:
+    latitude:
+      type: number
+      title: Latitude
+    longitude:
+      type: number
+      title: Longitude
+  type: object
+  required:
+  - latitude
+  - longitude
+  title: UpdateLocationIn
+UpdateOrderIn:
+  properties:
+    status:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Status
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+  additionalProperties: true
+  type: object
+  title: UpdateOrderIn
+UpdatePartnerIn:
+  properties:
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    phone:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Phone
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+  type: object
+  title: UpdatePartnerIn
+UpdateRestaurantIn:
+  properties:
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    phone:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Phone
+    email:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Email
+    address:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Address
+    city:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: City
+    state:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: State
+    pincode:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Pincode
+    latitude:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Latitude
+    longitude:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Longitude
+    logo_url:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Logo Url
+    cover_url:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Cover Url
+    gst_number:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Gst Number
+    fssai_number:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Fssai Number
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+    opening_time:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Opening Time
+    closing_time:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Closing Time
+    avg_prep_time:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Avg Prep Time
+  type: object
+  title: UpdateRestaurantIn
+UpdateRuleRequest:
+  properties:
+    rule_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Rule Name
+    description:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description
+    debit_account_code:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Debit Account Code
+    credit_account_code:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Credit Account Code
+    amount_field:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Amount Field
+    amount_multiplier:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Amount Multiplier
+    conditions:
+      anyOf:
+      - type: object
+      - type: 'null'
+      title: Conditions
+    priority:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Priority
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+    reference_type_override:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Reference Type Override
+    description_template:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description Template
+  type: object
+  title: UpdateRuleRequest
+UpdateStaffIn:
+  properties:
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    role:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Role
+    phone:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Phone
+  type: object
+  title: UpdateStaffIn
+UpdateStatus:
+  properties:
+    status:
+      type: string
+      title: Status
+  type: object
+  required:
+  - status
+  title: UpdateStatus
+UpdateStatusIn:
+  properties:
+    status:
+      type: string
+      title: Status
+  type: object
+  required:
+  - status
+  title: UpdateStatusIn
+UpdateTableIn:
+  properties:
+    table_number:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Table Number
+    capacity:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Capacity
+    status:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Status
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+  type: object
+  title: UpdateTableIn
+UpgradeIn:
+  properties:
+    new_plan_slug:
+      type: string
+      title: New Plan Slug
+  type: object
+  required:
+  - new_plan_slug
+  title: UpgradeIn
+ValidationError:
+  properties:
+    loc:
+      items:
+        anyOf:
+        - type: string
+        - type: integer
+      type: array
+      title: Location
+    msg:
+      type: string
+      title: Message
+    type:
+      type: string
+      title: Error Type
+  type: object
+  required:
+  - loc
+  - msg
+  - type
+  title: ValidationError
+VariantCreate:
+  properties:
+    item_id:
+      type: integer
+      title: Item Id
+    name:
+      type: string
+      title: Name
+    price:
+      type: number
+      title: Price
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+      default: true
+    sku:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Sku
+  type: object
+  required:
+  - item_id
+  - name
+  - price
+  title: VariantCreate
+VariantUpdate:
+  properties:
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    price:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Price
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+    sku:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Sku
+  type: object
+  title: VariantUpdate
+VendorCreate:
+  properties:
+    name:
+      type: string
+      title: Name
+    contact_person:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Contact Person
+    phone:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Phone
+    email:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Email
+    address:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Address
+    city:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: City
+    state:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: State
+    pincode:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Pincode
+    gst_number:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Gst Number
+    pan_number:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Pan Number
+    bank_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Bank Name
+    bank_account_number:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Bank Account Number
+    bank_ifsc:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Bank Ifsc
+    payment_terms:
+      type: integer
+      title: Payment Terms
+      default: 30
+    credit_limit:
+      type: number
+      title: Credit Limit
+      default: 0
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+  type: object
+  required:
+  - name
+  title: VendorCreate
+VendorPaymentCreate:
+  properties:
+    vendor_id:
+      type: string
+      title: Vendor Id
+    amount:
+      type: number
+      title: Amount
+    payment_method:
+      type: string
+      title: Payment Method
+    payment_date:
+      anyOf:
+      - type: string
+        format: date
+      - type: 'null'
+      title: Payment Date
+    reference_number:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Reference Number
+    purchase_order_id:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Purchase Order Id
+    grn_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Grn Id
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+  type: object
+  required:
+  - vendor_id
+  - amount
+  - payment_method
+  title: VendorPaymentCreate
+VendorUpdate:
+  properties:
+    name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Name
+    contact_person:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Contact Person
+    phone:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Phone
+    email:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Email
+    address:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Address
+    city:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: City
+    state:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: State
+    pincode:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Pincode
+    gst_number:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Gst Number
+    pan_number:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Pan Number
+    bank_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Bank Name
+    bank_account_number:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Bank Account Number
+    bank_ifsc:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Bank Ifsc
+    payment_terms:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Payment Terms
+    credit_limit:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Credit Limit
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+  type: object
+  title: VendorUpdate
+VerifyAccountIn:
+  properties:
+    verification_id:
+      type: string
+      title: Verification Id
+    mobile_number:
+      type: string
+      title: Mobile Number
+  type: object
+  required:
+  - verification_id
+  - mobile_number
+  title: VerifyAccountIn
+VerifyGSTIn:
+  properties:
+    gstin:
+      type: string
+      title: Gstin
+    business_name:
+      type: string
+      title: Business Name
+      default: ''
+  type: object
+  required:
+  - gstin
+  title: VerifyGSTIn
+VerifyPaymentIn:
+  properties:
+    order_id:
+      type: string
+      title: Order Id
+    razorpay_payment_id:
+      type: string
+      title: Razorpay Payment Id
+    razorpay_order_id:
+      type: string
+      title: Razorpay Order Id
+    razorpay_signature:
+      type: string
+      title: Razorpay Signature
+  type: object
+  required:
+  - order_id
+  - razorpay_payment_id
+  - razorpay_order_id
+  - razorpay_signature
+  title: VerifyPaymentIn
+VerifyResponseIn:
+  properties:
+    status:
+      type: string
+      title: Status
+    txnid:
+      type: string
+      title: Txnid
+    amount:
+      type: string
+      title: Amount
+    productinfo:
+      type: string
+      title: Productinfo
+    firstname:
+      type: string
+      title: Firstname
+    email:
+      type: string
+      title: Email
+    response_hash:
+      type: string
+      title: Response Hash
+    udf1:
+      type: string
+      title: Udf1
+      default: ''
+    udf2:
+      type: string
+      title: Udf2
+      default: ''
+    udf3:
+      type: string
+      title: Udf3
+      default: ''
+    udf4:
+      type: string
+      title: Udf4
+      default: ''
+    udf5:
+      type: string
+      title: Udf5
+      default: ''
+  type: object
+  required:
+  - status
+  - txnid
+  - amount
+  - productinfo
+  - firstname
+  - email
+  - response_hash
+  title: VerifyResponseIn
+app__api__v1__accounting__ExpenseCreate:
+  properties:
+    amount:
+      type: number
+      title: Amount
+    category:
+      type: string
+      title: Category
+    description:
+      type: string
+      title: Description
+      default: ''
+    reference_type:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Reference Type
+    reference_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Reference Id
+  type: object
+  required:
+  - amount
+  - category
+  title: ExpenseCreate
+app__api__v1__cashfree__CreateOrderIn:
+  properties:
+    order_id:
+      type: string
+      title: Order Id
+    order_amount:
+      type: number
+      title: Order Amount
+    customer_id:
+      type: string
+      title: Customer Id
+    customer_name:
+      type: string
+      title: Customer Name
+    customer_phone:
+      type: string
+      title: Customer Phone
+    return_url:
+      type: string
+      title: Return Url
+  type: object
+  required:
+  - order_id
+  - order_amount
+  - customer_id
+  - customer_name
+  - customer_phone
+  - return_url
+  title: CreateOrderIn
+app__api__v1__categories__CategoryCreate:
+  properties:
+    name:
+      type: string
+      title: Name
+    slug:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Slug
+    description:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Description
+    image_url:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Image Url
+    sort_order:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Sort Order
+      default: 0
+    is_active:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Is Active
+      default: true
+  type: object
+  required:
+  - name
+  title: CategoryCreate
+app__api__v1__dinein__QRScanIn:
+  properties:
+    restaurant_id:
+      type: string
+      title: Restaurant Id
+    table_id:
+      type: string
+      title: Table Id
+    device_id:
+      type: string
+      title: Device Id
+    session_token:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Session Token
+  type: object
+  required:
+  - restaurant_id
+  - table_id
+  - device_id
+  title: QRScanIn
+app__api__v1__expenses__CategoryCreate:
+  properties:
+    name:
+      type: string
+      title: Name
+    account_code:
+      type: string
+      title: Account Code
+    description:
+      type: string
+      title: Description
+      default: ''
+  type: object
+  required:
+  - name
+  - account_code
+  title: CategoryCreate
+app__api__v1__expenses__ExpenseCreate:
+  properties:
+    category_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Category Id
+    category_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Category Name
+    vendor_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Vendor Id
+    vendor_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Vendor Name
+    amount:
+      type: number
+      title: Amount
+    tax_amount:
+      type: number
+      title: Tax Amount
+      default: 0
+    payment_method:
+      type: string
+      title: Payment Method
+      default: cash
+    payment_status:
+      type: string
+      title: Payment Status
+      default: paid
+    expense_date:
+      anyOf:
+      - type: string
+        format: date
+      - type: 'null'
+      title: Expense Date
+    description:
+      type: string
+      title: Description
+      default: ''
+    receipt_url:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Receipt Url
+    invoice_number:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Invoice Number
+    is_recurring:
+      type: boolean
+      title: Is Recurring
+      default: false
+    recurrence:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Recurrence
+  type: object
+  required:
+  - amount
+  title: ExpenseCreate
+app__api__v1__orders__CreateOrderIn:
+  properties:
+    items:
+      items:
+        $ref: '#/OrderItemIn'
+      type: array
+      title: Items
+    order_type:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Order Type
+    table_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Table Id
+    table_number:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Table Number
+    branch_id:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Branch Id
+    coupon_code:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Coupon Code
+    coupon_id:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Coupon Id
+    customer_id:
+      anyOf:
+      - type: integer
+      - type: 'null'
+      title: Customer Id
+    customer_name:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Customer Name
+    customer_phone:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Customer Phone
+    delivery_address:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Delivery Address
+    notes:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Notes
+    source:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Source
+      default: pos
+    idempotency_key:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Idempotency Key
+  additionalProperties: true
+  type: object
+  required:
+  - items
+  title: CreateOrderIn
+app__api__v1__payu__CreateOrderIn:
+  properties:
+    txnid:
+      type: string
+      title: Txnid
+    amount:
+      type: string
+      title: Amount
+    productinfo:
+      type: string
+      title: Productinfo
+    firstname:
+      type: string
+      title: Firstname
+    email:
+      type: string
+      title: Email
+    surl:
+      type: string
+      title: Surl
+    furl:
+      type: string
+      title: Furl
+  type: object
+  required:
+  - txnid
+  - amount
+  - productinfo
+  - firstname
+  - email
+  - surl
+  - furl
+  title: CreateOrderIn
+app__api__v1__phonepe__CreateOrderIn:
+  properties:
+    merchant_order_id:
+      type: string
+      title: Merchant Order Id
+    amount_paise:
+      type: integer
+      title: Amount Paise
+    redirect_url:
+      type: string
+      title: Redirect Url
+    message:
+      type: string
+      title: Message
+      default: Payment for order
+  type: object
+  required:
+  - merchant_order_id
+  - amount_paise
+  - redirect_url
+  title: CreateOrderIn
+app__api__v1__restaurant_settings__SettingsUpdate:
+  properties:
+    tax_percentage:
+      anyOf:
+      - type: number
+      - type: 'null'
+      title: Tax Percentage
+    currency:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Currency
+    receipt_header:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Receipt Header
+    receipt_footer:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Receipt Footer
+    auto_accept_orders:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Auto Accept Orders
+    enable_qr_ordering:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Enable Qr Ordering
+    enable_delivery:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Enable Delivery
+    enable_dine_in:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Enable Dine In
+    enable_takeaway:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Enable Takeaway
+    printer_config:
+      anyOf:
+      - type: object
+      - type: 'null'
+      title: Printer Config
+    theme_config:
+      anyOf:
+      - type: object
+      - type: 'null'
+      title: Theme Config
+    enable_led_display:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Enable Led Display
+    led_display_url:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Led Display Url
+    enable_dual_screen:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Enable Dual Screen
+    dual_screen_url:
+      anyOf:
+      - type: string
+      - type: 'null'
+      title: Dual Screen Url
+  type: object
+  title: SettingsUpdate
+app__api__v1__tables__QRScanIn:
+  properties:
+    restaurant_id:
+      type: string
+      title: Restaurant Id
+    table_id:
+      type: string
+      title: Table Id
+    device_id:
+      type: string
+      title: Device Id
+  type: object
+  required:
+  - restaurant_id
+  - table_id
+  - device_id
+  title: QRScanIn
+app__api__v1__waitlist__SettingsUpdate:
+  properties:
+    notify_expiry_minutes:
+      anyOf:
+      - type: integer
+        maximum: 60.0
+        minimum: 1.0
+      - type: 'null'
+      title: Notify Expiry Minutes
+    avg_turnover_minutes:
+      anyOf:
+      - type: integer
+        maximum: 180.0
+        minimum: 5.0
+      - type: 'null'
+      title: Avg Turnover Minutes
+    sms_enabled:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Sms Enabled
+    whatsapp_enabled:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Whatsapp Enabled
+    display_screen_enabled:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Display Screen Enabled
+    qr_entry_enabled:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Qr Entry Enabled
+    auto_notify:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Auto Notify
+    best_fit_enabled:
+      anyOf:
+      - type: boolean
+      - type: 'null'
+      title: Best Fit Enabled
+    display_message:
+      anyOf:
+      - type: string
+        maxLength: 200
+      - type: 'null'
+      title: Display Message
+  type: object
+  title: SettingsUpdate
+app__api__v1__zivonpay__CreateOrderIn:
+  properties:
+    order_id:
+      type: string
+      title: Order Id
+    amount:
+      type: number
+      title: Amount
+    description:
+      type: string
+      title: Description
+      default: ''
+    customer_name:
+      type: string
+      title: Customer Name
+    customer_phone:
+      type: string
+      title: Customer Phone
+    return_url:
+      type: string
+      title: Return Url
+  type: object
+  required:
+  - order_id
+  - amount
+  - customer_name
+  - customer_phone
+  - return_url
+  title: CreateOrderIn

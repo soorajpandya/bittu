@@ -1,0 +1,152 @@
+# Bittu API — Finance/Billing Module
+# ====================================
+# Domain: finance
+# Module: billing
+# Version: v1
+# Visibility: internal
+# Tags: Billing
+# Operations: 4
+# Paths: 4
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: finance
+  module: billing
+  version: v1
+  visibility: internal
+  tags:
+  - Billing
+  operationCount: 4
+  pathCount: 4
+paths:
+  /api/v1/billing/history:
+    get:
+      tags:
+      - Billing
+      summary: List Billing History
+      operationId: list_billing_history_api_v1_billing_history_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/billing/history/{record_id}:
+    get:
+      tags:
+      - Billing
+      summary: Get Billing Record
+      operationId: get_billing_record_api_v1_billing_history__record_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: record_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Record Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/billing/invoices:
+    get:
+      tags:
+      - Billing
+      summary: List Invoices
+      operationId: list_invoices_api_v1_billing_invoices_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/billing/invoices/{invoice_id}:
+    get:
+      tags:
+      - Billing
+      summary: Get Invoice
+      operationId: get_invoice_api_v1_billing_invoices__invoice_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: invoice_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Invoice Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

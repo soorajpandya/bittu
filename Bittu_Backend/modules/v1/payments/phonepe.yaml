@@ -1,0 +1,74 @@
+# Bittu API — Payments/Phonepe Module
+# =====================================
+# Domain: payments
+# Module: phonepe
+# Version: v1
+# Visibility: internal
+# Tags: PhonePe
+# Operations: 2
+# Paths: 2
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: payments
+  module: phonepe
+  version: v1
+  visibility: internal
+  tags:
+  - PhonePe
+  operationCount: 2
+  pathCount: 2
+paths:
+  /api/v1/phonepe/create-order:
+    post:
+      tags:
+      - PhonePe
+      summary: Create Phonepe Order
+      operationId: create_phonepe_order_api_v1_phonepe_create_order_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/app__api__v1__phonepe__CreateOrderIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/phonepe/check-status:
+    post:
+      tags:
+      - PhonePe
+      summary: Check Phonepe Status
+      operationId: check_phonepe_status_api_v1_phonepe_check_status_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CheckStatusIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []

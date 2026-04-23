@@ -1,0 +1,925 @@
+# Bittu API — Catalog/Items Module
+# ==================================
+# Domain: catalog
+# Module: items
+# Version: v1
+# Visibility: internal
+# Tags: Item Addons, Item Extras, Item Ingredients, Item Station Mapping, Item Variants, Items
+# Operations: 31
+# Paths: 17
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: catalog
+  module: items
+  version: v1
+  visibility: internal
+  tags:
+  - Item Addons
+  - Item Extras
+  - Item Ingredients
+  - Item Station Mapping
+  - Item Variants
+  - Items
+  operationCount: 31
+  pathCount: 17
+paths:
+  /api/v1/items:
+    get:
+      tags:
+      - Items
+      summary: List Items
+      operationId: list_items_api_v1_items_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      - name: restaurant_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Restaurant Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: ../../../components/schemas.yaml#/ItemResponse
+                title: Response List Items Api V1 Items Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Items
+      summary: Create Item
+      operationId: create_item_api_v1_items_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ItemCreate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/ItemResponse
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/items/bulk-import:
+    post:
+      tags:
+      - Items
+      summary: Bulk Import Items
+      description: 'Bulk import items (used by AI Menu Scan confirm flow).
+
+        Skips duplicates by matching name (case-insensitive) + price per tenant.'
+      operationId: bulk_import_items_api_v1_items_bulk_import_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/BulkImportRequest
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/BulkImportResult
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/items/{item_id}:
+    get:
+      tags:
+      - Items
+      summary: Get Item
+      operationId: get_item_api_v1_items__item_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Item Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/ItemResponse
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    patch:
+      tags:
+      - Items
+      summary: Update Item
+      operationId: update_item_api_v1_items__item_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Item Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ItemUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/ItemResponse
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    put:
+      tags:
+      - Items
+      summary: Update Item
+      operationId: update_item_api_v1_items__item_id__put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Item Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ItemUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/ItemResponse
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Items
+      summary: Delete Item
+      operationId: delete_item_api_v1_items__item_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Item Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/items/{item_id}/variants:
+    get:
+      tags:
+      - Items
+      summary: List Item Variants
+      operationId: list_item_variants_api_v1_items__item_id__variants_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Item Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/items/{item_id}/addons:
+    get:
+      tags:
+      - Items
+      summary: List Item Addons
+      operationId: list_item_addons_api_v1_items__item_id__addons_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Item Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/items/{item_id}/extras:
+    get:
+      tags:
+      - Items
+      summary: List Item Extras
+      operationId: list_item_extras_api_v1_items__item_id__extras_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Item Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/items/{item_id}/station-mappings:
+    get:
+      tags:
+      - Items
+      summary: List Item Station Mappings
+      operationId: list_item_station_mappings_api_v1_items__item_id__station_mappings_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Item Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/items/{item_id}/modifier-groups:
+    get:
+      tags:
+      - Items
+      summary: List Item Modifier Groups
+      operationId: list_item_modifier_groups_api_v1_items__item_id__modifier_groups_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Item Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/item-variants:
+    get:
+      tags:
+      - Item Variants
+      summary: List Variants
+      operationId: list_variants_api_v1_item_variants_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Item Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Item Variants
+      summary: Create Variant
+      operationId: create_variant_api_v1_item_variants_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/VariantCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/item-variants/{variant_id}:
+    patch:
+      tags:
+      - Item Variants
+      summary: Update Variant
+      operationId: update_variant_api_v1_item_variants__variant_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: variant_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Variant Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/VariantUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Item Variants
+      summary: Delete Variant
+      operationId: delete_variant_api_v1_item_variants__variant_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: variant_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Variant Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/item-addons:
+    get:
+      tags:
+      - Item Addons
+      summary: List Addons
+      operationId: list_addons_api_v1_item_addons_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Item Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Item Addons
+      summary: Create Addon
+      operationId: create_addon_api_v1_item_addons_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/AddonCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/item-addons/{addon_id}:
+    patch:
+      tags:
+      - Item Addons
+      summary: Update Addon
+      operationId: update_addon_api_v1_item_addons__addon_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: addon_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Addon Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/AddonUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Item Addons
+      summary: Delete Addon
+      operationId: delete_addon_api_v1_item_addons__addon_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: addon_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Addon Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/item-extras:
+    get:
+      tags:
+      - Item Extras
+      summary: List Extras
+      operationId: list_extras_api_v1_item_extras_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Item Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Item Extras
+      summary: Create Extra
+      operationId: create_extra_api_v1_item_extras_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ExtraCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/item-extras/{extra_id}:
+    patch:
+      tags:
+      - Item Extras
+      summary: Update Extra
+      operationId: update_extra_api_v1_item_extras__extra_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: extra_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Extra Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ExtraUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Item Extras
+      summary: Delete Extra
+      operationId: delete_extra_api_v1_item_extras__extra_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: extra_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Extra Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/item-ingredients:
+    get:
+      tags:
+      - Item Ingredients
+      summary: List Ingredients
+      operationId: list_ingredients_api_v1_item_ingredients_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Item Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Item Ingredients
+      summary: Add Ingredient
+      operationId: add_ingredient_api_v1_item_ingredients_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/IngredientLink
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/item-ingredients/{ii_id}:
+    patch:
+      tags:
+      - Item Ingredients
+      summary: Update Ingredient
+      operationId: update_ingredient_api_v1_item_ingredients__ii_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: ii_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Ii Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/IngredientLinkUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Item Ingredients
+      summary: Remove Ingredient
+      operationId: remove_ingredient_api_v1_item_ingredients__ii_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: ii_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Ii Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/item-stations:
+    get:
+      tags:
+      - Item Station Mapping
+      summary: List Mappings
+      operationId: list_mappings_api_v1_item_stations_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Item Id
+      - name: station_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Station Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Item Station Mapping
+      summary: Create Mapping
+      operationId: create_mapping_api_v1_item_stations_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/MappingCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Item Station Mapping
+      summary: Delete Mapping
+      operationId: delete_mapping_api_v1_item_stations_delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: query
+        required: true
+        schema:
+          type: integer
+          title: Item Id
+      - name: station_id
+        in: query
+        required: true
+        schema:
+          type: integer
+          title: Station Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

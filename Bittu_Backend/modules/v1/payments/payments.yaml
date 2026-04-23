@@ -1,0 +1,197 @@
+# Bittu API — Payments/Payments Module
+# ======================================
+# Domain: payments
+# Module: payments
+# Version: v1
+# Visibility: internal
+# Tags: Payments
+# Operations: 6
+# Paths: 5
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: payments
+  module: payments
+  version: v1
+  visibility: internal
+  tags:
+  - Payments
+  operationCount: 6
+  pathCount: 5
+paths:
+  /api/v1/payments:
+    get:
+      tags:
+      - Payments
+      summary: List Payments
+      description: List payments for the current user's restaurant.
+      operationId: list_payments_api_v1_payments_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: order_by
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Order By
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Payments
+      summary: Record Payment
+      description: Record a payment for an order (called from POS save-and-print).
+      operationId: record_payment_api_v1_payments_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/RecordPaymentIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/payments/voice:
+    post:
+      tags:
+      - Payments
+      summary: Payment Voice
+      description: Play a voice notification for a payment amount.
+      operationId: payment_voice_api_v1_payments_voice_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/PaymentVoiceIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/payments/initiate:
+    post:
+      tags:
+      - Payments
+      summary: Initiate Payment
+      operationId: initiate_payment_api_v1_payments_initiate_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/InitiatePaymentIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/payments/verify:
+    post:
+      tags:
+      - Payments
+      summary: Verify Payment
+      operationId: verify_payment_api_v1_payments_verify_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/VerifyPaymentIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/payments/refund:
+    post:
+      tags:
+      - Payments
+      summary: Refund Payment
+      operationId: refund_payment_api_v1_payments_refund_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/RefundIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []

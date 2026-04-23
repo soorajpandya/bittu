@@ -1,0 +1,434 @@
+# Bittu API — Auth/Staff Module
+# ===============================
+# Domain: auth
+# Module: staff
+# Version: v1
+# Visibility: internal
+# Tags: Staff
+# Operations: 15
+# Paths: 9
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: auth
+  module: staff
+  version: v1
+  visibility: internal
+  tags:
+  - Staff
+  operationCount: 15
+  pathCount: 9
+paths:
+  /api/v1/staff/branches:
+    get:
+      tags:
+      - Staff
+      summary: List Branches
+      description: Get all branches for the current owner.
+      operationId: list_branches_api_v1_staff_branches_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - Staff
+      summary: Create Branch
+      description: Create a new sub-branch. Optionally assign a manager by Supabase user_id.
+      operationId: create_branch_api_v1_staff_branches_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CreateBranchIn
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/staff/branches/{branch_id}:
+    patch:
+      tags:
+      - Staff
+      summary: Update Branch
+      operationId: update_branch_api_v1_staff_branches__branch_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Branch Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/UpdateBranchIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/staff/branch-users/me:
+    get:
+      tags:
+      - Staff
+      summary: Get My Branch User
+      description: Get the current user's branch_user record (role, branch, etc.).
+      operationId: get_my_branch_user_api_v1_staff_branch_users_me_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/staff/branch-users:
+    get:
+      tags:
+      - Staff
+      summary: List Branch Users
+      description: List all branch users (managers, cashiers, etc.) that can log in.
+      operationId: list_branch_users_api_v1_staff_branch_users_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Staff
+      summary: Add Branch User
+      description: Assign a Supabase user to a branch with a role (e.g. manager).
+      operationId: add_branch_user_api_v1_staff_branch_users_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/AddBranchUserIn
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/staff/branch-users/{target_user_id}:
+    patch:
+      tags:
+      - Staff
+      summary: Update Branch User Role
+      description: Change a branch user's role.
+      operationId: update_branch_user_role_api_v1_staff_branch_users__target_user_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: target_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Target User Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/UpdateBranchUserIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Staff
+      summary: Remove Branch User
+      description: Deactivate a branch user (they lose login access to that branch).
+      operationId: remove_branch_user_api_v1_staff_branch_users__target_user_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: target_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Target User Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/staff:
+    post:
+      tags:
+      - Staff
+      summary: Create Staff
+      operationId: create_staff_api_v1_staff_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CreateStaffIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    get:
+      tags:
+      - Staff
+      summary: List Staff
+      operationId: list_staff_api_v1_staff_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/staff/{staff_id}:
+    patch:
+      tags:
+      - Staff
+      summary: Update Staff
+      operationId: update_staff_api_v1_staff__staff_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: staff_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Staff Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/UpdateStaffIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Staff
+      summary: Deactivate Staff
+      operationId: deactivate_staff_api_v1_staff__staff_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: staff_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Staff Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/staff/invites:
+    post:
+      tags:
+      - Staff
+      summary: Create Invite
+      description: Invite a staff member by email. They will be auto-linked on Google login.
+      operationId: create_invite_api_v1_staff_invites_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CreateInviteIn
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    get:
+      tags:
+      - Staff
+      summary: List Invites
+      description: List staff invites, optionally filtered by branch and status.
+      operationId: list_invites_api_v1_staff_invites_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            pattern: ^(pending|accepted|revoked|expired)$
+          - type: 'null'
+          title: Status
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/staff/invites/{invite_id}:
+    delete:
+      tags:
+      - Staff
+      summary: Revoke Invite
+      description: Revoke a pending invite.
+      operationId: revoke_invite_api_v1_staff_invites__invite_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: invite_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Invite Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

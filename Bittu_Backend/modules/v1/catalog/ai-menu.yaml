@@ -1,0 +1,158 @@
+# Bittu API — Catalog/Ai-Menu Module
+# ====================================
+# Domain: catalog
+# Module: ai-menu
+# Version: v1
+# Visibility: internal
+# Tags: AI Ingredients, AI Menu Scanner
+# Operations: 5
+# Paths: 5
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: catalog
+  module: ai-menu
+  version: v1
+  visibility: internal
+  tags:
+  - AI Ingredients
+  - AI Menu Scanner
+  operationCount: 5
+  pathCount: 5
+paths:
+  /api/v1/menu-scan/ai-menu-scan:
+    post:
+      tags:
+      - AI Menu Scanner
+      summary: Ai Menu Scan
+      description: AI menu scan — primary endpoint used by frontend.
+      operationId: ai_menu_scan_api_v1_menu_scan_ai_menu_scan_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ScanBase64In
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/menu-scan/base64:
+    post:
+      tags:
+      - AI Menu Scanner
+      summary: Scan Menu Base64
+      description: Scan a menu image provided as base64 string.
+      operationId: scan_menu_base64_api_v1_menu_scan_base64_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ScanBase64In
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/menu-scan/upload:
+    post:
+      tags:
+      - AI Menu Scanner
+      summary: Scan Menu Upload
+      description: Scan a menu image uploaded as multipart file.
+      operationId: scan_menu_upload_api_v1_menu_scan_upload_post
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: ../../../components/schemas.yaml#/Body_scan_menu_upload_api_v1_menu_scan_upload_post
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/ai-ingredients/suggest:
+    post:
+      tags:
+      - AI Ingredients
+      summary: Suggest Ingredients
+      description: AI-powered ingredient suggestions for a dish name (does not save).
+      operationId: suggest_ingredients_api_v1_ai_ingredients_suggest_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/SuggestRequest
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/ai-ingredients/auto-link:
+    post:
+      tags:
+      - AI Ingredients
+      summary: Auto Link Ingredients
+      description: AI-suggest ingredients, match/create raw materials, link to item.
+      operationId: auto_link_ingredients_api_v1_ai_ingredients_auto_link_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/AutoLinkRequest
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []

@@ -1,0 +1,194 @@
+# Bittu API — Finance/Due-Payments Module
+# =========================================
+# Domain: finance
+# Module: due-payments
+# Version: v1
+# Visibility: internal
+# Tags: Due Payments
+# Operations: 5
+# Paths: 4
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: finance
+  module: due-payments
+  version: v1
+  visibility: internal
+  tags:
+  - Due Payments
+  operationCount: 5
+  pathCount: 4
+paths:
+  /api/v1/due-payments:
+    get:
+      tags:
+      - Due Payments
+      summary: List Due Payments
+      operationId: list_due_payments_api_v1_due_payments_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: customer_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Customer Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Due Payments
+      summary: Create Due Payment
+      operationId: create_due_payment_api_v1_due_payments_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/DuePaymentCreate
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/due-payments/{dp_id}:
+    get:
+      tags:
+      - Due Payments
+      summary: Get Due Payment
+      operationId: get_due_payment_api_v1_due_payments__dp_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: dp_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Dp Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/due-payments/{dp_id}/pay:
+    post:
+      tags:
+      - Due Payments
+      summary: Record Payment
+      operationId: record_payment_api_v1_due_payments__dp_id__pay_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: dp_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Dp Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/RecordPayment
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/due-payments/{dp_id}/status:
+    patch:
+      tags:
+      - Due Payments
+      summary: Update Status
+      operationId: update_status_api_v1_due_payments__dp_id__status_patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: dp_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Dp Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/UpdateStatus
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

@@ -193,7 +193,7 @@ class PaymentService:
                 async with get_serializable_transaction() as conn:
                     payment = await conn.fetchrow(
                         """
-                        SELECT id, order_id, status, amount
+                        SELECT id, order_id, status, amount, method
                         FROM payments WHERE razorpay_order_id = $1
                         FOR UPDATE
                         """,
@@ -229,6 +229,7 @@ class PaymentService:
                         "payment_id": str(payment["id"]),
                         "order_id": str(payment["order_id"]),
                         "amount": float(payment["amount"]),
+                        "method": payment["method"],
                         "razorpay_payment_id": razorpay_payment_id,
                     },
                 ))

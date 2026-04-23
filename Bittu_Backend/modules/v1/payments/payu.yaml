@@ -1,0 +1,85 @@
+# Bittu API — Payments/Payu Module
+# ==================================
+# Domain: payments
+# Module: payu
+# Version: v1
+# Visibility: internal
+# Tags: PayU
+# Operations: 3
+# Paths: 3
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: payments
+  module: payu
+  version: v1
+  visibility: internal
+  tags:
+  - PayU
+  operationCount: 3
+  pathCount: 3
+paths:
+  /api/v1/payu/create-order:
+    post:
+      tags:
+      - PayU
+      summary: Create Payu Order
+      operationId: create_payu_order_api_v1_payu_create_order_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/app__api__v1__payu__CreateOrderIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/payu/verify-response:
+    post:
+      tags:
+      - PayU
+      summary: Verify Payu Response
+      operationId: verify_payu_response_api_v1_payu_verify_response_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/VerifyResponseIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/payu/callback:
+    post:
+      tags:
+      - PayU
+      summary: Payu Callback
+      description: PayU redirect callback — receives form-urlencoded POST, redirects to SPA.
+      operationId: payu_callback_api_v1_payu_callback_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}

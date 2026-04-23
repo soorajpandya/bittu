@@ -1,0 +1,326 @@
+# Bittu API — Operations/Delivery Module
+# ========================================
+# Domain: operations
+# Module: delivery
+# Version: v1
+# Visibility: internal
+# Tags: Deliverable Pincodes, Delivery, Delivery Partners
+# Operations: 12
+# Paths: 8
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: operations
+  module: delivery
+  version: v1
+  visibility: internal
+  tags:
+  - Deliverable Pincodes
+  - Delivery
+  - Delivery Partners
+  operationCount: 12
+  pathCount: 8
+paths:
+  /api/v1/delivery:
+    get:
+      tags:
+      - Delivery
+      summary: List Active Deliveries
+      operationId: list_active_deliveries_api_v1_delivery_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - Delivery
+      summary: Create Delivery
+      operationId: create_delivery_api_v1_delivery_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CreateDeliveryIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/delivery/{delivery_id}/assign:
+    patch:
+      tags:
+      - Delivery
+      summary: Assign Partner
+      operationId: assign_partner_api_v1_delivery__delivery_id__assign_patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: delivery_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Delivery Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/AssignPartnerIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/delivery/{delivery_id}/status:
+    patch:
+      tags:
+      - Delivery
+      summary: Update Delivery Status
+      operationId: update_delivery_status_api_v1_delivery__delivery_id__status_patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: delivery_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Delivery Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/UpdateDeliveryStatusIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/delivery/{delivery_id}/location:
+    post:
+      tags:
+      - Delivery
+      summary: Update Location
+      operationId: update_location_api_v1_delivery__delivery_id__location_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: delivery_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Delivery Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/UpdateLocationIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/delivery-partners:
+    get:
+      tags:
+      - Delivery Partners
+      summary: List Partners
+      operationId: list_partners_api_v1_delivery_partners_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - Delivery Partners
+      summary: Create Partner
+      operationId: create_partner_api_v1_delivery_partners_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CreatePartnerIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/delivery-partners/{partner_id}:
+    patch:
+      tags:
+      - Delivery Partners
+      summary: Update Partner
+      operationId: update_partner_api_v1_delivery_partners__partner_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: partner_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Partner Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/UpdatePartnerIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Delivery Partners
+      summary: Delete Partner
+      operationId: delete_partner_api_v1_delivery_partners__partner_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: partner_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Partner Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/pincodes:
+    get:
+      tags:
+      - Deliverable Pincodes
+      summary: List Pincodes
+      operationId: list_pincodes_api_v1_pincodes_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - Deliverable Pincodes
+      summary: Create Pincode
+      operationId: create_pincode_api_v1_pincodes_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/PincodeCreate
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/pincodes/{pincode_id}:
+    delete:
+      tags:
+      - Deliverable Pincodes
+      summary: Delete Pincode
+      operationId: delete_pincode_api_v1_pincodes__pincode_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: pincode_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Pincode Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

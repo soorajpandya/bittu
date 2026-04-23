@@ -1,0 +1,180 @@
+# Bittu API — Payments/Razorpay Module
+# ======================================
+# Domain: payments
+# Module: razorpay
+# Version: v1
+# Visibility: internal
+# Tags: Razorpay Extended
+# Operations: 6
+# Paths: 6
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: payments
+  module: razorpay
+  version: v1
+  visibility: internal
+  tags:
+  - Razorpay Extended
+  operationCount: 6
+  pathCount: 6
+paths:
+  /api/v1/razorpay/customers:
+    post:
+      tags:
+      - Razorpay Extended
+      summary: Create Customer
+      operationId: create_customer_api_v1_razorpay_customers_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CreateCustomerIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/razorpay/plans:
+    post:
+      tags:
+      - Razorpay Extended
+      summary: Create Plan
+      operationId: create_plan_api_v1_razorpay_plans_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CreatePlanIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/razorpay/plans/{plan_id}:
+    get:
+      tags:
+      - Razorpay Extended
+      summary: Get Plan
+      operationId: get_plan_api_v1_razorpay_plans__plan_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: plan_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Plan Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/razorpay/subscriptions:
+    post:
+      tags:
+      - Razorpay Extended
+      summary: Create Subscription
+      operationId: create_subscription_api_v1_razorpay_subscriptions_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CreateSubscriptionIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/razorpay/subscriptions/{subscription_id}:
+    get:
+      tags:
+      - Razorpay Extended
+      summary: Fetch Subscription
+      operationId: fetch_subscription_api_v1_razorpay_subscriptions__subscription_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: subscription_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Subscription Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/razorpay/qr-codes:
+    post:
+      tags:
+      - Razorpay Extended
+      summary: Create Qr Code
+      operationId: create_qr_code_api_v1_razorpay_qr_codes_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CreateQRIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []

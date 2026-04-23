@@ -1,0 +1,306 @@
+# Bittu API — Finance/Bank-Recon Module
+# =======================================
+# Domain: finance
+# Module: bank-recon
+# Version: v1
+# Visibility: internal
+# Tags: Bank Reconciliation
+# Operations: 8
+# Paths: 7
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: finance
+  module: bank-recon
+  version: v1
+  visibility: internal
+  tags:
+  - Bank Reconciliation
+  operationCount: 8
+  pathCount: 7
+paths:
+  /api/v1/bank-recon/import-csv:
+    post:
+      tags:
+      - Bank Reconciliation
+      summary: Import Csv
+      description: Import bank statement lines from a CSV file.
+      operationId: import_csv_api_v1_bank_recon_import_csv_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: bank_account
+        in: query
+        required: false
+        schema:
+          type: string
+          description: Bank account identifier
+          default: ''
+          title: Bank Account
+        description: Bank account identifier
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: ../../../components/schemas.yaml#/Body_import_csv_api_v1_bank_recon_import_csv_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/bank-recon/statements:
+    post:
+      tags:
+      - Bank Reconciliation
+      summary: Add Statement Line
+      description: Add a single bank statement line manually.
+      operationId: add_statement_line_api_v1_bank_recon_statements_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/StatementLineCreate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    get:
+      tags:
+      - Bank Reconciliation
+      summary: List Statements
+      description: List bank statement lines with optional filters.
+      operationId: list_statements_api_v1_bank_recon_statements_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'Filter: unmatched|matched|excluded'
+          title: Status
+        description: 'Filter: unmatched|matched|excluded'
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          default: 100
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/bank-recon/auto-match:
+    post:
+      tags:
+      - Bank Reconciliation
+      summary: Auto Match
+      description: Run auto-matching on all unmatched bank statement lines.
+      operationId: auto_match_api_v1_bank_recon_auto_match_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: date_tolerance
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 7
+          minimum: 0
+          description: Date tolerance in days
+          default: 2
+          title: Date Tolerance
+        description: Date tolerance in days
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/bank-recon/match:
+    post:
+      tags:
+      - Bank Reconciliation
+      summary: Manual Match
+      description: Manually match a bank statement line to a journal entry.
+      operationId: manual_match_api_v1_bank_recon_match_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/ManualMatchRequest
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/bank-recon/unmatch:
+    post:
+      tags:
+      - Bank Reconciliation
+      summary: Unmatch
+      description: Remove a reconciliation match.
+      operationId: unmatch_api_v1_bank_recon_unmatch_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/UnmatchRequest
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/bank-recon/statements/{statement_id}/exclude:
+    post:
+      tags:
+      - Bank Reconciliation
+      summary: Exclude Statement
+      description: Exclude a statement line from reconciliation (e.g. bank charges).
+      operationId: exclude_statement_api_v1_bank_recon_statements__statement_id__exclude_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: statement_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Statement Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/bank-recon/summary:
+    get:
+      tags:
+      - Bank Reconciliation
+      summary: Reconciliation Summary
+      description: Reconciliation summary — matched vs unmatched counts + ledger vs bank difference.
+      operationId: reconciliation_summary_api_v1_bank_recon_summary_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

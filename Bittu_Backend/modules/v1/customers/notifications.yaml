@@ -1,0 +1,158 @@
+# Bittu API — Customers/Notifications Module
+# ============================================
+# Domain: customers
+# Module: notifications
+# Version: v1
+# Visibility: internal
+# Tags: Notifications
+# Operations: 5
+# Paths: 5
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: customers
+  module: notifications
+  version: v1
+  visibility: internal
+  tags:
+  - Notifications
+  operationCount: 5
+  pathCount: 5
+paths:
+  /api/v1/notifications:
+    get:
+      tags:
+      - Notifications
+      summary: List Notifications
+      description: List recent notifications/alerts for the current user.
+      operationId: list_notifications_api_v1_notifications_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 20
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/notifications/alerts:
+    get:
+      tags:
+      - Notifications
+      summary: List Alerts
+      operationId: list_alerts_api_v1_notifications_alerts_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: unread_only
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+          title: Unread Only
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/notifications/alerts/{alert_id}/read:
+    patch:
+      tags:
+      - Notifications
+      summary: Mark Alert Read
+      operationId: mark_alert_read_api_v1_notifications_alerts__alert_id__read_patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: alert_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Alert Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/notifications/alerts/read-all:
+    patch:
+      tags:
+      - Notifications
+      summary: Mark All Read
+      operationId: mark_all_read_api_v1_notifications_alerts_read_all_patch
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/notifications/alerts/{alert_id}:
+    delete:
+      tags:
+      - Notifications
+      summary: Dismiss Alert
+      operationId: dismiss_alert_api_v1_notifications_alerts__alert_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: alert_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Alert Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

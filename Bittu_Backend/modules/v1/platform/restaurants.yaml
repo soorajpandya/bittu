@@ -1,0 +1,144 @@
+# Bittu API — Platform/Restaurants Module
+# =========================================
+# Domain: platform
+# Module: restaurants
+# Version: v1
+# Visibility: internal
+# Tags: Restaurant Settings, Restaurants
+# Operations: 5
+# Paths: 3
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: platform
+  module: restaurants
+  version: v1
+  visibility: internal
+  tags:
+  - Restaurant Settings
+  - Restaurants
+  operationCount: 5
+  pathCount: 3
+paths:
+  /api/v1/restaurant-settings:
+    get:
+      tags:
+      - Restaurant Settings
+      summary: Get Settings
+      operationId: get_settings_api_v1_restaurant_settings_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+    put:
+      tags:
+      - Restaurant Settings
+      summary: Update Settings
+      operationId: update_settings_api_v1_restaurant_settings_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/app__api__v1__restaurant_settings__SettingsUpdate
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/restaurants:
+    get:
+      tags:
+      - Restaurants
+      summary: Get Restaurants
+      description: Return the current user's restaurant(s).
+      operationId: get_restaurants_api_v1_restaurants_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - Restaurants
+      summary: Create Restaurant
+      description: 'Create a new restaurant for the current user.
+
+
+        If a name is provided, creates a restaurant with that name and a default
+
+        ''Main'' branch.  Otherwise falls back to the idempotent initialisation
+
+        logic (one restaurant per user).'
+      operationId: create_restaurant_api_v1_restaurants_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CreateRestaurantIn
+              default: {}
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/restaurants/{restaurant_id}:
+    patch:
+      tags:
+      - Restaurants
+      summary: Update Restaurant
+      description: Partial-update a restaurant owned by the current user.
+      operationId: update_restaurant_api_v1_restaurants__restaurant_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: restaurant_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Restaurant Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/UpdateRestaurantIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

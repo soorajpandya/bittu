@@ -1,0 +1,241 @@
+# Bittu API — Operations/Kitchen Module
+# =======================================
+# Domain: operations
+# Module: kitchen
+# Version: v1
+# Visibility: internal
+# Tags: Kitchen, Kitchen Stations
+# Operations: 6
+# Paths: 5
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: operations
+  module: kitchen
+  version: v1
+  visibility: internal
+  tags:
+  - Kitchen
+  - Kitchen Stations
+  operationCount: 6
+  pathCount: 5
+paths:
+  /api/v1/kitchen/active:
+    get:
+      tags:
+      - Kitchen
+      summary: Get Active Orders
+      operationId: get_active_orders_api_v1_kitchen_active_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      - name: day_start
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Day Start
+      - name: day_end
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Day End
+      - name: station_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Station Id
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/kitchen/orders/{order_id}/status:
+    patch:
+      tags:
+      - Kitchen
+      summary: Update Kitchen Order Status
+      operationId: update_kitchen_order_status_api_v1_kitchen_orders__order_id__status_patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Order Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/UpdateKitchenOrderStatusIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/kitchen/items/{item_id}/status:
+    patch:
+      tags:
+      - Kitchen
+      summary: Update Kitchen Item Status
+      operationId: update_kitchen_item_status_api_v1_kitchen_items__item_id__status_patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Item Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/UpdateItemStatusIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/kitchen/stations/{station_id}:
+    get:
+      tags:
+      - Kitchen
+      summary: Get Station Orders
+      operationId: get_station_orders_api_v1_kitchen_stations__station_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: station_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Station Id
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/kitchen-stations:
+    get:
+      tags:
+      - Kitchen Stations
+      summary: List Kitchen Stations
+      description: List all kitchen stations for the current user's restaurant.
+      operationId: list_kitchen_stations_api_v1_kitchen_stations_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: is_active
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Is Active
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    post:
+      tags:
+      - Kitchen Stations
+      summary: Create Kitchen Station
+      description: Create a new kitchen station.
+      operationId: create_kitchen_station_api_v1_kitchen_stations_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CreateKitchenStationIn
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

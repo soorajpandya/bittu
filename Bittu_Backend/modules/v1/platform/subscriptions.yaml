@@ -1,0 +1,319 @@
+# Bittu API — Platform/Subscriptions Module
+# ===========================================
+# Domain: platform
+# Module: subscriptions
+# Version: v1
+# Visibility: internal
+# Tags: Subscriptions
+# Operations: 13
+# Paths: 13
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: platform
+  module: subscriptions
+  version: v1
+  visibility: internal
+  tags:
+  - Subscriptions
+  operationCount: 13
+  pathCount: 13
+paths:
+  /api/v1/subscriptions/plans:
+    get:
+      tags:
+      - Subscriptions
+      summary: List Plans
+      description: List all available subscription plans (public).
+      operationId: list_plans_api_v1_subscriptions_plans_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/v1/subscriptions/addons:
+    get:
+      tags:
+      - Subscriptions
+      summary: List Addons
+      description: List all available add-on products (public).
+      operationId: list_addons_api_v1_subscriptions_addons_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/v1/subscriptions/status:
+    get:
+      tags:
+      - Subscriptions
+      summary: Check Subscription
+      description: Check if user has an active subscription.
+      operationId: check_subscription_api_v1_subscriptions_status_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/subscriptions:
+    get:
+      tags:
+      - Subscriptions
+      summary: Get Subscription
+      description: Get full subscription details.
+      operationId: get_subscription_api_v1_subscriptions_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/subscriptions/verify:
+    post:
+      tags:
+      - Subscriptions
+      summary: Verify Subscription
+      description: Verify subscription status with plan details.
+      operationId: verify_subscription_api_v1_subscriptions_verify_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/subscriptions/free-trial:
+    post:
+      tags:
+      - Subscriptions
+      summary: Start Free Trial
+      description: Start a 14-day free trial (one per user).
+      operationId: start_free_trial_api_v1_subscriptions_free_trial_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/subscriptions/subscribe:
+    post:
+      tags:
+      - Subscriptions
+      summary: Subscribe
+      description: 'Create a subscription. Returns Razorpay subscription details
+
+        including short_url for checkout.'
+      operationId: subscribe_api_v1_subscriptions_subscribe_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/SubscribeIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/subscriptions/cancel:
+    post:
+      tags:
+      - Subscriptions
+      summary: Cancel Subscription
+      description: 'Cancel subscription. Access continues until current billing period ends.
+
+        Trials are cancelled immediately.'
+      operationId: cancel_subscription_api_v1_subscriptions_cancel_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/subscriptions/upgrade:
+    post:
+      tags:
+      - Subscriptions
+      summary: Upgrade Plan
+      description: 'Upgrade to a higher plan. Takes effect immediately.
+
+        Returns Razorpay checkout link for the new plan.'
+      operationId: upgrade_plan_api_v1_subscriptions_upgrade_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/UpgradeIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/subscriptions/downgrade:
+    post:
+      tags:
+      - Subscriptions
+      summary: Downgrade Plan
+      description: Schedule a downgrade. Takes effect at next billing cycle.
+      operationId: downgrade_plan_api_v1_subscriptions_downgrade_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/DowngradeIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/subscriptions/addons/purchase:
+    post:
+      tags:
+      - Subscriptions
+      summary: Purchase Addon
+      description: 'Purchase an add-on (e.g., printer). Returns Razorpay order
+
+        for one-time payment checkout.'
+      operationId: purchase_addon_api_v1_subscriptions_addons_purchase_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/PurchaseAddonIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/subscriptions/admin/list:
+    get:
+      tags:
+      - Subscriptions
+      summary: Admin List Subscriptions
+      description: 'Admin: View all subscriptions, optionally filtered by status.'
+      operationId: admin_list_subscriptions_api_v1_subscriptions_admin_list_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/subscriptions/admin/plans/{plan_id}:
+    patch:
+      tags:
+      - Subscriptions
+      summary: Admin Update Plan
+      description: 'Admin: Update plan pricing, features, or Razorpay plan ID.'
+      operationId: admin_update_plan_api_v1_subscriptions_admin_plans__plan_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: plan_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Plan Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/AdminUpdatePlanIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

@@ -1,0 +1,179 @@
+# Bittu API — Platform/Misc Module
+# ==================================
+# Domain: platform
+# Module: misc
+# Version: v1
+# Visibility: internal
+# Tags: Miscellaneous
+# Operations: 5
+# Paths: 5
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: platform
+  module: misc
+  version: v1
+  visibility: internal
+  tags:
+  - Miscellaneous
+  operationCount: 5
+  pathCount: 5
+paths:
+  /api/v1/misc/sync-logs:
+    get:
+      tags:
+      - Miscellaneous
+      summary: List Sync Logs
+      operationId: list_sync_logs_api_v1_misc_sync_logs_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/misc/payment-reminders:
+    get:
+      tags:
+      - Miscellaneous
+      summary: List Payment Reminders
+      operationId: list_payment_reminders_api_v1_misc_payment_reminders_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/misc/trial-status:
+    get:
+      tags:
+      - Miscellaneous
+      summary: Get Trial Status
+      operationId: get_trial_status_api_v1_misc_trial_status_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/misc/funnel-events:
+    get:
+      tags:
+      - Miscellaneous
+      summary: List Funnel Events
+      operationId: list_funnel_events_api_v1_misc_funnel_events_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          default: 100
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/misc/session-devices:
+    get:
+      tags:
+      - Miscellaneous
+      summary: List Session Devices
+      operationId: list_session_devices_api_v1_misc_session_devices_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: session_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Session Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

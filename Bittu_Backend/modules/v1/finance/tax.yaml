@@ -1,0 +1,519 @@
+# Bittu API — Finance/Tax Module
+# ================================
+# Domain: finance
+# Module: tax
+# Version: v1
+# Visibility: internal
+# Tags: Sub-Ledger, Tax Liability
+# Operations: 14
+# Paths: 14
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: finance
+  module: tax
+  version: v1
+  visibility: internal
+  tags:
+  - Sub-Ledger
+  - Tax Liability
+  operationCount: 14
+  pathCount: 14
+paths:
+  /api/v1/subledger/ar/balances:
+    get:
+      tags:
+      - Sub-Ledger
+      summary: Ar Balances
+      description: Get all customer balances (AR).
+      operationId: ar_balances_api_v1_subledger_ar_balances_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/subledger/ar/aging:
+    get:
+      tags:
+      - Sub-Ledger
+      summary: Ar Aging
+      description: AR aging report — 30/60/90+ days buckets.
+      operationId: ar_aging_api_v1_subledger_ar_aging_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: customer_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Customer Id
+      - name: as_of
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: As Of
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/subledger/ar/{customer_id}:
+    get:
+      tags:
+      - Sub-Ledger
+      summary: Customer Ledger
+      description: Get customer ledger entries.
+      operationId: customer_ledger_api_v1_subledger_ar__customer_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Customer Id
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          default: 100
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/subledger/ar/{customer_id}/balance:
+    get:
+      tags:
+      - Sub-Ledger
+      summary: Customer Balance
+      description: Get a single customer's AR balance.
+      operationId: customer_balance_api_v1_subledger_ar__customer_id__balance_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Customer Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/subledger/ap/balances:
+    get:
+      tags:
+      - Sub-Ledger
+      summary: Ap Balances
+      description: Get all supplier balances (AP).
+      operationId: ap_balances_api_v1_subledger_ap_balances_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/subledger/ap/aging:
+    get:
+      tags:
+      - Sub-Ledger
+      summary: Ap Aging
+      description: AP aging report — 30/60/90+ days buckets.
+      operationId: ap_aging_api_v1_subledger_ap_aging_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: supplier_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Supplier Id
+      - name: as_of
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: As Of
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/subledger/ap/{supplier_id}:
+    get:
+      tags:
+      - Sub-Ledger
+      summary: Supplier Ledger
+      description: Get supplier ledger entries.
+      operationId: supplier_ledger_api_v1_subledger_ap__supplier_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: supplier_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Supplier Id
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: To Date
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          default: 100
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/subledger/ap/{supplier_id}/balance:
+    get:
+      tags:
+      - Sub-Ledger
+      summary: Supplier Balance
+      description: Get a single supplier's AP balance.
+      operationId: supplier_balance_api_v1_subledger_ap__supplier_id__balance_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: supplier_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Supplier Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tax/compute:
+    post:
+      tags:
+      - Tax Liability
+      summary: Compute Tax Liability
+      description: Compute GST liability for a period from journal entries.
+      operationId: compute_tax_liability_api_v1_tax_compute_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: branch_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Branch Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/TaxComputeRequest
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tax:
+    get:
+      tags:
+      - Tax Liability
+      summary: List Tax Liabilities
+      description: List all tax liability periods.
+      operationId: list_tax_liabilities_api_v1_tax_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          default: 20
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tax/gstr3b:
+    get:
+      tags:
+      - Tax Liability
+      summary: Gstr3B Data
+      description: Get GSTR-3B summary data for a period.
+      operationId: gstr3b_data_api_v1_tax_gstr3b_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: period_start
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          title: Period Start
+      - name: period_end
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+          title: Period End
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tax/{liability_id}:
+    get:
+      tags:
+      - Tax Liability
+      summary: Get Tax Liability
+      description: Get details of a tax liability period.
+      operationId: get_tax_liability_api_v1_tax__liability_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: liability_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Liability Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tax/{liability_id}/file:
+    post:
+      tags:
+      - Tax Liability
+      summary: File Tax Liability
+      description: Mark tax liability as filed with GST portal.
+      operationId: file_tax_liability_api_v1_tax__liability_id__file_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: liability_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Liability Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/tax/{liability_id}/pay:
+    post:
+      tags:
+      - Tax Liability
+      summary: Pay Tax Liability
+      description: Record tax payment to government.
+      operationId: pay_tax_liability_api_v1_tax__liability_id__pay_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: liability_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Liability Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/TaxPaymentRequest
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

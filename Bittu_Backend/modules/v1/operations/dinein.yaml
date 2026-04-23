@@ -1,0 +1,491 @@
+# Bittu API — Operations/Dinein Module
+# ======================================
+# Domain: operations
+# Module: dinein
+# Version: v1
+# Visibility: public
+# Tags: Dine-In Sessions
+# Operations: 18
+# Paths: 18
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: operations
+  module: dinein
+  version: v1
+  visibility: public
+  tags:
+  - Dine-In Sessions
+  operationCount: 18
+  pathCount: 18
+paths:
+  /api/v1/dinein/qr/scan:
+    post:
+      tags:
+      - Dine-In Sessions
+      summary: Qr Scan
+      description: Customer scans QR. Creates new session or restores existing one.
+      operationId: qr_scan_api_v1_dinein_qr_scan_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/app__api__v1__dinein__QRScanIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/dinein/qr/session:
+    get:
+      tags:
+      - Dine-In Sessions
+      summary: Get Session State
+      description: Get full session state (order, cart, linked sessions) for reconnect.
+      operationId: get_session_state_api_v1_dinein_qr_session_get
+      parameters:
+      - name: session_token
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Session Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/dinein/qr/menu:
+    get:
+      tags:
+      - Dine-In Sessions
+      summary: Qr Menu
+      description: Full menu for QR ordering.
+      operationId: qr_menu_api_v1_dinein_qr_menu_get
+      parameters:
+      - name: restaurant_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Restaurant Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/dinein/qr/cart/add:
+    post:
+      tags:
+      - Dine-In Sessions
+      summary: Cart Add
+      description: Add item to session cart. Idempotent via request_id.
+      operationId: cart_add_api_v1_dinein_qr_cart_add_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CartAddIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/dinein/qr/cart/update:
+    post:
+      tags:
+      - Dine-In Sessions
+      summary: Cart Update
+      description: Update cart item quantity or customizations.
+      operationId: cart_update_api_v1_dinein_qr_cart_update_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CartUpdateIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/dinein/qr/cart/remove:
+    post:
+      tags:
+      - Dine-In Sessions
+      summary: Cart Remove
+      description: Remove item from cart.
+      operationId: cart_remove_api_v1_dinein_qr_cart_remove_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CartRemoveIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/dinein/qr/cart/clear:
+    post:
+      tags:
+      - Dine-In Sessions
+      summary: Cart Clear
+      description: Clear all cart items.
+      operationId: cart_clear_api_v1_dinein_qr_cart_clear_post
+      parameters:
+      - name: session_token
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Session Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/dinein/qr/cart:
+    get:
+      tags:
+      - Dine-In Sessions
+      summary: Get Cart
+      description: Get cart contents for a session.
+      operationId: get_cart_api_v1_dinein_qr_cart_get
+      parameters:
+      - name: session_token
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Session Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/dinein/qr/place-order:
+    post:
+      tags:
+      - Dine-In Sessions
+      summary: Place Order
+      description: Place order from cart. Appends to existing active order if present.
+      operationId: place_order_api_v1_dinein_qr_place_order_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/PlaceOrderIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/dinein/qr/order-status:
+    get:
+      tags:
+      - Dine-In Sessions
+      summary: Order Status
+      description: Get orders for THIS session only (strict isolation).
+      operationId: order_status_api_v1_dinein_qr_order_status_get
+      parameters:
+      - name: session_token
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Session Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/dinein/qr/merge:
+    post:
+      tags:
+      - Dine-In Sessions
+      summary: Merge Sessions
+      description: Merge two sessions on the same table. Both see shared order post-merge.
+      operationId: merge_sessions_api_v1_dinein_qr_merge_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/MergeSessionsIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/dinein/qr/call-waiter:
+    post:
+      tags:
+      - Dine-In Sessions
+      summary: Call Waiter
+      description: Customer requests waiter assistance.
+      operationId: call_waiter_api_v1_dinein_qr_call_waiter_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CallWaiterIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/dinein/qr/close-session:
+    post:
+      tags:
+      - Dine-In Sessions
+      summary: Close Session
+      description: Customer closes their session.
+      operationId: close_session_api_v1_dinein_qr_close_session_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/CloseSessionIn
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/dinein/admin/kitchen-view:
+    get:
+      tags:
+      - Dine-In Sessions
+      summary: Kitchen Table View
+      description: 'Kitchen display: orders grouped by table, all sessions visible.'
+      operationId: kitchen_table_view_api_v1_dinein_admin_kitchen_view_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/dinein/sessions/{session_id}/bill:
+    get:
+      tags:
+      - Dine-In Sessions
+      summary: Get Session Bill
+      description: Get complete bill snapshot for a table session.
+      operationId: get_session_bill_api_v1_dinein_sessions__session_id__bill_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/dinein/sessions/{session_id}/split-bill:
+    post:
+      tags:
+      - Dine-In Sessions
+      summary: Split Session Bill
+      description: Generate split bill allocations (equal/by_item/by_user).
+      operationId: split_session_bill_api_v1_dinein_sessions__session_id__split_bill_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/SplitBillIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/dinein/sessions/{session_id}/payments:
+    post:
+      tags:
+      - Dine-In Sessions
+      summary: Record Session Payment
+      description: Record a partial/full payment for session settlement.
+      operationId: record_session_payment_api_v1_dinein_sessions__session_id__payments_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/SessionPaymentIn
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/dinein/sessions/{session_id}/paid-vacate:
+    post:
+      tags:
+      - Dine-In Sessions
+      summary: Paid Vacate Session
+      description: Close session and free table after full payment validation.
+      operationId: paid_vacate_session_api_v1_dinein_sessions__session_id__paid_vacate_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError

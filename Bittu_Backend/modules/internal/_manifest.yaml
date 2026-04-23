@@ -1,0 +1,203 @@
+# Bittu API — Internal Modules Manifest
+
+description: Internal API modules — require JWT authentication
+modules:
+- module: analytics/analytics
+  path: modules/v1/analytics/analytics.yaml
+  tags:
+  - Analytics
+- module: auth/staff
+  path: modules/v1/auth/staff.yaml
+  tags:
+  - Staff
+- module: catalog/ai-menu
+  path: modules/v1/catalog/ai-menu.yaml
+  tags:
+  - AI Ingredients
+  - AI Menu Scanner
+- module: catalog/categories
+  path: modules/v1/catalog/categories.yaml
+  tags:
+  - Categories
+- module: catalog/combos
+  path: modules/v1/catalog/combos.yaml
+  tags:
+  - Combos
+- module: catalog/food-images
+  path: modules/v1/catalog/food-images.yaml
+  tags:
+  - Food Images
+- module: catalog/items
+  path: modules/v1/catalog/items.yaml
+  tags:
+  - Item Addons
+  - Item Extras
+  - Item Ingredients
+  - Item Station Mapping
+  - Item Variants
+  - Items
+- module: catalog/modifiers
+  path: modules/v1/catalog/modifiers.yaml
+  tags:
+  - Modifier Groups
+  - Modifiers
+- module: customers/coupons
+  path: modules/v1/customers/coupons.yaml
+  tags:
+  - Coupons
+- module: customers/customers
+  path: modules/v1/customers/customers.yaml
+  tags:
+  - Customer Addresses
+  - Customers
+- module: customers/favourites
+  path: modules/v1/customers/favourites.yaml
+  tags:
+  - Favourite Items
+  - Favourites
+- module: customers/feedback
+  path: modules/v1/customers/feedback.yaml
+  tags:
+  - Feedback
+- module: customers/notifications
+  path: modules/v1/customers/notifications.yaml
+  tags:
+  - Notifications
+- module: customers/offers
+  path: modules/v1/customers/offers.yaml
+  tags:
+  - Offers
+- module: finance/accounting
+  path: modules/v1/finance/accounting.yaml
+  tags:
+  - Accounting
+  - Accounting Rules
+  - Chart of Accounts
+- module: finance/bank-recon
+  path: modules/v1/finance/bank-recon.yaml
+  tags:
+  - Bank Reconciliation
+- module: finance/billing
+  path: modules/v1/finance/billing.yaml
+  tags:
+  - Billing
+- module: finance/cash-transactions
+  path: modules/v1/finance/cash-transactions.yaml
+  tags:
+  - Cash Transactions
+- module: finance/due-payments
+  path: modules/v1/finance/due-payments.yaml
+  tags:
+  - Due Payments
+- module: finance/expenses
+  path: modules/v1/finance/expenses.yaml
+  tags:
+  - Expenses
+- module: finance/finance
+  path: modules/v1/finance/finance.yaml
+  tags:
+  - Financial Operating System
+- module: finance/invoices
+  path: modules/v1/finance/invoices.yaml
+  tags:
+  - Invoice Import
+  - Invoices
+- module: finance/reports
+  path: modules/v1/finance/reports.yaml
+  tags:
+  - Financial Reports
+  - Reports
+- module: finance/settlements
+  path: modules/v1/finance/settlements.yaml
+  tags:
+  - Settlements
+- module: finance/tax
+  path: modules/v1/finance/tax.yaml
+  tags:
+  - Sub-Ledger
+  - Tax Liability
+- module: operations/delivery
+  path: modules/v1/operations/delivery.yaml
+  tags:
+  - Deliverable Pincodes
+  - Delivery
+  - Delivery Partners
+- module: operations/inventory
+  path: modules/v1/operations/inventory.yaml
+  tags:
+  - Ingredients
+  - Inventory
+- module: operations/kitchen
+  path: modules/v1/operations/kitchen.yaml
+  tags:
+  - Kitchen
+  - Kitchen Stations
+- module: operations/orders
+  path: modules/v1/operations/orders.yaml
+  tags:
+  - Orders
+- module: payments/cashfree
+  path: modules/v1/payments/cashfree.yaml
+  tags:
+  - Cashfree PG
+- module: payments/payments
+  path: modules/v1/payments/payments.yaml
+  tags:
+  - Payments
+- module: payments/paytm
+  path: modules/v1/payments/paytm.yaml
+  tags:
+  - Paytm
+- module: payments/payu
+  path: modules/v1/payments/payu.yaml
+  tags:
+  - PayU
+- module: payments/phonepe
+  path: modules/v1/payments/phonepe.yaml
+  tags:
+  - PhonePe
+- module: payments/razorpay
+  path: modules/v1/payments/razorpay.yaml
+  tags:
+  - Razorpay Extended
+- module: payments/zivonpay
+  path: modules/v1/payments/zivonpay.yaml
+  tags:
+  - Zivonpay
+- module: platform/audit-logs
+  path: modules/v1/platform/audit-logs.yaml
+  tags:
+  - Audit Logs
+- module: platform/erp
+  path: modules/v1/platform/erp.yaml
+  tags:
+  - ERP
+- module: platform/google
+  path: modules/v1/platform/google.yaml
+  tags:
+  - Google Business Profile
+- module: platform/help
+  path: modules/v1/platform/help.yaml
+  tags:
+  - Help Articles
+- module: platform/misc
+  path: modules/v1/platform/misc.yaml
+  tags:
+  - Miscellaneous
+- module: platform/purchase-orders
+  path: modules/v1/platform/purchase-orders.yaml
+  tags:
+  - Purchase Orders
+- module: platform/restaurants
+  path: modules/v1/platform/restaurants.yaml
+  tags:
+  - Restaurant Settings
+  - Restaurants
+- module: platform/subscriptions
+  path: modules/v1/platform/subscriptions.yaml
+  tags:
+  - Subscriptions
+- module: platform/voice
+  path: modules/v1/platform/voice.yaml
+  tags:
+  - Voice / TTS

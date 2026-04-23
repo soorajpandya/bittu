@@ -1,0 +1,470 @@
+# Bittu API — Catalog/Modifiers Module
+# ======================================
+# Domain: catalog
+# Module: modifiers
+# Version: v1
+# Visibility: internal
+# Tags: Modifier Groups, Modifiers
+# Operations: 17
+# Paths: 9
+# 
+# All schema references point to: ../../../components/schemas.yaml
+
+x-module-info:
+  domain: catalog
+  module: modifiers
+  version: v1
+  visibility: internal
+  tags:
+  - Modifier Groups
+  - Modifiers
+  operationCount: 17
+  pathCount: 9
+paths:
+  /api/v1/modifiers:
+    get:
+      tags:
+      - Modifiers
+      summary: List Groups
+      operationId: list_groups_api_v1_modifiers_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - Modifiers
+      summary: Create Group
+      operationId: create_group_api_v1_modifiers_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/GroupCreate
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/modifiers/options:
+    get:
+      tags:
+      - Modifiers
+      summary: List All Options
+      description: List all modifier options across all groups.
+      operationId: list_all_options_api_v1_modifiers_options_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+  /api/v1/modifiers/{group_id}:
+    get:
+      tags:
+      - Modifiers
+      summary: Get Group
+      operationId: get_group_api_v1_modifiers__group_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Group Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    patch:
+      tags:
+      - Modifiers
+      summary: Update Group
+      operationId: update_group_api_v1_modifiers__group_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Group Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/GroupUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Modifiers
+      summary: Delete Group
+      operationId: delete_group_api_v1_modifiers__group_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Group Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/modifiers/{group_id}/options:
+    post:
+      tags:
+      - Modifiers
+      summary: Add Option
+      operationId: add_option_api_v1_modifiers__group_id__options_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Group Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/OptionIn
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/modifiers/options/{option_id}:
+    patch:
+      tags:
+      - Modifiers
+      summary: Update Option
+      operationId: update_option_api_v1_modifiers_options__option_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: option_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Option Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/OptionUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Modifiers
+      summary: Delete Option
+      operationId: delete_option_api_v1_modifiers_options__option_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: option_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Option Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/modifier-groups:
+    get:
+      tags:
+      - Modifier Groups
+      summary: List Groups
+      operationId: list_groups_api_v1_modifier_groups_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - Modifier Groups
+      summary: Create Group
+      operationId: create_group_api_v1_modifier_groups_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/GroupCreate
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+      security:
+      - HTTPBearer: []
+  /api/v1/modifier-groups/{group_id}:
+    get:
+      tags:
+      - Modifier Groups
+      summary: Get Group
+      operationId: get_group_api_v1_modifier_groups__group_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Group Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    patch:
+      tags:
+      - Modifier Groups
+      summary: Update Group
+      operationId: update_group_api_v1_modifier_groups__group_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Group Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/GroupUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Modifier Groups
+      summary: Delete Group
+      operationId: delete_group_api_v1_modifier_groups__group_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Group Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/modifier-groups/{group_id}/options:
+    post:
+      tags:
+      - Modifier Groups
+      summary: Add Option
+      operationId: add_option_api_v1_modifier_groups__group_id__options_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: group_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Group Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/OptionIn
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+  /api/v1/modifier-groups/options/{option_id}:
+    patch:
+      tags:
+      - Modifier Groups
+      summary: Update Option
+      operationId: update_option_api_v1_modifier_groups_options__option_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: option_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Option Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/OptionUpdate
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
+    delete:
+      tags:
+      - Modifier Groups
+      summary: Delete Option
+      operationId: delete_option_api_v1_modifier_groups_options__option_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: option_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Option Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
