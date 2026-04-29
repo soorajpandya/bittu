@@ -521,7 +521,15 @@ class TableSessionService:
         except LockError:
             raise LockAcquisitionError(f"cart:{dinein_session_id}")
 
-        return {"items": inserted, "count": len(inserted)}
+        # Echo ids for frontend convenience/compatibility.
+        # - session_id: what the caller passed (may be table_sessions.id or dine_in_sessions.id)
+        # - dinein_session_id: the actual FK target used for table_session_carts inserts
+        return {
+            "session_id": session_id,
+            "dinein_session_id": dinein_session_id,
+            "items": inserted,
+            "count": len(inserted),
+        }
 
     async def get_cart(self, session_token: str = None, session_id: str = None, **kwargs) -> list[dict]:
         """Get all items in the session cart. Accepts session_token OR session_id."""
