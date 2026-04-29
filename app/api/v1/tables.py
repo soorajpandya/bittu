@@ -247,7 +247,7 @@ async def add_to_cart(
     body: AddToCartIn,
     user: UserContext = Depends(require_permission("table.start")),
 ):
-    return await _svc.add_to_cart(
+    return await _svc.add_to_cart_admin(
         user=user,
         session_id=body.session_id,
         items=[i.model_dump() for i in body.items],

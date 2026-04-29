@@ -355,6 +355,122 @@ class TableSessionService:
         except LockError:
             raise LockAcquisitionError(f"cart:{session_id}")
 
+    async def add_to_cart_admin(
+        self,
+        user: UserContext,
+        session_id: str,
+        items: list[dict],
+    ) -> dict:
+        """
+        Admin/POS cart add.
+        Accepts a table session UUID and a list of items:
+          [{item_id, variant_id?, quantity, notes?}, ...]
+        """
+        owner_id = user.owner_id if user.is_branch_user else user.user_id
+        actor = owner_id
+
+        # Validate session belongs to tenant and is active
+        async with get_connection() as conn:
+            session = await conn.fetchrow(
+                """
+                SELECT id, restaurant_id, user_id, is_active
+                FROM table_sessions
+                WHERE id = $1 AND user_id = $2 AND is_active = true
+                """,
+                session_id,
+                owner_id,
+            )
+            if not session:
+                raise NotFoundError("Session", session_id)
+
+        if not items:
+            raise ValidationError("items cannot be empty")
+
+        inserted: list[dict] = []
+        try:
+            async with DistributedLock(f"cart:{session_id}", timeout=10):
+                async with get_serializable_transaction() as conn:
+                    for raw in items:
+                        raw_item_id = raw.get("item_id")
+                        if raw_item_id is None:
+                            raise ValidationError("item_id is required")
+                        try:
+                            item_id_int = int(raw_item_id)
+                        except Exception:
+                            raise ValidationError("item_id must be an integer")
+
+                        quantity = raw.get("quantity", 1)
+                        if not isinstance(quantity, int) or quantity < 1:
+                            raise ValidationError("quantity must be >= 1")
+
+                        variant_id = raw.get("variant_id")
+                        notes = raw.get("notes")
+
+                        item = await conn.fetchrow(
+                            """
+                            SELECT "Item_ID", "Item_Name", price, "Available_Status"
+                            FROM items WHERE "Item_ID" = $1
+                            """,
+                            item_id_int,
+                        )
+                        if not item or not item["Available_Status"]:
+                            raise ValidationError("Item is not available")
+
+                        unit_price = float(item["price"])
+                        item_name = item["Item_Name"]
+                        variant_name = None
+
+                        if variant_id:
+                            variant = await conn.fetchrow(
+                                "SELECT name, price FROM item_variants WHERE id = $1 AND item_id = $2 AND is_active = true",
+                                variant_id,
+                                item_id_int,
+                            )
+                            if variant:
+                                unit_price = float(variant["price"])
+                                variant_name = variant["name"]
+
+                        total_price = unit_price * quantity
+
+                        cart_item_id = str(uuid.uuid4())
+                        await conn.execute(
+                            """
+                            INSERT INTO table_session_carts (
+                                id, session_id, item_id, variant_id,
+                                item_name, variant_name, quantity,
+                                unit_price, total_price,
+                                addons, extras, notes, added_by
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13)
+                            """,
+                            cart_item_id,
+                            session_id,
+                            item_id_int,
+                            variant_id,
+                            item_name,
+                            variant_name,
+                            quantity,
+                            unit_price,
+                            total_price,
+                            "[]",
+                            "[]",
+                            notes,
+                            actor,
+                        )
+                        inserted.append(
+                            {
+                                "cart_item_id": cart_item_id,
+                                "item_id": item_id_int,
+                                "item_name": item_name,
+                                "quantity": quantity,
+                                "total_price": total_price,
+                            }
+                        )
+
+        except LockError:
+            raise LockAcquisitionError(f"cart:{session_id}")
+
+        return {"items": inserted, "count": len(inserted)}
+
     async def get_cart(self, session_token: str = None, session_id: str = None, **kwargs) -> list[dict]:
         """Get all items in the session cart. Accepts session_token OR session_id."""
         if session_id:
