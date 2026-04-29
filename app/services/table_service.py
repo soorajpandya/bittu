@@ -16,6 +16,7 @@ Security:
   - Device tracking prevents session hijacking
 """
 import uuid
+import asyncio
 import secrets
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -30,7 +31,7 @@ from app.core.events import (
     TABLE_STATUS_CHANGED, TABLE_CALL_WAITER, KITCHEN_ORDER_CREATED,
 )
 from app.core.exceptions import (
-    NotFoundError, ConflictError, ValidationError, LockAcquisitionError,
+    AppException, NotFoundError, ConflictError, ValidationError, LockAcquisitionError,
 )
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -222,23 +223,31 @@ class TableSessionService:
         - If an active session exists for the table, join it.
         - Otherwise, start a new session and join it.
         """
-        async with get_connection() as conn:
-            existing = await conn.fetchrow(
-                """
-                SELECT session_token
-                FROM table_sessions
-                WHERE table_id = $1 AND is_active = true
-                ORDER BY started_at DESC
-                LIMIT 1
-                """,
-                table_id,
-            )
-            if existing and existing["session_token"]:
+        async def _join_latest_active() -> dict:
+            async with get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT session_token
+                    FROM table_sessions
+                    WHERE table_id = $1 AND is_active = true
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                    """,
+                    table_id,
+                )
+                if not row or not row["session_token"]:
+                    raise NotFoundError("Session", "no active session for table")
                 return await self.join_session(
-                    session_token=existing["session_token"],
+                    session_token=row["session_token"],
                     device_id=device_id,
                     device_name=device_name,
                 )
+
+        # Fast path: join existing session if present
+        try:
+            return await _join_latest_active()
+        except NotFoundError:
+            pass
 
         try:
             started = await self.start_session(
@@ -252,20 +261,15 @@ class TableSessionService:
         except (ConflictError, LockAcquisitionError):
             # Another request is creating/created the session (race or lock contention).
             # Make this endpoint idempotent by fetching the active session and joining it.
-            async with get_connection() as conn:
-                row = await conn.fetchrow(
-                    """
-                    SELECT session_token
-                    FROM table_sessions
-                    WHERE table_id = $1 AND is_active = true
-                    ORDER BY started_at DESC
-                    LIMIT 1
-                    """,
-                    table_id,
-                )
-                if not row or not row["session_token"]:
-                    raise
-                session_token = row["session_token"]
+            # (short delay helps if creator txn hasn't committed yet)
+            await asyncio.sleep(0.15)
+            return await _join_latest_active()
+        except AppException as exc:
+            # Catch-all idempotency for other 409 variants (e.g., table state transition conflicts).
+            if exc.status_code == 409:
+                await asyncio.sleep(0.15)
+                return await _join_latest_active()
+            raise
 
         return await self.join_session(
             session_token=session_token,
