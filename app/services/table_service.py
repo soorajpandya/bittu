@@ -22,7 +22,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from app.core.auth import UserContext
-from app.core.database import get_connection, get_serializable_transaction
+from app.core.database import get_connection, get_serializable_transaction, get_transaction
 from app.core.redis import DistributedLock, LockError
 from app.core.state_machines import TableStatus, validate_table_transition
 from app.core.events import (
@@ -1031,9 +1031,9 @@ class TableSessionService:
         restaurant_id = str(session["restaurant_id"]) if session["restaurant_id"] else None
         owner_id = str(session["user_id"])
 
-        async with get_serializable_transaction() as conn:
+        async with get_transaction() as conn:
             cart = await conn.fetch(
-                "SELECT * FROM table_session_carts WHERE session_id = $1",
+                "SELECT * FROM table_session_carts WHERE session_id = $1 FOR UPDATE",
                 session_id,
             )
             if not cart:
@@ -1241,9 +1241,9 @@ class TableSessionService:
         sid = str(session["id"])
         restaurant_id = str(session["restaurant_id"]) if session["restaurant_id"] else None
 
-        async with get_serializable_transaction() as conn:
+        async with get_transaction() as conn:
             cart = await conn.fetch(
-                "SELECT * FROM table_session_carts WHERE session_id = $1",
+                "SELECT * FROM table_session_carts WHERE session_id = $1 FOR UPDATE",
                 sid,
             )
             if not cart:
