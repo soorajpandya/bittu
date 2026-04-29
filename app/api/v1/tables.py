@@ -1,4 +1,5 @@
 """Table Session / QR ordering endpoints."""
+import orjson
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, model_validator
@@ -6,9 +7,12 @@ from pydantic import BaseModel, Field, model_validator
 from app.core.auth import UserContext, require_permission, get_current_user_optional
 from app.core.database import get_connection
 from app.core.logging import get_logger
+from app.core.redis import cache_get, cache_set, cache_delete
 from app.services.activity_log_service import log_activity
 from app.services.table_service import TableSessionService
 from app.services.dinein_session_service import DineInSessionService
+
+_TABLES_LIST_CACHE_TTL = 5  # seconds — matches poll interval
 
 router = APIRouter(prefix="/tables", tags=["Tables"])
 _svc = TableSessionService()
@@ -106,12 +110,28 @@ async def list_tables(
     """List all tables for the current user's restaurant."""
     try:
         owner_id = user.owner_id if user.is_branch_user else user.user_id
+        cache_key = f"tables_list:{owner_id}"
+        try:
+            cached = await cache_get(cache_key)
+            if cached:
+                return orjson.loads(cached)
+        except Exception:
+            pass
+
         async with get_connection() as conn:
             rows = await conn.fetch(
-                "SELECT * FROM restaurant_tables WHERE user_id = $1 ORDER BY table_number ASC",
+                "SELECT id, user_id, restaurant_id, table_number, capacity, status,"
+                " is_active, is_occupied, occupied_since, session_token,"
+                " current_order_id, created_at, updated_at"
+                " FROM restaurant_tables WHERE user_id = $1 ORDER BY table_number ASC",
                 owner_id,
             )
-            return [dict(r) for r in rows]
+        result = [dict(r) for r in rows]
+        try:
+            await cache_set(cache_key, orjson.dumps(result, default=str).decode(), ttl=_TABLES_LIST_CACHE_TTL)
+        except Exception:
+            pass
+        return result
     except Exception as e:
         logger.warning("list_tables_failed", error=str(e), user_id=user.user_id)
         return []
@@ -148,6 +168,10 @@ async def create_table(
                 entity_id=str(result.get("id")) if result.get("id") else None,
                 metadata={"table_number": body.table_number},
             )
+            try:
+                await cache_delete(f"tables_list:{owner_id}")
+            except Exception:
+                pass
             return result
     except Exception as e:
         logger.warning("create_table_failed", error=str(e), user_id=user.user_id)
@@ -196,6 +220,10 @@ async def update_table(
                 entity_id=table_id,
                 metadata={"updated_fields": list(updates.keys())},
             )
+            try:
+                await cache_delete(f"tables_list:{owner_id}")
+            except Exception:
+                pass
             return result
     except Exception as e:
         logger.warning("update_table_failed", error=str(e), user_id=user.user_id)
@@ -227,6 +255,10 @@ async def delete_table(
                 entity_id=table_id,
                 metadata={},
             )
+            try:
+                await cache_delete(f"tables_list:{owner_id}")
+            except Exception:
+                pass
             return {"status": "deleted"}
     except Exception as e:
         logger.warning("delete_table_failed", error=str(e), user_id=user.user_id)

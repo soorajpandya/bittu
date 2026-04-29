@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 
 # Lightweight process cache to avoid redis/db traffic on hot paths.
 _LOCAL_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-_LOCAL_TTL_SECONDS = 30
+_LOCAL_TTL_SECONDS = 300
 
 # ── Observability counters (in-memory, per-worker) ──
 _FALLBACK_COUNTER: dict[str, list[float]] = {}   # reason -> [timestamps]

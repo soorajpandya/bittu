@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Optional
 
 from app.core.database import get_connection, get_serializable_transaction
-from app.core.redis import DistributedLock, LockError, get_redis
+from app.core.redis import DistributedLock, LockError, get_redis, cache_delete
 from app.core.events import (
     DomainEvent, emit_and_publish,
     TABLE_ORDER_PLACED, TABLE_CART_UPDATED, TABLE_CALL_WAITER,
@@ -173,6 +173,12 @@ class DineInSessionService:
                 now, table_id,
             )
 
+        # Invalidate tables list cache so staff sees updated status immediately
+        try:
+            await cache_delete(f"tables_list:{owner_id}")
+        except Exception:
+            pass
+
         await self._ensure_session_user(session_id, "qr", device_id=device_id)
 
         table_info = {
@@ -293,6 +299,12 @@ class DineInSessionService:
                             """,
                             str(session["table_id"]),
                         )
+
+            # Invalidate tables list cache so staff sees freed table immediately
+            try:
+                await cache_delete(f"tables_list:{session['user_id']}")
+            except Exception:
+                pass
 
             await emit_and_publish(DomainEvent(
                 event_type=SESSION_CLOSED,
