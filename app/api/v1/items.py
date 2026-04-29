@@ -4,11 +4,15 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel, ConfigDict
 import structlog
+import orjson
 
 from app.core.auth import UserContext, get_current_user
 from app.core.database import get_connection
 from app.core.tenant import tenant_where_clause
 from app.core.exceptions import ForbiddenError
+from app.core.redis import cache_get, cache_set, cache_delete_pattern
+
+_ITEMS_CACHE_TTL = 300  # 5 minutes
 
 logger = structlog.get_logger(__name__)
 
@@ -109,12 +113,30 @@ async def list_items(
 
     where = " AND ".join(conditions)
 
+    # Only cache the unfiltered full list (most common call)
+    uid = user.owner_id if user.is_branch_user else user.user_id
+    cache_key = f"items_list:{uid}" if not branch_id and not restaurant_id else None
+    if cache_key:
+        try:
+            cached = await cache_get(cache_key)
+            if cached:
+                return orjson.loads(cached)
+        except Exception:
+            pass
+
     async with get_connection() as conn:
         items = await conn.fetch(
             f"SELECT * FROM items i WHERE {where} ORDER BY i.created_at DESC",
             *params,
         )
-        return [dict(item) for item in items]
+        result = [dict(item) for item in items]
+
+    if cache_key:
+        try:
+            await cache_set(cache_key, orjson.dumps(result, default=str).decode(), ttl=_ITEMS_CACHE_TTL)
+        except Exception:
+            pass
+    return result
 
 
 @router.post("", response_model=ItemResponse)
@@ -156,7 +178,13 @@ async def create_item(
     sql = f"INSERT INTO items ({', '.join(fields)}) VALUES ({placeholders}) RETURNING *"
     async with get_connection() as conn:
         item = await conn.fetchrow(sql, *values)
-        return dict(item)
+    uid = user.owner_id if user.is_branch_user else user.user_id
+    try:
+        await cache_delete_pattern(f"items_list:{uid}*")
+        await cache_delete_pattern(f"menu_all:{uid}*")
+    except Exception:
+        pass
+    return dict(item)
 
 
 # ── Bulk Import (AI Menu Scan) ───────────────────────────────
@@ -260,6 +288,14 @@ async def bulk_import_items(
         skipped=len(skipped_items),
     )
 
+    if created_items:
+        uid = user.owner_id if user.is_branch_user else user.user_id
+        try:
+            await cache_delete_pattern(f"items_list:{uid}*")
+            await cache_delete_pattern(f"menu_all:{uid}*")
+        except Exception:
+            pass
+
     return BulkImportResult(
         total_submitted=len(body.items),
         created=len(created_items),
@@ -334,7 +370,13 @@ async def update_item(
         )
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
-        return dict(item)
+    uid = user.owner_id if user.is_branch_user else user.user_id
+    try:
+        await cache_delete_pattern(f"items_list:{uid}*")
+        await cache_delete_pattern(f"menu_all:{uid}*")
+    except Exception:
+        pass
+    return dict(item)
 
 
 @router.delete("/{item_id}")
@@ -352,7 +394,13 @@ async def delete_item(
         )
         if result == "DELETE 0":
             raise HTTPException(status_code=404, detail="Item not found")
-        return {"message": "Item deleted"}
+    uid = user.owner_id if user.is_branch_user else user.user_id
+    try:
+        await cache_delete_pattern(f"items_list:{uid}*")
+        await cache_delete_pattern(f"menu_all:{uid}*")
+    except Exception:
+        pass
+    return {"message": "Item deleted"}
 
 
 # ── Nested sub-resource routes ───────────────────────────────

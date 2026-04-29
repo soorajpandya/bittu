@@ -1,17 +1,36 @@
 """Category Service — CRUD for menu categories."""
 from typing import Optional
+import orjson
 from app.core.auth import UserContext
 from app.core.database import get_connection, get_serializable_transaction
 from app.core.tenant import tenant_where_clause, tenant_insert_fields
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.logging import get_logger
+from app.core.redis import cache_get, cache_set, cache_delete_pattern
 
 logger = get_logger(__name__)
+
+_CATEGORIES_CACHE_TTL = 300  # 5 minutes
+
+
+def _cat_cache_key(uid: str) -> str:
+    return f"categories:{uid}"
 
 
 class CategoryService:
 
     async def list_categories(self, user: UserContext, active_only: bool = False) -> list[dict]:
+        uid = user.owner_id if user.is_branch_user else user.user_id
+        # Only cache the full unfiltered list
+        cache_key = _cat_cache_key(uid) if not active_only else None
+        if cache_key:
+            try:
+                cached = await cache_get(cache_key)
+                if cached:
+                    return orjson.loads(cached)
+            except Exception:
+                pass
+
         clause, params = tenant_where_clause(user)
         sql = f"SELECT * FROM categories WHERE {clause}"
         if active_only:
@@ -19,7 +38,14 @@ class CategoryService:
         sql += " ORDER BY sort_order, name"
         async with get_connection() as conn:
             rows = await conn.fetch(sql, *params)
-        return [dict(r) for r in rows]
+        result = [dict(r) for r in rows]
+
+        if cache_key:
+            try:
+                await cache_set(cache_key, orjson.dumps(result, default=str).decode(), ttl=_CATEGORIES_CACHE_TTL)
+            except Exception:
+                pass
+        return result
 
     async def get_category(self, user: UserContext, category_id: int) -> dict:
         clause, params = tenant_where_clause(user)
@@ -52,6 +78,12 @@ class CategoryService:
                 data.get("is_active", True),
             )
         logger.info("category_created", id=str(row["id"]), name=data["name"])
+        uid = user.owner_id if user.is_branch_user else user.user_id
+        try:
+            await cache_delete_pattern(f"categories:{uid}*")
+            await cache_delete_pattern(f"menu_all:{uid}*")
+        except Exception:
+            pass
         return dict(row)
 
     async def update_category(self, user: UserContext, category_id: int, data: dict) -> dict:
@@ -79,6 +111,12 @@ class CategoryService:
                 f"UPDATE categories SET {', '.join(set_parts)} WHERE {clause} AND id = ${len(params)} RETURNING *",
                 *vals,
             )
+        uid = user.owner_id if user.is_branch_user else user.user_id
+        try:
+            await cache_delete_pattern(f"categories:{uid}*")
+            await cache_delete_pattern(f"menu_all:{uid}*")
+        except Exception:
+            pass
         return dict(row)
 
     async def delete_category(self, user: UserContext, category_id: int) -> dict:
@@ -91,4 +129,10 @@ class CategoryService:
             )
         if not row:
             raise NotFoundError("Category", category_id)
+        uid = user.owner_id if user.is_branch_user else user.user_id
+        try:
+            await cache_delete_pattern(f"categories:{uid}*")
+            await cache_delete_pattern(f"menu_all:{uid}*")
+        except Exception:
+            pass
         return {"deleted": True, "id": str(row["id"])}
