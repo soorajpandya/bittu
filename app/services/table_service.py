@@ -210,6 +210,51 @@ class TableSessionService:
                 device_name=device_name,
             )
 
+    async def join_or_create_session_by_table(
+        self,
+        user: UserContext,
+        table_id: str,
+        device_id: str,
+        device_name: Optional[str] = None,
+    ) -> dict:
+        """
+        Admin/POS flow:
+        - If an active session exists for the table, join it.
+        - Otherwise, start a new session and join it.
+        """
+        async with get_connection() as conn:
+            existing = await conn.fetchrow(
+                """
+                SELECT session_token
+                FROM table_sessions
+                WHERE table_id = $1 AND is_active = true
+                ORDER BY started_at DESC
+                LIMIT 1
+                """,
+                table_id,
+            )
+            if existing and existing["session_token"]:
+                return await self.join_session(
+                    session_token=existing["session_token"],
+                    device_id=device_id,
+                    device_name=device_name,
+                )
+
+        started = await self.start_session(
+            user=user,
+            table_id=table_id,
+            branch_id=user.branch_id,
+        )
+        session_token = started.get("session_token")
+        if not session_token:
+            raise ValidationError("Failed to create session")
+
+        return await self.join_session(
+            session_token=session_token,
+            device_id=device_id,
+            device_name=device_name,
+        )
+
     # ── CART MANAGEMENT ──
 
     async def add_to_cart(

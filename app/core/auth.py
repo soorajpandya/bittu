@@ -22,6 +22,7 @@ from app.services.rbac_service import rbac_service
 
 logger = get_logger(__name__)
 security = HTTPBearer()
+optional_security = HTTPBearer(auto_error=False)
 
 # ── JWKS cache (for ES256 tokens) ──
 _jwks_client: Optional[PyJWKClient] = None
@@ -146,6 +147,19 @@ async def get_current_user(
         pass
 
     return ctx
+
+
+async def get_current_user_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_security),
+) -> Optional[UserContext]:
+    """
+    Optional auth dependency.
+    - Returns UserContext when Authorization header is present/valid
+    - Returns None when Authorization header is missing
+    """
+    if credentials is None:
+        return None
+    return await get_current_user(credentials)
 
 
 async def _resolve_user_context(user_id: str, email: Optional[str]) -> UserContext:

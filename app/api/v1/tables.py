@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, model_validator
 
-from app.core.auth import UserContext, require_permission
+from app.core.auth import UserContext, require_permission, get_current_user_optional
 from app.core.database import get_connection
 from app.core.logging import get_logger
 from app.services.activity_log_service import log_activity
@@ -217,14 +217,25 @@ async def start_session(
 
 
 @router.post("/sessions/join")
-async def join_session(body: JoinSessionIn):
+async def join_session(
+    body: JoinSessionIn,
+    user: Optional[UserContext] = Depends(get_current_user_optional),
+):
+    # Public/QR join: token is enough (no JWT required)
     if body.session_token:
         return await _svc.join_session(
             session_token=body.session_token,
             device_id=body.device_id,
             device_name=body.device_name,
         )
-    return await _svc.join_session_by_table(
+
+    # Admin/POS join-by-table: requires JWT so we can safely create a session
+    if not user:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": "Authorization required for table_id join"})
+
+    return await _svc.join_or_create_session_by_table(
+        user=user,
         table_id=body.table_id,  # type: ignore[arg-type]
         device_id=body.device_id,
         device_name=body.device_name,
