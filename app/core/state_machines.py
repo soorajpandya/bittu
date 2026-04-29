@@ -5,6 +5,7 @@ Every state change is auditable and emits domain events.
 """
 from enum import Enum
 from typing import Optional
+import json, time
 
 from app.core.exceptions import InvalidStateTransition
 
@@ -238,13 +239,77 @@ TABLE_TRANSITIONS: dict[TableStatus, set[TableStatus]] = {
 
 
 def validate_table_transition(current: str, target: str) -> TableStatus:
+    # region agent log
+    try:
+        with open("debug-28e660.log", "a", encoding="utf-8") as _f:
+            _f.write(
+                json.dumps(
+                    {
+                        "sessionId": "28e660",
+                        "runId": "pre-fix",
+                        "hypothesisId": "H1",
+                        "location": "app/core/state_machines.py:validate_table_transition",
+                        "message": "validate_table_transition_called",
+                        "data": {"current": current, "target": target},
+                        "timestamp": int(time.time() * 1000),
+                    }
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
+    # endregion agent log
     try:
         current_status = TableStatus(current)
         target_status = TableStatus(target)
     except ValueError as e:
+        # region agent log
+        try:
+            with open("debug-28e660.log", "a", encoding="utf-8") as _f:
+                _f.write(
+                    json.dumps(
+                        {
+                            "sessionId": "28e660",
+                            "runId": "pre-fix",
+                            "hypothesisId": "H1",
+                            "location": "app/core/state_machines.py:validate_table_transition",
+                            "message": "validate_table_transition_value_error",
+                            "data": {"current": current, "target": target},
+                            "timestamp": int(time.time() * 1000),
+                        }
+                    )
+                    + "\n"
+                )
+        except Exception:
+            pass
+        # endregion agent log
         raise InvalidStateTransition("table", current, target) from e
 
     if target_status not in TABLE_TRANSITIONS.get(current_status, set()):
+        # region agent log
+        try:
+            with open("debug-28e660.log", "a", encoding="utf-8") as _f:
+                _f.write(
+                    json.dumps(
+                        {
+                            "sessionId": "28e660",
+                            "runId": "pre-fix",
+                            "hypothesisId": "H2",
+                            "location": "app/core/state_machines.py:validate_table_transition",
+                            "message": "validate_table_transition_disallowed",
+                            "data": {
+                                "current": current,
+                                "target": target,
+                                "allowed": [s.value for s in TABLE_TRANSITIONS.get(current_status, set())],
+                            },
+                            "timestamp": int(time.time() * 1000),
+                        }
+                    )
+                    + "\n"
+                )
+        except Exception:
+            pass
+        # endregion agent log
         raise InvalidStateTransition("table", current, target)
 
     return target_status
