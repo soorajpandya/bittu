@@ -1160,9 +1160,9 @@ class TableSessionService:
                 "DELETE FROM table_session_carts WHERE session_id = $1", session_id,
             )
 
-            # Get DB-generated order_number
+            # Get order_number (no dedicated column, stored in metadata or fallback to id prefix)
             order_number = await conn.fetchval(
-                "SELECT order_number FROM orders WHERE id = $1", order_id,
+                "SELECT COALESCE(metadata->>'order_number', LEFT(id::text, 8)) FROM orders WHERE id = $1", order_id,
             )
 
         order_number = str(order_number) if order_number else order_id[:8]
@@ -1373,7 +1373,7 @@ class TableSessionService:
             )
 
             order_number = await conn.fetchval(
-                "SELECT order_number FROM orders WHERE id = $1", order_id,
+                "SELECT COALESCE(metadata->>'order_number', LEFT(id::text, 8)) FROM orders WHERE id = $1", order_id,
             )
 
         order_number = str(order_number) if order_number else order_id[:8]
