@@ -240,14 +240,32 @@ class TableSessionService:
                     device_name=device_name,
                 )
 
-        started = await self.start_session(
-            user=user,
-            table_id=table_id,
-            branch_id=user.branch_id,
-        )
-        session_token = started.get("session_token")
-        if not session_token:
-            raise ValidationError("Failed to create session")
+        try:
+            started = await self.start_session(
+                user=user,
+                table_id=table_id,
+                branch_id=user.branch_id,
+            )
+            session_token = started.get("session_token")
+            if not session_token:
+                raise ValidationError("Failed to create session")
+        except ConflictError:
+            # Another request created the session between our read and create.
+            # Make this endpoint idempotent by fetching the active session and joining it.
+            async with get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT session_token
+                    FROM table_sessions
+                    WHERE table_id = $1 AND is_active = true
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                    """,
+                    table_id,
+                )
+                if not row or not row["session_token"]:
+                    raise
+                session_token = row["session_token"]
 
         return await self.join_session(
             session_token=session_token,
