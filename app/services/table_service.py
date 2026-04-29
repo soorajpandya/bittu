@@ -369,26 +369,72 @@ class TableSessionService:
         owner_id = user.owner_id if user.is_branch_user else user.user_id
         actor = owner_id
 
-        # Validate session belongs to tenant and is active
+        # Resolve to a dine-in session id (FK on table_session_carts points to dine_in_sessions)
+        dinein_session_id = None
         async with get_connection() as conn:
-            session = await conn.fetchrow(
+            dinein = await conn.fetchrow(
                 """
-                SELECT id, restaurant_id, user_id, is_active
-                FROM table_sessions
-                WHERE id = $1 AND user_id = $2 AND is_active = true
+                SELECT id, table_id, restaurant_id, user_id, status
+                FROM dine_in_sessions
+                WHERE id = $1 AND user_id = $2 AND status = 'active'
                 """,
                 session_id,
                 owner_id,
             )
-            if not session:
-                raise NotFoundError("Session", session_id)
+            if dinein:
+                dinein_session_id = str(dinein["id"])
+            else:
+                legacy = await conn.fetchrow(
+                    """
+                    SELECT id, table_id, restaurant_id, user_id, branch_id, session_token, guest_count, expires_at, is_active
+                    FROM table_sessions
+                    WHERE id = $1 AND user_id = $2 AND is_active = true
+                    """,
+                    session_id,
+                    owner_id,
+                )
+                if not legacy:
+                    raise NotFoundError("Session", session_id)
+
+                # Reuse an active dine-in session for this table, or create one (compat bridge).
+                existing_dinein = await conn.fetchrow(
+                    """
+                    SELECT id
+                    FROM dine_in_sessions
+                    WHERE table_id = $1 AND user_id = $2 AND status = 'active'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    str(legacy["table_id"]),
+                    owner_id,
+                )
+                if existing_dinein:
+                    dinein_session_id = str(existing_dinein["id"])
+                else:
+                    created = await conn.fetchrow(
+                        """
+                        INSERT INTO dine_in_sessions (
+                            table_id, restaurant_id, user_id, branch_id,
+                            session_token, guest_count, status, expires_at
+                        ) VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)
+                        RETURNING id
+                        """,
+                        str(legacy["table_id"]),
+                        str(legacy["restaurant_id"]) if legacy["restaurant_id"] else None,
+                        owner_id,
+                        str(legacy["branch_id"]) if legacy["branch_id"] else None,
+                        legacy["session_token"],
+                        int(legacy["guest_count"] or 1),
+                        legacy["expires_at"],
+                    )
+                    dinein_session_id = str(created["id"])
 
         if not items:
             raise ValidationError("items cannot be empty")
 
         inserted: list[dict] = []
         try:
-            async with DistributedLock(f"cart:{session_id}", timeout=10):
+            async with DistributedLock(f"cart:{dinein_session_id}", timeout=10):
                 async with get_serializable_transaction() as conn:
                     for raw in items:
                         raw_item_id = raw.get("item_id")
@@ -403,7 +449,13 @@ class TableSessionService:
                         if not isinstance(quantity, int) or quantity < 1:
                             raise ValidationError("quantity must be >= 1")
 
-                        variant_id = raw.get("variant_id")
+                        variant_id_raw = raw.get("variant_id")
+                        variant_id_int = None
+                        if variant_id_raw not in (None, ""):
+                            try:
+                                variant_id_int = int(variant_id_raw)
+                            except Exception:
+                                raise ValidationError("variant_id must be an integer")
                         notes = raw.get("notes")
 
                         item = await conn.fetchrow(
@@ -420,10 +472,10 @@ class TableSessionService:
                         item_name = item["Item_Name"]
                         variant_name = None
 
-                        if variant_id:
+                        if variant_id_int is not None:
                             variant = await conn.fetchrow(
                                 "SELECT name, price FROM item_variants WHERE id = $1 AND item_id = $2 AND is_active = true",
-                                variant_id,
+                                variant_id_int,
                                 item_id_int,
                             )
                             if variant:
@@ -443,9 +495,9 @@ class TableSessionService:
                             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13)
                             """,
                             cart_item_id,
-                            session_id,
+                            dinein_session_id,
                             item_id_int,
-                            variant_id,
+                            variant_id_int,
                             item_name,
                             variant_name,
                             quantity,
@@ -467,7 +519,7 @@ class TableSessionService:
                         )
 
         except LockError:
-            raise LockAcquisitionError(f"cart:{session_id}")
+            raise LockAcquisitionError(f"cart:{dinein_session_id}")
 
         return {"items": inserted, "count": len(inserted)}
 
