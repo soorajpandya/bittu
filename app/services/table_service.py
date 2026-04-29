@@ -18,7 +18,6 @@ Security:
 import uuid
 import asyncio
 import secrets
-import json, time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -105,30 +104,6 @@ class TableSessionService:
                     )
 
                     # Update table status
-                    # region agent log
-                    try:
-                        with open("debug-28e660.log", "a", encoding="utf-8") as _f:
-                            _f.write(
-                                json.dumps(
-                                    {
-                                        "sessionId": "28e660",
-                                        "runId": "pre-fix",
-                                        "hypothesisId": "H1",
-                                        "location": "app/services/table_service.py:start_session",
-                                        "message": "about_to_validate_table_transition",
-                                        "data": {
-                                            "table_id": table_id,
-                                            "table_status": str(table["status"]) if table and "status" in table else None,
-                                            "target": TableStatus.RUNNING.value,
-                                        },
-                                        "timestamp": int(time.time() * 1000),
-                                    }
-                                )
-                                + "\n"
-                            )
-                    except Exception:
-                        pass
-                    # endregion agent log
                     validate_table_transition(table["status"], TableStatus.RUNNING.value)
                     await conn.execute(
                         """
