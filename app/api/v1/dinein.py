@@ -9,6 +9,8 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.core.auth import UserContext, get_current_user, require_permission
+from app.core.database import get_connection
+from app.core.exceptions import NotFoundError
 from app.core.logging import get_logger
 from app.services.dinein_session_service import DineInSessionService
 
@@ -246,7 +248,41 @@ async def get_session_bill(
     user: UserContext = Depends(get_current_user),
 ):
     """Get complete bill snapshot for a table session."""
-    return await _svc.get_session_bill(session_id=session_id)
+    owner_id = user.owner_id if user.is_branch_user else user.user_id
+
+    # Compatibility: some clients pass table_sessions.id here.
+    resolved_session_id = session_id
+    async with get_connection() as conn:
+        dinein = await conn.fetchrow(
+            "SELECT id FROM dine_in_sessions WHERE id = $1 AND user_id = $2",
+            session_id,
+            owner_id,
+        )
+        if not dinein:
+            legacy = await conn.fetchrow(
+                "SELECT table_id FROM table_sessions WHERE id = $1 AND user_id = $2",
+                session_id,
+                owner_id,
+            )
+            if legacy:
+                active = await conn.fetchrow(
+                    """
+                    SELECT id
+                    FROM dine_in_sessions
+                    WHERE table_id = $1 AND user_id = $2 AND status = 'active'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    str(legacy["table_id"]),
+                    owner_id,
+                )
+                if active:
+                    resolved_session_id = str(active["id"])
+
+    if not resolved_session_id:
+        raise NotFoundError("Session", session_id)
+
+    return await _svc.get_session_bill(session_id=resolved_session_id)
 
 
 @router.post("/sessions/{session_id}/split-bill")
