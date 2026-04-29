@@ -1203,6 +1203,218 @@ class TableSessionService:
             "message": "Order placed successfully",
         }
 
+    # ── ADMIN PLACE ORDER (uses session_id, JWT-authenticated) ──
+
+    async def place_order_admin(
+        self,
+        user: UserContext,
+        session_id: str,
+        notes: Optional[str] = None,
+        customer_name: Optional[str] = None,
+        customer_phone: Optional[str] = None,
+        payment_method: str = "cash",
+    ) -> dict:
+        """Place order from cart using session_id (admin/POS flow, JWT-authenticated).
+
+        Unlike qr_place_order (which uses session_token for QR customers), this
+        method accepts the dine_in_sessions UUID so the Flutter admin app can place
+        orders after adding items via /tables/cart/add.  It also links the new order
+        to session_orders so the payment endpoints can correctly compute grand_total.
+        """
+        import json
+        from decimal import Decimal
+
+        owner_id = user.owner_id if user.is_branch_user else user.user_id
+
+        async with get_connection() as conn:
+            session = await conn.fetchrow(
+                """
+                SELECT id, table_id, restaurant_id, user_id, branch_id, status
+                FROM dine_in_sessions
+                WHERE id = $1 AND user_id = $2 AND status = 'active'
+                """,
+                session_id,
+                owner_id,
+            )
+        if not session:
+            raise NotFoundError("Session", session_id)
+
+        sid = str(session["id"])
+        restaurant_id = str(session["restaurant_id"]) if session["restaurant_id"] else None
+
+        async with get_serializable_transaction() as conn:
+            cart = await conn.fetch(
+                "SELECT * FROM table_session_carts WHERE session_id = $1",
+                sid,
+            )
+            if not cart:
+                raise ValidationError("Cart is empty")
+
+            table = await conn.fetchrow(
+                "SELECT id, table_number FROM restaurant_tables WHERE id = $1",
+                str(session["table_id"]),
+            )
+            table_number = table["table_number"] if table else None
+            table_id = str(table["id"]) if table else None
+
+            subtotal = Decimal("0")
+            order_items_data = []
+            for ci in cart:
+                line_total = Decimal(str(ci["total_price"]))
+                subtotal += line_total
+                order_items_data.append({
+                    "item_id": ci["item_id"],
+                    "variant_id": ci.get("variant_id"),
+                    "item_name": ci["item_name"],
+                    "quantity": ci["quantity"],
+                    "unit_price": float(ci["unit_price"]),
+                    "total_price": float(ci["total_price"]),
+                    "addons": ci.get("addons") or [],
+                    "notes": ci.get("notes"),
+                })
+
+            tax_row = await conn.fetchrow(
+                "SELECT tax_percentage FROM restaurant_settings WHERE user_id = $1",
+                owner_id,
+            )
+            tax_pct = Decimal(str(tax_row["tax_percentage"])) if tax_row and tax_row["tax_percentage"] else Decimal("0")
+            tax_amount = subtotal * tax_pct / 100
+            total_amount = subtotal + tax_amount
+
+            order_id = str(uuid.uuid4())
+
+            await conn.execute(
+                """
+                INSERT INTO orders (
+                    id, user_id, branch_id, restaurant_id, customer_id,
+                    source, subtotal, tax_amount, discount_amount, total_amount,
+                    status, table_number, delivery_address, delivery_phone,
+                    coupon_id, notes, items, metadata
+                ) VALUES (
+                    $1, $2, $3, $4, NULL, 'qr_table'::order_source,
+                    $5, $6, 0, $7, 'Queued', $8, NULL, $9,
+                    NULL, $10, $11::jsonb, $12::jsonb
+                )
+                """,
+                order_id, owner_id,
+                str(session.get("branch_id")) if session.get("branch_id") else None,
+                restaurant_id, float(subtotal), float(tax_amount), float(total_amount),
+                table_number, customer_phone, notes,
+                json.dumps([]),
+                json.dumps({
+                    "customer_name": customer_name,
+                    "session_id": sid,
+                    "payment_method": payment_method,
+                }),
+            )
+
+            # Link order to session_orders so payment grand_total is computed correctly
+            await conn.execute(
+                """
+                INSERT INTO session_orders (session_id, order_id, role)
+                SELECT $1, $2, 'owner'
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM session_orders WHERE session_id = $1 AND order_id = $2
+                )
+                """,
+                sid, order_id,
+            )
+
+            order_item_rows = []
+            for oi in order_items_data:
+                oi_row = await conn.fetchrow(
+                    """
+                    INSERT INTO order_items (
+                        order_id, item_id, variant_id, item_name,
+                        quantity, unit_price, total_price, addons, notes, user_id
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+                    RETURNING id
+                    """,
+                    order_id, oi["item_id"], oi.get("variant_id"), oi["item_name"],
+                    oi["quantity"], oi["unit_price"], oi["total_price"],
+                    json.dumps(oi.get("addons") or []), oi.get("notes"), owner_id,
+                )
+                order_item_rows.append({
+                    "order_item_id": oi_row["id"],
+                    "item_name": oi["item_name"],
+                })
+
+            kitchen_order_id = str(uuid.uuid4())
+            await conn.execute(
+                """
+                INSERT INTO kitchen_orders (
+                    id, order_id, restaurant_id, status, user_id,
+                    priority, source, table_session_id, branch_id, created_at
+                ) VALUES (
+                    $1, $2, $3, 'queued'::kitchen_status, $4,
+                    0, 'qr_table', $5, $6, now()
+                )
+                """,
+                kitchen_order_id, order_id, restaurant_id, owner_id,
+                sid,
+                str(session.get("branch_id")) if session.get("branch_id") else None,
+            )
+
+            for oi_info in order_item_rows:
+                await conn.execute(
+                    """
+                    INSERT INTO kitchen_order_items (kitchen_order_id, order_item_id, status, item_name, quantity)
+                    VALUES ($1, $2, 'queued'::kitchen_status, $3, 1)
+                    """,
+                    kitchen_order_id, oi_info["order_item_id"], oi_info["item_name"],
+                )
+
+            if table_id:
+                await conn.execute(
+                    "UPDATE restaurant_tables SET current_order_id = $1 WHERE id = $2",
+                    order_id, table_id,
+                )
+
+            await conn.execute(
+                "DELETE FROM table_session_carts WHERE session_id = $1", sid,
+            )
+
+            order_number = await conn.fetchval(
+                "SELECT order_number FROM orders WHERE id = $1", order_id,
+            )
+
+        order_number = str(order_number) if order_number else order_id[:8]
+
+        await emit_and_publish(DomainEvent(
+            event_type=TABLE_ORDER_PLACED,
+            payload={
+                "order_id": order_id,
+                "order_number": order_number,
+                "session_id": sid,
+                "table_number": table_number,
+                "total": float(total_amount),
+            },
+            restaurant_id=restaurant_id,
+        ))
+
+        await emit_and_publish(DomainEvent(
+            event_type=KITCHEN_ORDER_CREATED,
+            payload={
+                "kitchen_order_id": kitchen_order_id,
+                "order_id": order_id,
+                "order_number": order_number,
+                "session_id": sid,
+                "table_number": table_number,
+                "source": "qr_table",
+                "item_count": len(order_item_rows),
+            },
+            user_id=owner_id,
+            restaurant_id=restaurant_id,
+        ))
+
+        return {
+            "order_id": order_id,
+            "order_number": order_number,
+            "total": float(total_amount),
+            "status": "pending",
+            "message": "Order placed successfully",
+        }
+
     # ── QR ORDER STATUS ──
 
     async def qr_order_status(self, session_token: str) -> dict:

@@ -326,6 +326,35 @@ async def add_to_cart(
     )
 
 
+class AdminPlaceOrderIn(BaseModel):
+    notes: Optional[str] = None
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    payment_method: Optional[str] = "cash"
+
+
+@router.post("/sessions/{session_id}/place-order")
+async def admin_place_order(
+    session_id: str,
+    body: AdminPlaceOrderIn = AdminPlaceOrderIn(),
+    user: UserContext = Depends(require_permission("table.start")),
+):
+    """Place order from cart using session_id (admin/POS flow).
+
+    Use this instead of /qr/place-order when the session was created via the
+    admin app (/tables/cart/add flow).  Links the order to session_orders so
+    subsequent payment calls compute grand_total correctly.
+    """
+    return await _svc.place_order_admin(
+        user=user,
+        session_id=session_id,
+        notes=body.notes,
+        customer_name=body.customer_name,
+        customer_phone=body.customer_phone,
+        payment_method=body.payment_method or "cash",
+    )
+
+
 @router.get("/cart/{session_id}")
 async def get_cart(
     session_id: str,
