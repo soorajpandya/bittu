@@ -1,7 +1,7 @@
 """Table Session / QR ordering endpoints."""
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.core.auth import UserContext, require_permission
 from app.core.database import get_connection
@@ -30,8 +30,16 @@ class StartSessionIn(BaseModel):
 
 
 class JoinSessionIn(BaseModel):
-    session_token: str
+    session_token: Optional[str] = None
+    table_id: Optional[str] = None
     device_id: str
+    device_name: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _validate_join_target(self):
+        if not self.session_token and not self.table_id:
+            raise ValueError("Either session_token or table_id is required")
+        return self
 
 
 class CartItemIn(BaseModel):
@@ -210,9 +218,16 @@ async def start_session(
 
 @router.post("/sessions/join")
 async def join_session(body: JoinSessionIn):
-    return await _svc.join_session(
-        session_token=body.session_token,
+    if body.session_token:
+        return await _svc.join_session(
+            session_token=body.session_token,
+            device_id=body.device_id,
+            device_name=body.device_name,
+        )
+    return await _svc.join_session_by_table(
+        table_id=body.table_id,  # type: ignore[arg-type]
         device_id=body.device_id,
+        device_name=body.device_name,
     )
 
 

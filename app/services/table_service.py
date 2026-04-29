@@ -180,6 +180,36 @@ class TableSessionService:
                 "status": session["status"],
             }
 
+    async def join_session_by_table(
+        self,
+        table_id: str,
+        device_id: str,
+        device_name: Optional[str] = None,
+    ) -> dict:
+        """
+        Join the currently active session for a table.
+        Frontend-safe alias for cases where the client only knows table_id.
+        """
+        async with get_connection() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT session_token
+                FROM table_sessions
+                WHERE table_id = $1 AND is_active = true
+                ORDER BY started_at DESC
+                LIMIT 1
+                """,
+                table_id,
+            )
+            if not row or not row["session_token"]:
+                raise NotFoundError("Session", "no active session for table")
+
+            return await self.join_session(
+                session_token=row["session_token"],
+                device_id=device_id,
+                device_name=device_name,
+            )
+
     # ── CART MANAGEMENT ──
 
     async def add_to_cart(
