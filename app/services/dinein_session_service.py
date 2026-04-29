@@ -16,7 +16,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from typing import Optional
 
-from app.core.database import get_connection, get_serializable_transaction
+from app.core.database import get_connection, get_transaction
 from app.core.redis import DistributedLock, LockError, get_redis, cache_delete
 from app.core.events import (
     DomainEvent, emit_and_publish,
@@ -121,7 +121,7 @@ class DineInSessionService:
 
         # Reuse active session for this table if present.
         is_new = True
-        async with get_serializable_transaction() as conn:
+        async with get_transaction() as conn:
             existing = await conn.fetchrow(
                 """
                 SELECT id, session_token, active_order_id
@@ -130,6 +130,7 @@ class DineInSessionService:
                   AND status = 'active'
                 ORDER BY created_at DESC
                 LIMIT 1
+                FOR UPDATE
                 """,
                 table_id,
             )
@@ -268,7 +269,7 @@ class DineInSessionService:
 
         try:
             async with DistributedLock(f"dinein_session:{sid}", timeout=10):
-                async with get_serializable_transaction() as conn:
+                async with get_transaction() as conn:
                     new_status = "completed" if reason == "completed" else "cancelled"
                     await conn.execute(
                         """
@@ -372,7 +373,7 @@ class DineInSessionService:
 
         try:
             async with DistributedLock(f"cart:{sid}", timeout=5):
-                async with get_serializable_transaction() as conn:
+                async with get_transaction() as conn:
                     # Server-side price lookup
                     item = await conn.fetchrow(
                         'SELECT "Item_ID", "Item_Name", price, "Available_Status" FROM items WHERE "Item_ID" = $1',
@@ -495,7 +496,7 @@ class DineInSessionService:
 
         try:
             async with DistributedLock(f"cart:{sid}", timeout=5):
-                async with get_serializable_transaction() as conn:
+                async with get_transaction() as conn:
                     row = await conn.fetchrow(
                         "SELECT * FROM table_session_carts WHERE id = $1 AND session_id = $2",
                         cart_item_id, sid,
@@ -607,7 +608,7 @@ class DineInSessionService:
 
         try:
             async with DistributedLock(f"dinein_order:{sid}", timeout=15):
-                async with get_serializable_transaction() as conn:
+                async with get_transaction() as conn:
                     # ── Get cart ──
                     cart = await conn.fetch(
                         "SELECT * FROM table_session_carts WHERE session_id = $1",
@@ -964,7 +965,7 @@ class DineInSessionService:
 
         try:
             async with DistributedLock(f"merge:{source_sid}:{target_sid}", timeout=15):
-                async with get_serializable_transaction() as conn:
+                async with get_transaction() as conn:
                     source_order_id = source.get("active_order_id")
                     target_order_id = target.get("active_order_id")
 
@@ -1510,9 +1511,9 @@ class DineInSessionService:
         if amt <= 0:
             raise ValidationError("Payment amount must be greater than zero")
 
-        async with get_serializable_transaction() as conn:
+        async with get_transaction() as conn:
             session = await conn.fetchrow(
-                "SELECT id, status, restaurant_id FROM dine_in_sessions WHERE id = $1",
+                "SELECT id, status, restaurant_id FROM dine_in_sessions WHERE id = $1 FOR UPDATE",
                 session_id,
             )
             if not session:
@@ -1618,15 +1619,21 @@ class DineInSessionService:
         if remaining > 0:
             raise ValidationError(f"Cannot close session with unpaid amount: {remaining}")
 
-        async with get_serializable_transaction() as conn:
+        async with get_transaction() as conn:
             session = await conn.fetchrow(
-                "SELECT id, table_id, restaurant_id, status FROM dine_in_sessions WHERE id = $1",
+                "SELECT id, table_id, restaurant_id, status FROM dine_in_sessions WHERE id = $1 FOR UPDATE",
                 session_id,
             )
             if not session:
                 raise NotFoundError("Session", session_id)
             if session["status"] != "active":
-                raise ValidationError(f"Session is already {session['status']}")
+                # Already closed — treat as idempotent success
+                return {
+                    "status": session["status"],
+                    "session_id": session_id,
+                    "table_id": str(session["table_id"]) if session.get("table_id") else None,
+                    "remaining_amount": 0.0,
+                }
 
             await conn.execute(
                 """
@@ -1692,7 +1699,7 @@ class DineInSessionService:
         device_id: Optional[str] = None,
     ) -> str:
         """Upsert active session participant and refresh session active user count."""
-        async with get_serializable_transaction() as conn:
+        async with get_transaction() as conn:
             row = None
             if device_id:
                 row = await conn.fetchrow(
