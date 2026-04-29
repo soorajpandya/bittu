@@ -35,6 +35,7 @@ logger = get_logger(__name__)
 SESSION_EXPIRY_HOURS = 4
 INACTIVITY_TIMEOUT_MINUTES = 120  # 2 hours
 IDEMPOTENCY_TTL_SECONDS = 86400   # 24h
+BILL_CACHE_TTL_SECONDS = 3        # Short TTL — polled every 5s, mutations invalidate
 
 # ── New event types ──────────────────────────────────────────
 SESSION_CREATED = "dinein.session_created"
@@ -865,6 +866,9 @@ class DineInSessionService:
                     restaurant_id=restaurant_id,
                 ))
 
+                # Order changes affect the bill total — evict cached bill
+                await self._invalidate_bill_cache(sid)
+
                 return result
 
         except LockError:
@@ -1197,7 +1201,21 @@ class DineInSessionService:
     # ══════════════════════════════════════════════════════════
 
     async def get_session_bill(self, session_id: str) -> dict:
-        """Return aggregated session bill from all linked session orders."""
+        """Return aggregated session bill from all linked session orders.
+
+        Result is cached in Redis for BILL_CACHE_TTL_SECONDS.  Mutations
+        (payment recorded, order placed) must call _invalidate_bill_cache so
+        the next read reflects the latest state.
+        """
+        cache_key = self._bill_cache_key(session_id)
+        try:
+            redis = get_redis()
+            raw = await redis.get(cache_key)
+            if raw:
+                return json.loads(raw)
+        except Exception:
+            pass  # Redis unavailable — fall through to DB
+
         async with get_connection() as conn:
             session = await conn.fetchrow(
                 """
@@ -1310,7 +1328,7 @@ class DineInSessionService:
                 session_id,
             )
 
-        return {
+        result = {
             "session_id": session_id,
             "status": session["status"],
             "orders": [
@@ -1346,6 +1364,14 @@ class DineInSessionService:
                 for p in payment_rows
             ],
         }
+
+        try:
+            redis = get_redis()
+            await redis.set(cache_key, json.dumps(result), ex=BILL_CACHE_TTL_SECONDS)
+        except Exception:
+            pass  # Non-critical — skip caching if Redis is unavailable
+
+        return result
 
     async def split_bill(
         self,
@@ -1462,7 +1488,12 @@ class DineInSessionService:
         paid_by: Optional[str] = None,
         notes: Optional[str] = None,
     ) -> dict:
-        """Record partial/full payment against a table session."""
+        """Record partial/full payment against a table session.
+
+        Optimised to avoid repeated get_session_bill calls: remaining is
+        computed inline via SQL within the same serializable transaction, and
+        the cached totals on dine_in_sessions are updated atomically.
+        """
         amt = Decimal(str(amount or 0))
         if amt <= 0:
             raise ValidationError("Payment amount must be greater than zero")
@@ -1477,8 +1508,31 @@ class DineInSessionService:
             if session["status"] != "active":
                 raise ValidationError("Payments are only allowed for active sessions")
 
-            bill = await self.get_session_bill(session_id)
-            remaining = Decimal(str(bill["remaining_amount"]))
+            # Compute current totals inline — avoids opening a nested connection
+            # inside the serializable transaction (the old get_session_bill path).
+            totals = await conn.fetchrow(
+                """
+                SELECT
+                    COALESCE((
+                        SELECT SUM(o.total_amount)
+                        FROM session_orders so
+                        JOIN orders o ON o.id = so.order_id
+                        WHERE so.session_id = $1
+                    ), 0) AS grand_total,
+                    COALESCE((
+                        SELECT SUM(p.amount)
+                        FROM table_session_payments p
+                        WHERE p.session_id = $1
+                    ), 0) AS paid_total
+                """,
+                session_id,
+            )
+            grand_total = Decimal(str(totals["grand_total"]))
+            paid_total = Decimal(str(totals["paid_total"]))
+            remaining = grand_total - paid_total
+            if remaining < 0:
+                remaining = Decimal("0")
+
             if remaining <= 0:
                 raise ValidationError("Session is already fully paid")
             if amt > remaining:
@@ -1501,7 +1555,30 @@ class DineInSessionService:
                 created_by,
             )
 
-        updated_bill = await self.get_session_bill(session_id)
+            # Update the cached totals on dine_in_sessions atomically
+            new_paid = paid_total + amt
+            new_remaining = remaining - amt
+            if new_remaining < 0:
+                new_remaining = Decimal("0")
+            await conn.execute(
+                """
+                UPDATE dine_in_sessions
+                SET total_amount = $1, paid_amount = $2, remaining_amount = $3
+                WHERE id = $4
+                """,
+                float(grand_total),
+                float(new_paid),
+                float(new_remaining),
+                session_id,
+            )
+
+        # Evict cached bill so the next poll reads fresh data
+        await self._invalidate_bill_cache(session_id)
+
+        # Auto-close when fully paid so the table is freed immediately
+        if new_remaining <= 0:
+            await self.paid_and_vacate(session_id=session_id, closed_by=created_by)
+
         await emit_and_publish(DomainEvent(
             event_type=BILL_UPDATED,
             payload={
@@ -1509,7 +1586,7 @@ class DineInSessionService:
                 "payment_id": str(payment_id),
                 "payment_method": payment_method,
                 "amount": float(amt),
-                "remaining_amount": updated_bill["remaining_amount"],
+                "remaining_amount": float(new_remaining),
             },
             restaurant_id=str(session["restaurant_id"]) if session and session.get("restaurant_id") else None,
         ))
@@ -1518,7 +1595,7 @@ class DineInSessionService:
             "payment_id": str(payment_id),
             "session_id": session_id,
             "amount": float(amt),
-            "remaining_amount": updated_bill["remaining_amount"],
+            "remaining_amount": float(new_remaining),
             "status": "recorded",
         }
 
@@ -1563,7 +1640,7 @@ class DineInSessionService:
             await conn.execute(
                 """
                 UPDATE restaurant_tables
-                SET status = 'blank',
+                SET status = 'available',
                     is_occupied = false,
                     occupied_since = NULL,
                     session_token = NULL,
@@ -1868,3 +1945,17 @@ class DineInSessionService:
             payload=payload,
             restaurant_id=restaurant_id,
         ))
+
+    # ── Bill cache helpers ───────────────────────────────────
+
+    @staticmethod
+    def _bill_cache_key(session_id: str) -> str:
+        return f"dinein:bill:{session_id}"
+
+    async def _invalidate_bill_cache(self, session_id: str) -> None:
+        """Evict the cached bill so the next read reflects the latest state."""
+        try:
+            redis = get_redis()
+            await redis.delete(self._bill_cache_key(session_id))
+        except Exception:
+            pass  # Non-critical — stale cache will expire on its own

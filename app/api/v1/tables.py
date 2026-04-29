@@ -15,6 +15,46 @@ _svc = TableSessionService()
 _dinein_svc = DineInSessionService()
 logger = get_logger(__name__)
 
+async def _resolve_active_dinein_session_id(
+    *,
+    conn,
+    session_id: str,
+    owner_id: str,
+) -> str:
+    """
+    Compatibility helper:
+    - If session_id is already a dine_in_sessions.id → return it
+    - Else treat it as legacy table_sessions.id, resolve to table_id, then pick active dine_in_sessions.id
+    """
+    dinein = await conn.fetchrow(
+        "SELECT id FROM dine_in_sessions WHERE id = $1 AND user_id = $2",
+        session_id,
+        owner_id,
+    )
+    if dinein:
+        return str(dinein["id"])
+
+    legacy = await conn.fetchrow(
+        "SELECT table_id FROM table_sessions WHERE id = $1 AND user_id = $2",
+        session_id,
+        owner_id,
+    )
+    if not legacy:
+        return session_id
+
+    active = await conn.fetchrow(
+        """
+        SELECT id
+        FROM dine_in_sessions
+        WHERE table_id = $1 AND user_id = $2 AND status = 'active'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        str(legacy["table_id"]),
+        owner_id,
+    )
+    return str(active["id"]) if active else session_id
+
 
 class CreateTableIn(BaseModel):
     table_number: str
@@ -259,7 +299,14 @@ async def get_cart(
     session_id: str,
     user: UserContext = Depends(require_permission("table.read")),
 ):
-    return await _svc.get_cart(session_id=session_id)
+    owner_id = user.owner_id if user.is_branch_user else user.user_id
+    async with get_connection() as conn:
+        resolved_session_id = await _resolve_active_dinein_session_id(
+            conn=conn,
+            session_id=session_id,
+            owner_id=owner_id,
+        )
+    return await _svc.get_cart(session_id=resolved_session_id)
 
 
 @router.delete("/cart/remove")
@@ -408,7 +455,14 @@ async def get_session_bill(
     user: UserContext = Depends(require_permission("billing.generate")),
 ):
     """POS alias: get full bill for a table session."""
-    return await _dinein_svc.get_session_bill(session_id)
+    owner_id = user.owner_id if user.is_branch_user else user.user_id
+    async with get_connection() as conn:
+        resolved_session_id = await _resolve_active_dinein_session_id(
+            conn=conn,
+            session_id=session_id,
+            owner_id=owner_id,
+        )
+    return await _dinein_svc.get_session_bill(resolved_session_id)
 
 
 @router.post("/sessions/{session_id}/split-bill")
@@ -418,8 +472,15 @@ async def split_bill(
     user: UserContext = Depends(require_permission("billing.generate")),
 ):
     """POS alias: split session bill equally/by-item/by-user."""
+    owner_id = user.owner_id if user.is_branch_user else user.user_id
+    async with get_connection() as conn:
+        resolved_session_id = await _resolve_active_dinein_session_id(
+            conn=conn,
+            session_id=session_id,
+            owner_id=owner_id,
+        )
     return await _dinein_svc.split_bill(
-        session_id=session_id,
+        session_id=resolved_session_id,
         split_type=body.split_type,
         parts=body.parts,
         item_splits=body.item_splits,
@@ -435,8 +496,14 @@ async def add_session_payment(
 ):
     """POS alias: record partial/full payment against session."""
     actor = user.owner_id if user.is_branch_user else user.user_id
+    async with get_connection() as conn:
+        resolved_session_id = await _resolve_active_dinein_session_id(
+            conn=conn,
+            session_id=session_id,
+            owner_id=actor,
+        )
     result = await _dinein_svc.record_session_payment(
-        session_id=session_id,
+        session_id=resolved_session_id,
         amount=body.amount,
         payment_method=body.payment_method,
         created_by=actor,
@@ -449,7 +516,7 @@ async def add_session_payment(
         branch_id=user.branch_id,
         action="payment.session_payment",
         entity_type="table_session",
-        entity_id=session_id,
+        entity_id=resolved_session_id,
         metadata={"amount": body.amount, "payment_method": body.payment_method},
     )
     return result
@@ -463,13 +530,19 @@ async def mark_paid_and_vacate(
 ):
     """Mark order as paid and end the table session."""
     actor = user.owner_id if user.is_branch_user else user.user_id
-    result = await _dinein_svc.paid_and_vacate(session_id=session_id, closed_by=actor)
+    async with get_connection() as conn:
+        resolved_session_id = await _resolve_active_dinein_session_id(
+            conn=conn,
+            session_id=session_id,
+            owner_id=actor,
+        )
+    result = await _dinein_svc.paid_and_vacate(session_id=resolved_session_id, closed_by=actor)
     await log_activity(
         user_id=user.user_id,
         branch_id=user.branch_id,
         action="table.paid_and_vacated",
         entity_type="table_session",
-        entity_id=session_id,
+        entity_id=resolved_session_id,
         metadata={},
     )
     return result

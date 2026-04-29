@@ -39,16 +39,36 @@ async def list_table_sessions(
 
             rows = await conn.fetch(
                 f"""
-                SELECT ts.*, rt.table_number
+                SELECT
+                    ts.*,
+                    rt.table_number,
+                    ds.id AS dinein_session_id
                 FROM table_sessions ts
                 JOIN restaurant_tables rt ON rt.id = ts.table_id
+                LEFT JOIN LATERAL (
+                    SELECT id
+                    FROM dine_in_sessions
+                    WHERE table_id = ts.table_id
+                      AND user_id = ts.user_id
+                      AND status = 'active'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ) ds ON true
                 WHERE {where}
                 ORDER BY ts.started_at DESC
                 LIMIT ${len(params)}
                 """,
                 *params,
             )
-            return [dict(r) for r in rows]
+            result: list[dict] = []
+            for r in rows:
+                d = dict(r)
+                # Compatibility: frontend expects a usable `session_id` for bill/payments/vacate.
+                # Prefer active dine-in session id when present; fall back to whatever the legacy row has.
+                if d.get("dinein_session_id"):
+                    d["session_id"] = str(d["dinein_session_id"])
+                result.append(d)
+            return result
     except Exception as e:
         logger.warning("list_table_sessions_failed", error=str(e), user_id=user.user_id)
         return []
