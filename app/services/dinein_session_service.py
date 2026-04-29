@@ -1250,11 +1250,36 @@ class DineInSessionService:
                     }
                     for r in grouped_rows
                 ]
-
-            subtotal = sum(Decimal(str(o["subtotal"] or 0)) for o in orders)
-            tax = sum(Decimal(str(o["tax_amount"] or 0)) for o in orders)
-            discount = sum(Decimal(str(o["discount_amount"] or 0)) for o in orders)
-            grand_total = sum(Decimal(str(o["total_amount"] or 0)) for o in orders)
+            # If there are no orders yet (POS flow may only build cart), fall back to cart totals.
+            if not orders:
+                cart_rows = await conn.fetch(
+                    """
+                    SELECT item_id, item_name, SUM(quantity) AS quantity, SUM(total_price) AS total_price
+                    FROM table_session_carts
+                    WHERE session_id = $1
+                    GROUP BY item_id, item_name
+                    ORDER BY item_name
+                    """,
+                    session_id,
+                )
+                grouped_items = [
+                    {
+                        "item_id": r["item_id"],
+                        "item_name": r["item_name"],
+                        "quantity": int(r["quantity"] or 0),
+                        "total_price": float(r["total_price"] or 0),
+                    }
+                    for r in cart_rows
+                ]
+                subtotal = sum(Decimal(str(r["total_price"] or 0)) for r in cart_rows)
+                tax = Decimal("0")
+                discount = Decimal("0")
+                grand_total = subtotal
+            else:
+                subtotal = sum(Decimal(str(o["subtotal"] or 0)) for o in orders)
+                tax = sum(Decimal(str(o["tax_amount"] or 0)) for o in orders)
+                discount = sum(Decimal(str(o["discount_amount"] or 0)) for o in orders)
+                grand_total = sum(Decimal(str(o["total_amount"] or 0)) for o in orders)
 
             payment_rows = await conn.fetch(
                 """
