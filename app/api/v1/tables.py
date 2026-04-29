@@ -12,7 +12,7 @@ from app.services.activity_log_service import log_activity
 from app.services.table_service import TableSessionService
 from app.services.dinein_session_service import DineInSessionService
 
-_TABLES_LIST_CACHE_TTL = 5  # seconds — matches poll interval
+_TABLES_LIST_CACHE_TTL = 30  # seconds — table list is invalidated on any table change
 
 router = APIRouter(prefix="/tables", tags=["Tables"])
 _svc = TableSessionService()
