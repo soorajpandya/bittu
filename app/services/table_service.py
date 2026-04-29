@@ -249,8 +249,8 @@ class TableSessionService:
             session_token = started.get("session_token")
             if not session_token:
                 raise ValidationError("Failed to create session")
-        except ConflictError:
-            # Another request created the session between our read and create.
+        except (ConflictError, LockAcquisitionError):
+            # Another request is creating/created the session (race or lock contention).
             # Make this endpoint idempotent by fetching the active session and joining it.
             async with get_connection() as conn:
                 row = await conn.fetchrow(
