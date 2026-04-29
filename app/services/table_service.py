@@ -1128,14 +1128,13 @@ class TableSessionService:
                 """
                 INSERT INTO kitchen_orders (
                     id, order_id, restaurant_id, status, user_id,
-                    priority, source, table_session_id, branch_id, created_at
+                    priority, branch_id, created_at
                 ) VALUES (
                     $1, $2, $3, 'queued'::kitchen_status, $4,
-                    0, 'qr_table', $5, $6, now()
+                    0, $5, now()
                 )
                 """,
                 kitchen_order_id, order_id, restaurant_id, owner_id,
-                session_id,
                 str(session.get("branch_id")) if session.get("branch_id") else None,
             )
 
@@ -1344,14 +1343,13 @@ class TableSessionService:
                 """
                 INSERT INTO kitchen_orders (
                     id, order_id, restaurant_id, status, user_id,
-                    priority, source, table_session_id, branch_id, created_at
+                    priority, branch_id, created_at
                 ) VALUES (
                     $1, $2, $3, 'queued'::kitchen_status, $4,
-                    0, 'qr_table', $5, $6, now()
+                    0, $5, now()
                 )
                 """,
                 kitchen_order_id, order_id, restaurant_id, owner_id,
-                sid,
                 str(session.get("branch_id")) if session.get("branch_id") else None,
             )
 
