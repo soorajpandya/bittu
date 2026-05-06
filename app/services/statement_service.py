@@ -127,12 +127,9 @@ class StatementService:
         to_date: Optional[date] = None,
     ) -> dict:
         """
-        Top-level dashboard summary:
-          - total_received, today_collection
-          - pending_settlement, settled_amount
-          - total_bittu_charges, gst_on_charges
-          - net_amount_credited
-          - upcoming_settlement_eta (human string + ISO timestamp)
+        Top-level dashboard summary.
+        Primary source: payments table (actual money collected).
+        Settlement overlay: bittu_settlements (populated as batches are processed).
         """
         rid = UUID(restaurant_id)
         bid = UUID(branch_id) if branch_id else None
@@ -140,48 +137,46 @@ class StatementService:
         from_d = from_date or date(today.year, today.month, 1)
         to_d   = to_date   or today
 
-        branch_clause = "AND bs.branch_id = $5" if bid else ""
-        base_params   = [rid, from_d, to_d]
+        base_params: list = [rid, from_d, to_d]
+        p_branch = ""
+        s_branch = ""
         if bid:
             base_params.append(bid)
+            p_branch = "AND p.branch_id = $4"
+            s_branch = "AND bs.branch_id = $4"
 
         async with get_connection() as conn:
-            # ── Aggregate from bittu_settlements ──────────────────────────
-            agg = await conn.fetchrow(f"""
+            # ── Primary: actual money collected from payments ──────────────
+            pay_agg = await conn.fetchrow(f"""
                 SELECT
-                    COALESCE(SUM(bs.gross_amount), 0)                                    AS total_received,
-                    COALESCE(SUM(bs.gross_amount) FILTER (WHERE bs.settlement_status IN
-                        ('pending','processing','sent_to_bank')), 0)                     AS pending_settlement,
-                    COALESCE(SUM(bs.net_settlement_amount) FILTER (WHERE bs.settlement_status = 'settled'), 0)
-                                                                                         AS settled_amount,
-                    COALESCE(SUM(bs.bittu_fee_amount + bs.gst_amount), 0)                AS total_deductions,
-                    COALESCE(SUM(bs.bittu_fee_amount), 0)                                AS total_bittu_charges,
-                    COALESCE(SUM(bs.gst_amount), 0)                                      AS gst_on_charges,
-                    COALESCE(SUM(bs.net_settlement_amount) FILTER (WHERE bs.settlement_status = 'settled'), 0)
-                                                                                         AS net_amount_credited
+                    COALESCE(SUM(p.amount), 0)                                  AS total_received,
+                    COALESCE(SUM(p.amount)
+                        FILTER (WHERE DATE(p.created_at) = CURRENT_DATE), 0)   AS today_collection
+                FROM payments p
+                WHERE p.restaurant_id = $1
+                  AND DATE(p.created_at) BETWEEN $2 AND $3
+                  AND p.status = 'completed'
+                  {p_branch}
+            """, *base_params)
+
+            # ── Secondary: settled / fee totals from bittu_settlements ─────
+            stl_agg = await conn.fetchrow(f"""
+                SELECT
+                    COALESCE(SUM(bs.net_settlement_amount)
+                        FILTER (WHERE bs.settlement_status = 'settled'), 0)     AS settled_amount,
+                    COALESCE(SUM(bs.bittu_fee_amount), 0)                       AS total_bittu_charges,
+                    COALESCE(SUM(bs.gst_amount), 0)                             AS gst_on_charges
                 FROM bittu_settlements bs
                 WHERE bs.restaurant_id = $1
                   AND DATE(bs.created_at) BETWEEN $2 AND $3
                   AND bs.settlement_status != 'reversed'
-                  {branch_clause}
+                  {s_branch}
             """, *base_params)
 
-            # ── Today's collection from payments ──────────────────────────
-            today_p = [rid, today]
-            if bid:
-                today_p.append(bid)
-            today_clause = "AND p.branch_id = $3" if bid else ""
-
-            today_collection = await conn.fetchval(f"""
-                SELECT COALESCE(SUM(p.amount), 0)
-                FROM payments p
-                WHERE p.restaurant_id = $1
-                  AND DATE(p.created_at) = $2
-                  AND p.status = 'completed'
-                  {today_clause}
-            """, *today_p)
-
             # ── Next pending settlement ETA ────────────────────────────────
+            eta_params: list = [rid]
+            if bid:
+                eta_params.append(bid)
             next_settlement = await conn.fetchrow(f"""
                 SELECT id, settlement_reference, net_settlement_amount,
                        expected_settlement_at, settlement_status, settlement_cycle
@@ -191,50 +186,69 @@ class StatementService:
                   {"AND branch_id = $2" if bid else ""}
                 ORDER BY expected_settlement_at ASC NULLS LAST
                 LIMIT 1
-            """, rid, *([] if not bid else [bid]))
+            """, *eta_params)
+
+        total_received      = float(pay_agg["total_received"])
+        today_collection    = float(pay_agg["today_collection"])
+        settled_amount      = float(stl_agg["settled_amount"])
+        total_bittu_charges = float(stl_agg["total_bittu_charges"])
+        gst_on_charges      = float(stl_agg["gst_on_charges"])
+        total_deductions    = total_bittu_charges + gst_on_charges
+        pending_settlement  = max(0.0, total_received - settled_amount)
+        net_amount_credited = settled_amount
 
         # ── Build ETA message ──────────────────────────────────────────────
         upcoming_eta = None
         upcoming_eta_message = None
         upcoming_amount = None
+        ist_offset = timedelta(hours=5, minutes=30)
+
         if next_settlement:
             eta_ts = next_settlement["expected_settlement_at"]
             amt    = float(next_settlement["net_settlement_amount"])
             upcoming_amount = amt
             if eta_ts:
-                # Format: "₹12,540 will be settled to your bank account by Today 7:00 PM"
-                now_utc = datetime.now(timezone.utc)
                 eta_utc = eta_ts if eta_ts.tzinfo else eta_ts.replace(tzinfo=timezone.utc)
-                # Convert to IST (+5:30) for display
-                ist_offset = timedelta(hours=5, minutes=30)
                 eta_ist = eta_utc + ist_offset
-                now_ist = now_utc + ist_offset
-
+                now_ist = datetime.now(timezone.utc) + ist_offset
                 if eta_ist.date() == now_ist.date():
                     day_label = "Today"
                 elif eta_ist.date() == (now_ist + timedelta(days=1)).date():
                     day_label = "Tomorrow"
                 else:
                     day_label = eta_ist.strftime("%b %d")
-
                 time_label = eta_ist.strftime("%I:%M %p").lstrip("0")
                 upcoming_eta_message = (
-                    f"₹{amt:,.2f} will be settled to your bank account by {day_label} {time_label}"
+                    f"₹{amt:,.2f} will be settled to your bank account"
+                    f" by {day_label} {time_label}"
                 )
                 upcoming_eta = eta_ts.isoformat()
             else:
                 upcoming_eta_message = f"₹{amt:,.2f} settlement processing"
+        elif pending_settlement > 0:
+            # No batch created yet — derive ETA from pending payment amount
+            eta = _expected_eta("T+1")
+            eta_ist = eta + ist_offset
+            now_ist = datetime.now(timezone.utc) + ist_offset
+            day_label = "Today" if eta_ist.date() == now_ist.date() else "Tomorrow"
+            time_label = eta_ist.strftime("%I:%M %p").lstrip("0")
+            upcoming_eta_message = (
+                f"₹{pending_settlement:,.2f} will be settled to your bank account"
+                f" by {day_label} {time_label}"
+            )
+            upcoming_eta = eta.isoformat()
+            upcoming_amount = pending_settlement
 
-        result = {
+        return {
             "period": {"from": from_d.isoformat(), "to": to_d.isoformat()},
-            "total_received":       float(agg["total_received"]),
-            "today_collection":     float(today_collection),
-            "pending_settlement":   float(agg["pending_settlement"]),
-            "settled_amount":       float(agg["settled_amount"]),
-            "total_bittu_charges":  float(agg["total_bittu_charges"]),
-            "gst_on_charges":       float(agg["gst_on_charges"]),
-            "total_deductions":     float(agg["total_deductions"]),
-            "net_amount_credited":  float(agg["net_amount_credited"]),
+            "total_received":       total_received,
+            "today_collection":     today_collection,
+            "pending_settlement":   pending_settlement,
+            "settled_amount":       settled_amount,
+            "total_bittu_charges":  total_bittu_charges,
+            "gst_on_charges":       gst_on_charges,
+            "total_deductions":     total_deductions,
+            "net_amount_credited":  net_amount_credited,
             "upcoming_settlement": {
                 "eta":      upcoming_eta,
                 "amount":   upcoming_amount,
@@ -246,7 +260,6 @@ class StatementService:
                 "description": "Bittu charges 0.15% platform fee + 18% GST on fee per settlement",
             },
         }
-        return result
 
     # ════════════════════════════════════════════════════════════════════════
     # TRANSACTIONS LIST
@@ -267,8 +280,10 @@ class StatementService:
         offset: int = 0,
     ) -> dict:
         """
-        Paginated transaction list with per-transaction fee breakdown.
-        Joins bittu_settlement_transactions → payments → orders → customers.
+        Paginated transaction list sourced directly from the payments table.
+        Each completed payment = one transaction row with fee preview calculated in SQL.
+        Settlement metadata (status, batch reference) overlaid from
+        bittu_settlement_transactions when available.
         """
         rid = UUID(restaurant_id)
         bid = UUID(branch_id) if branch_id else None
@@ -278,38 +293,45 @@ class StatementService:
 
         params: list = [rid, from_d, to_d]
         conditions = [
-            "bst.restaurant_id = $1",
-            "DATE(bst.created_at) BETWEEN $2 AND $3",
+            "p.restaurant_id = $1",
+            "DATE(p.created_at) BETWEEN $2 AND $3",
+            "p.status = 'completed'",
         ]
         idx = 4
 
         if bid:
-            conditions.append(f"bst.branch_id = ${idx}")
+            conditions.append(f"p.branch_id = ${idx}")
             params.append(bid)
             idx += 1
 
         if settlement_status:
-            conditions.append(f"bst.settlement_status = ${idx}")
+            conditions.append(f"COALESCE(bst.settlement_status, 'pending') = ${idx}")
             params.append(settlement_status)
             idx += 1
 
         if payment_method:
-            conditions.append(f"bst.payment_method = ${idx}")
+            conditions.append(f"p.method = ${idx}")
             params.append(payment_method)
             idx += 1
 
         if search:
             conditions.append(
-                f"(bst.customer_name ILIKE ${idx} OR bst.order_reference ILIKE ${idx} "
-                f"OR bst.payment_id::text ILIKE ${idx})"
+                f"(c.name ILIKE ${idx} OR p.id::text ILIKE ${idx} "
+                f"OR p.order_id::text ILIKE ${idx})"
             )
             params.append(f"%{search}%")
             idx += 1
 
         where_clause = " AND ".join(conditions)
 
-        allowed_sort = {"created_at", "gross_amount", "net_amount", "payment_method"}
-        sort_col = sort_by if sort_by in allowed_sort else "created_at"
+        # net_amount is proportional to gross — same sort order; avoids subquery
+        sort_col_map = {
+            "created_at":     "p.created_at",
+            "gross_amount":   "p.amount",
+            "net_amount":     "p.amount",
+            "payment_method": "p.method",
+        }
+        order_expr     = sort_col_map.get(sort_by, "p.created_at")
         sort_direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
 
         count_params = params[:]
@@ -318,34 +340,46 @@ class StatementService:
         async with get_connection() as conn:
             total = await conn.fetchval(f"""
                 SELECT COUNT(*)
-                FROM bittu_settlement_transactions bst
+                FROM payments p
+                LEFT JOIN orders o ON o.id = p.order_id
+                LEFT JOIN customers c ON c.id = o.customer_id
+                LEFT JOIN bittu_settlement_transactions bst
+                    ON bst.payment_id = p.id AND bst.transaction_type = 'payment'
                 WHERE {where_clause}
             """, *count_params)
 
             rows = await conn.fetch(f"""
                 SELECT
-                    bst.id,
+                    p.id                                                              AS id,
+                    p.id                                                              AS payment_id,
+                    p.order_id,
+                    p.amount                                                          AS gross_amount,
+                    ROUND(p.amount::numeric * 0.001500, 6)                           AS fee_amount,
+                    ROUND(p.amount::numeric * 0.001500 * 0.180000, 6)               AS gst_amount,
+                    ROUND(
+                        p.amount::numeric
+                        - ROUND(p.amount::numeric * 0.001500, 6)
+                        - ROUND(p.amount::numeric * 0.001500 * 0.180000, 6),
+                        2
+                    )                                                                 AS net_amount,
+                    'payment'                                                         AS transaction_type,
+                    p.method                                                          AS payment_method,
+                    c.name                                                            AS customer_name,
+                    p.order_id::text                                                  AS order_reference,
+                    COALESCE(bst.settlement_status, 'pending')                        AS settlement_status,
                     bst.settlement_id,
-                    bst.payment_id,
-                    bst.order_id,
-                    bst.gross_amount,
-                    bst.fee_amount,
-                    bst.gst_amount,
-                    bst.net_amount,
-                    bst.transaction_type,
-                    bst.payment_method,
-                    bst.customer_name,
-                    bst.order_reference,
-                    bst.settlement_status,
-                    bst.created_at,
-                    -- Settlement ETA from parent
+                    p.created_at,
                     bs.expected_settlement_at,
                     bs.settlement_reference,
                     bs.settlement_cycle
-                FROM bittu_settlement_transactions bst
+                FROM payments p
+                LEFT JOIN orders o ON o.id = p.order_id
+                LEFT JOIN customers c ON c.id = o.customer_id
+                LEFT JOIN bittu_settlement_transactions bst
+                    ON bst.payment_id = p.id AND bst.transaction_type = 'payment'
                 LEFT JOIN bittu_settlements bs ON bs.id = bst.settlement_id
                 WHERE {where_clause}
-                ORDER BY bst.{sort_col} {sort_direction}
+                ORDER BY {order_expr} {sort_direction}
                 LIMIT ${idx} OFFSET ${idx + 1}
             """, *data_params)
 
@@ -373,63 +407,136 @@ class StatementService:
         limit: int = 50,
         offset: int = 0,
     ) -> dict:
-        """Paginated settlement batch list with transaction count."""
-        rid  = UUID(restaurant_id)
-        bid  = UUID(branch_id) if branch_id else None
+        """
+        Paginated settlement batch list.
+
+        Returns a UNION of:
+          1. Real bittu_settlements (populated after batches are processed)
+          2. Virtual daily payment groups — payments not yet in any settlement
+             batch, grouped by calendar date, shown as status='pending'
+
+        This ensures the list is never empty while the settlement engine
+        processes existing payments over time.
+        """
+        rid   = UUID(restaurant_id)
+        bid   = UUID(branch_id) if branch_id else None
         today = date.today()
         from_d = from_date or (today - timedelta(days=30))
         to_d   = to_date   or today
 
-        params: list = [rid, from_d, to_d]
-        conditions = [
-            "bs.restaurant_id = $1",
-            "DATE(bs.created_at) BETWEEN $2 AND $3",
-        ]
+        base_params: list = [rid, from_d, to_d]
         idx = 4
 
+        real_branch = ""
+        virt_branch = ""
         if bid:
-            conditions.append(f"bs.branch_id = ${idx}")
-            params.append(bid)
+            real_branch = f"AND bs.branch_id = ${idx}"
+            virt_branch = f"AND p.branch_id  = ${idx}"
+            base_params.append(bid)
             idx += 1
 
+        outer_filters: list[str] = []
         if status:
-            conditions.append(f"bs.settlement_status = ${idx}")
-            params.append(status)
+            outer_filters.append(f"settlement_status = ${idx}")
+            base_params.append(status)
             idx += 1
-
         if cycle:
-            conditions.append(f"bs.settlement_cycle = ${idx}")
-            params.append(cycle)
+            outer_filters.append(f"settlement_cycle = ${idx}")
+            base_params.append(cycle)
             idx += 1
+        outer_where = ("WHERE " + " AND ".join(outer_filters)) if outer_filters else ""
 
-        where_clause = " AND ".join(conditions)
-
-        allowed_sort = {"created_at", "gross_amount", "net_settlement_amount", "expected_settlement_at"}
+        allowed_sort = {"created_at", "gross_amount", "net_settlement_amount"}
         sort_col = sort_by if sort_by in allowed_sort else "created_at"
         sort_direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
 
-        count_params = params[:]
-        data_params  = params + [limit, offset]
+        count_params = base_params[:]
+        data_params  = base_params + [limit, offset]
 
-        async with get_connection() as conn:
-            total = await conn.fetchval(f"""
-                SELECT COUNT(*)
-                FROM bittu_settlements bs
-                WHERE {where_clause}
-            """, *count_params)
-
-            rows = await conn.fetch(f"""
+        # ── Combined CTE: real + virtual settlements ──────────────────────
+        union_sql = f"""
+            WITH combined AS (
+                -- Real Bittu settlement batches
                 SELECT
-                    bs.*,
-                    COUNT(bst.id)                   AS transaction_count,
-                    COUNT(bst.id) FILTER (WHERE bst.transaction_type = 'refund') AS refund_count
+                    bs.id::text                  AS id,
+                    bs.settlement_reference,
+                    bs.gross_amount::numeric     AS gross_amount,
+                    bs.bittu_fee_amount::numeric AS bittu_fee_amount,
+                    bs.gst_amount::numeric       AS gst_amount,
+                    bs.net_settlement_amount::numeric AS net_settlement_amount,
+                    bs.settlement_status,
+                    bs.settlement_cycle,
+                    bs.expected_settlement_at,
+                    bs.settled_at,
+                    bs.bank_reference_number,
+                    bs.created_at,
+                    COUNT(bst.id)::bigint        AS transaction_count,
+                    COUNT(bst.id)
+                        FILTER (WHERE bst.transaction_type = 'refund')::bigint
+                                                 AS refund_count,
+                    false                        AS is_virtual
                 FROM bittu_settlements bs
                 LEFT JOIN bittu_settlement_transactions bst ON bst.settlement_id = bs.id
-                WHERE {where_clause}
+                WHERE bs.restaurant_id = $1
+                  AND DATE(bs.created_at) BETWEEN $2 AND $3
+                  {real_branch}
                 GROUP BY bs.id
-                ORDER BY bs.{sort_col} {sort_direction}
+
+                UNION ALL
+
+                -- Virtual daily groups: payments not yet in any settlement batch
+                SELECT
+                    ('VIRT-' || DATE(p.created_at)::text)          AS id,
+                    ('PENDING-' || DATE(p.created_at)::text)        AS settlement_reference,
+                    SUM(p.amount::numeric)                          AS gross_amount,
+                    ROUND(SUM(p.amount::numeric) * 0.001500, 6)    AS bittu_fee_amount,
+                    ROUND(SUM(p.amount::numeric) * 0.001500
+                          * 0.180000, 6)                            AS gst_amount,
+                    ROUND(
+                        SUM(p.amount::numeric)
+                        - ROUND(SUM(p.amount::numeric) * 0.001500, 6)
+                        - ROUND(SUM(p.amount::numeric) * 0.001500 * 0.180000, 6),
+                        2
+                    )                                               AS net_settlement_amount,
+                    'pending'                                        AS settlement_status,
+                    'T+1'                                            AS settlement_cycle,
+                    NULL::timestamptz                                AS expected_settlement_at,
+                    NULL::timestamptz                                AS settled_at,
+                    NULL::text                                       AS bank_reference_number,
+                    MIN(p.created_at)                                AS created_at,
+                    COUNT(*)::bigint                                 AS transaction_count,
+                    0::bigint                                        AS refund_count,
+                    true                                             AS is_virtual
+                FROM payments p
+                WHERE p.restaurant_id = $1
+                  AND DATE(p.created_at) BETWEEN $2 AND $3
+                  AND p.status = 'completed'
+                  {virt_branch}
+                  AND NOT EXISTS (
+                      SELECT 1 FROM bittu_settlement_transactions bst2
+                      WHERE bst2.payment_id = p.id
+                        AND bst2.transaction_type = 'payment'
+                  )
+                GROUP BY DATE(p.created_at)
+                HAVING SUM(p.amount) > 0
+            )
+        """
+
+        async with get_connection() as conn:
+            total = await conn.fetchval(
+                union_sql + f"SELECT COUNT(*) FROM combined {outer_where}",
+                *count_params,
+            )
+
+            rows = await conn.fetch(
+                union_sql + f"""
+                SELECT * FROM combined
+                {outer_where}
+                ORDER BY {sort_col} {sort_direction}
                 LIMIT ${idx} OFFSET ${idx + 1}
-            """, *data_params)
+                """,
+                *data_params,
+            )
 
         return {
             "total":  total,
