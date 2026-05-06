@@ -345,9 +345,16 @@ async def admin_place_order(
     admin app (/tables/cart/add flow).  Links the order to session_orders so
     subsequent payment calls compute grand_total correctly.
     """
+    owner_id = user.owner_id if user.is_branch_user else user.user_id
+    async with get_connection() as conn:
+        resolved_session_id = await _resolve_active_dinein_session_id(
+            conn=conn,
+            session_id=session_id,
+            owner_id=owner_id,
+        )
     return await _svc.place_order_admin(
         user=user,
-        session_id=session_id,
+        session_id=resolved_session_id,
         notes=body.notes,
         customer_name=body.customer_name,
         customer_phone=body.customer_phone,

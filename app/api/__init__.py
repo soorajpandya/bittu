@@ -75,6 +75,8 @@ from app.api.v1 import (
     ai_ingredients,
     invoice_import,
     erp,
+    # ── Finance: Statement & Settlement ──
+    statements,
     # ── Food Images ──
     food_images,
     # ── Waitlist ──
@@ -179,6 +181,8 @@ router.include_router(reports.router)
 router.include_router(bank_recon.router)
 # ── Financial Operating System ──
 router.include_router(finance.router)
+# ── Statement & Settlement ──
+router.include_router(statements.router)
 # ── Food Images ──
 router.include_router(food_images.router)
 # ── Waitlist ──

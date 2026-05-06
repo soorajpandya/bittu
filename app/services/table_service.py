@@ -23,7 +23,7 @@ from typing import Optional
 
 from app.core.auth import UserContext
 from app.core.database import get_connection, get_serializable_transaction, get_transaction
-from app.core.redis import DistributedLock, LockError
+from app.core.redis import DistributedLock, LockError, cache_delete
 from app.core.state_machines import TableStatus, validate_table_transition
 from app.core.events import (
     DomainEvent, emit_and_publish,
@@ -428,6 +428,21 @@ class TableSessionService:
                         legacy["expires_at"],
                     )
                     dinein_session_id = str(created["id"])
+
+                    # Mark table as occupied so the table list reflects the booking immediately
+                    await conn.execute(
+                        """
+                        UPDATE restaurant_tables
+                        SET status = 'running', is_occupied = true,
+                            occupied_since = COALESCE(occupied_since, now())
+                        WHERE id = $1
+                        """,
+                        str(legacy["table_id"]),
+                    )
+                    try:
+                        await cache_delete(f"tables_list:{owner_id}")
+                    except Exception:
+                        pass
 
         if not items:
             raise ValidationError("items cannot be empty")
