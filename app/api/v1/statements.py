@@ -34,7 +34,7 @@ logger = get_logger(__name__)
 # ── Helper ────────────────────────────────────────────────────────────────────
 
 def _rid(user: UserContext) -> str:
-    return user.owner_id if user.is_branch_user else user.user_id
+    return user.restaurant_id
 
 
 def _bid(user: UserContext) -> Optional[str]:
