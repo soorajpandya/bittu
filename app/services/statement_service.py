@@ -149,15 +149,28 @@ class StatementService:
             # ── Primary: actual money collected from payments ──────────────
             pay_agg = await conn.fetchrow(f"""
                 SELECT
-                    COALESCE(SUM(p.amount), 0)                                  AS total_received,
-                    COALESCE(SUM(p.amount)
-                        FILTER (WHERE DATE(p.created_at) = CURRENT_DATE), 0)   AS today_collection
+                    COALESCE(SUM(p.amount), 0) AS total_received
                 FROM payments p
                 WHERE p.restaurant_id = $1
                   AND DATE(p.created_at) BETWEEN $2 AND $3
                   AND p.status = 'completed'
                   {p_branch}
             """, *base_params)
+
+            # today_collection is always for TODAY regardless of date-range filter
+            today_params: list = [rid]
+            today_branch = ""
+            if bid:
+                today_params.append(bid)
+                today_branch = "AND p.branch_id = $2"
+            today_row = await conn.fetchrow(f"""
+                SELECT COALESCE(SUM(p.amount), 0) AS today_collection
+                FROM payments p
+                WHERE p.restaurant_id = $1
+                  AND DATE(p.created_at) = CURRENT_DATE
+                  AND p.status = 'completed'
+                  {today_branch}
+            """, *today_params)
 
             # ── Secondary: settled / fee totals from bittu_settlements ─────
             stl_agg = await conn.fetchrow(f"""
@@ -189,7 +202,7 @@ class StatementService:
             """, *eta_params)
 
         total_received      = float(pay_agg["total_received"])
-        today_collection    = float(pay_agg["today_collection"])
+        today_collection    = float(today_row["today_collection"])
         settled_amount      = float(stl_agg["settled_amount"])
         total_bittu_charges = float(stl_agg["total_bittu_charges"])
         gst_on_charges      = float(stl_agg["gst_on_charges"])

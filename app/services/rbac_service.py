@@ -78,6 +78,8 @@ class RBACService:
                 "delivery.read": {}, "delivery.write": {}, "delivery.delete": {},
                 # Favourites
                 "favourites.manage": {},
+                # Statements & Settlements
+                "statements.*": {},
             },
             "manager": {
                 "order.create": {}, "order.edit": {}, "order.cancel": {}, "order.read": {},
