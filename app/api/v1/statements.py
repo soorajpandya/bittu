@@ -338,6 +338,34 @@ async def export_statement(
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get(
+    "/debug-context",
+    summary="[Temp] Show resolved user context and payment count",
+    include_in_schema=False,
+)
+async def debug_context(
+    user: UserContext = Depends(require_permission("statements.read")),
+):
+    """Temporary debug endpoint — remove after diagnosis."""
+    from app.core.database import get_connection
+    rid = _rid(user)
+    bid = _bid(user)
+    result = {"user_id": user.user_id, "restaurant_id": rid, "branch_id": bid,
+              "is_branch_user": user.is_branch_user, "role": user.role}
+    try:
+        async with get_connection() as conn:
+            counts = await conn.fetch(
+                "SELECT status, COUNT(*) AS cnt FROM payments WHERE restaurant_id = $1::uuid GROUP BY status",
+                rid,
+            ) if rid else []
+            result["payments_by_status"] = {r["status"]: r["cnt"] for r in counts}
+            total = await conn.fetchval("SELECT COUNT(*) FROM payments WHERE restaurant_id = $1::uuid", rid) if rid else 0
+            result["total_payments"] = total
+    except Exception as exc:
+        result["db_error"] = str(exc)
+    return result
+
+
+@router.get(
     "/fee-calculator",
     summary="Preview Bittu fee for a given gross amount",
     description=(
