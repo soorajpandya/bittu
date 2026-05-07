@@ -1,7 +1,8 @@
 # Bittu POS — Flutter Frontend Implementation Guide
 
 ## For: Flutter Developer | From: Backend Architect
-## Version: v1 | Date: April 2026
+## Version: v2 | Date: May 2026
+## See also: [FLUTTER_ENTERPRISE_ARCHITECTURE.md](./FLUTTER_ENTERPRISE_ARCHITECTURE.md) — required reading
 
 ---
 
@@ -985,70 +986,109 @@ Every error follows this format:
 
 ---
 
-## 6. SUGGESTED FLUTTER ARCHITECTURE
+## 6. FLUTTER ARCHITECTURE
+
+> ⚠️ **IMPORTANT**: The architecture described here was the v1 baseline.
+> The full **enterprise-grade architecture** is now documented in
+> [`FLUTTER_ENTERPRISE_ARCHITECTURE.md`](./FLUTTER_ENTERPRISE_ARCHITECTURE.md).
+> Follow that document for all state management, caching, navigation, and
+> network orchestration decisions. The rules there are non-negotiable for
+> production-scale POS operations.
+
+### Architecture Requirements (summary)
+
+| Requirement | Rule |
+|---|---|
+| Providers | Created once at root (`main.dart`), **never** inside screens or routes |
+| Tab navigation | `IndexedStack` — widgets stay alive, zero API calls on tab switch |
+| Data loading | Cache-first: render L1/L2 cache instantly, refresh silently in background |
+| API calls | All calls go through `RequestManager` (dedup, throttle, in-flight tracking) |
+| Skeletons | Only shown when cache is empty AND loading for the first time |
+| Finance module | Always-hot: `ensureLoaded()` is idempotent — data never wiped |
+| Offline | Show stale cached data with timestamp; background retry when online |
+| WS events | Patch specific items in provider — never trigger full reload |
+| UI rebuilds | Use `Selector` for granular rebuilds — never `Consumer` on full provider |
+| Memory | All timers and WS listeners explicitly cancelled in `dispose()` |
+
+### Directory Structure
 
 ```
 lib/
+  main.dart                          ← Wire all persistent providers here
+  app.dart                           ← MaterialApp + navigation scaffold
   core/
-    api/
-      api_client.dart         → Dio/http client with auth interceptor
-      api_endpoints.dart      → All endpoint constants
-      websocket_client.dart   → WS connection manager
+    network/
+      api_client.dart                ← Dio with auth interceptor + auto-retry
+      api_endpoints.dart             ← All endpoint constants
+      request_manager.dart           ← Dedup / throttle / in-flight tracking
+      retry_policy.dart              ← Exponential backoff
+    cache/
+      memory_cache.dart              ← L1 in-memory (Map + TTL)
+      local_cache.dart               ← L2 Hive persistent store
+      cache_policy.dart              ← TTL constants per resource type
     auth/
-      auth_provider.dart      → Token storage + refresh logic
-      permission_guard.dart   → Role-based UI guard
-    models/                   → Data models from API schemas
+      auth_provider.dart             ← Token storage + refresh logic
+      permission_guard.dart          ← Permission-based UI guard
+    navigation/
+      app_router.dart                ← GoRouter config
+    websocket/
+      ws_manager.dart                ← Singleton WS with auto-reconnect
   features/
-    auth/                     → Login, Google OAuth WebView
-    dashboard/                → Owner/Manager dashboard
-    orders/                   → Order CRUD, status management
-    kitchen/                  → KDS (Kitchen Display System)
-    tables/                   → Table management, QR sessions
-    menu/                     → Items, Categories, Variants, Addons
-    customers/                → CRM
-    delivery/                 → Delivery tracking
-    staff/                    → Branch users, invites, roles
-    finance/                  → Financial dashboard, reports, GST
-    settings/                 → Restaurant settings
-    subscriptions/            → Plan management
-    waitlist/                 → Queue management
-    analytics/                → Charts, heatmaps
+    shell/
+      main_shell.dart                ← IndexedStack persistent tab scaffold
+    auth/                            ← Login, Google OAuth WebView
+    dashboard/                       ← Owner/Manager dashboard
+    orders/                          ← Order CRUD, status management
+    kitchen/                         ← KDS (Kitchen Display System)
+    tables/                          ← Table management, QR sessions
+    menu/                            ← Items, Categories, Variants, Addons
+    customers/                       ← CRM
+    delivery/                        ← Delivery tracking
+    staff/                           ← Branch users, invites, roles
+    finance/                         ← Always-hot financial dashboard
+    settings/                        ← Restaurant settings
+    subscriptions/                   ← Plan management
+    waitlist/                        ← Queue management
+    analytics/                       ← Charts, heatmaps
   shared/
-    widgets/                  → Reusable components
-    utils/                    → Helpers
+    widgets/
+      skeleton_guard.dart            ← Shows skeleton only on first load
+      stale_banner.dart              ← Offline stale data indicator
+      finance_stat_card.dart         ← Flat finance card component
+    utils/
+      connectivity_monitor.dart      ← Online/offline state
+      debouncer.dart
 ```
 
-### API Client Pattern:
-```dart
-class ApiClient {
-  final Dio _dio;
-  final AuthProvider _auth;
+### API Client (enterprise pattern — see full version in `FLUTTER_ENTERPRISE_ARCHITECTURE.md`):
 
-  ApiClient(this._auth) : _dio = Dio() {
-    _dio.options.baseUrl = 'https://api.bittupos.com/api/v1';
-    _dio.interceptors.add(InterceptorsWrapper(
-      onRequest: (options, handler) {
-        options.headers['Authorization'] = 'Bearer ${_auth.accessToken}';
-        options.headers['Content-Type'] = 'application/json';
-        handler.next(options);
-      },
-      onError: (error, handler) async {
-        if (error.response?.statusCode == 401) {
-          final refreshed = await _auth.refreshToken();
-          if (refreshed) {
-            // Retry original request
-            final opts = error.requestOptions;
-            opts.headers['Authorization'] = 'Bearer ${_auth.accessToken}';
-            final response = await _dio.fetch(opts);
-            handler.resolve(response);
-            return;
-          }
-          _auth.logout();
-        }
-        handler.next(error);
-      },
+```dart
+// Uses Dio with auto-retry (exponential backoff), token refresh interceptor,
+// and request deduplication via RequestManager.
+// See FLUTTER_ENTERPRISE_ARCHITECTURE.md § Rule 9 for complete implementation.
+class ApiClient {
+  late final Dio _dio;
+
+  ApiClient(AuthProvider auth) {
+    _dio = Dio(BaseOptions(
+      baseUrl: 'https://api.bittupos.com/api/v1',
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 30),
     ));
+    _dio.interceptors.addAll([
+      _AuthInterceptor(auth, _dio),
+      _RetryInterceptor(),   // exponential backoff, max 3 retries
+    ]);
   }
+
+  Future<Response<T>> get<T>(String path, {Map<String, dynamic>? params}) =>
+      _dio.get(path, queryParameters: params);
+
+  Future<Response<T>> post<T>(String path, {dynamic data}) =>
+      _dio.post(path, data: data);
+
+  Future<Response<T>> patch<T>(String path, {dynamic data}) =>
+      _dio.patch(path, data: data);
 }
 ```
 
