@@ -137,6 +137,11 @@ class StatementService:
         from_d = from_date or date(today.year, today.month, 1)
         to_d   = to_date   or today
 
+        logger.info("statement_summary_query",
+                    restaurant_id=str(rid),
+                    branch_id=str(bid) if bid else None,
+                    from_d=str(from_d), to_d=str(to_d))
+
         base_params: list = [rid, from_d, to_d]
         p_branch = ""
         s_branch = ""
