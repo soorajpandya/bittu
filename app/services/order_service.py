@@ -152,6 +152,26 @@ class OrderService:
 
         tenant = tenant_insert_fields(user)
         source_value = order_type or source or "pos"
+        # Normalise client-side aliases to the order_source enum values.
+        # Frontend may send 'dine_in', 'dinein', 'takeaway', 'website' etc.
+        _SOURCE_ALIASES = {
+            "dine_in":   "qr_table",
+            "dinein":    "qr_table",
+            "dine-in":   "qr_table",
+            "table":     "qr_table",
+            "qr":        "qr_table",
+            "takeaway":  "pos",
+            "take_away": "pos",
+            "counter":   "pos",
+            "website":   "online",
+            "web":       "online",
+            "mobile":    "app",
+            "delivery":  "delivery_partner",
+        }
+        normalised = _SOURCE_ALIASES.get(str(source_value).strip().lower(), source_value)
+        if normalised not in {"pos", "app", "qr_table", "online", "delivery_partner"}:
+            normalised = "pos"
+        source_value = normalised
 
         # ── Main transaction: create order + claim idempotency ────────────────
         try:
