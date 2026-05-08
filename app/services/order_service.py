@@ -484,13 +484,74 @@ class OrderService:
 
             # Build the full response now (within transaction, so all data is consistent)
             now_utc = datetime.now(timezone.utc).isoformat()
+
+            # ── Auto-create payment row when payment_method is supplied ──
+            # POS-side checkouts collect payment at the time of order, so a
+            # payments row MUST exist for the wallet/recon engine to see it.
+            # Cash-equivalent methods are marked completed immediately; online
+            # methods (razorpay/online) stay pending until the gateway webhook fires.
+            payment_id = None
+            payment_status_value = None
+            if payment_method:
+                # Normalise to the payment_method enum (cash, upi, card, wallet, online).
+                _PM_ALIASES = {
+                    "cash": "cash", "counter": "cash", "cod": "cash",
+                    "upi": "upi", "qr_pay": "upi", "qr": "upi", "qr_code": "upi",
+                    "card": "card", "swipe": "card", "credit": "card", "debit": "card",
+                    "wallet": "wallet",
+                    "online": "online", "razorpay": "online", "gateway": "online", "netbanking": "online",
+                }
+                pm_norm = _PM_ALIASES.get(str(payment_method).strip().lower(), "cash")
+                pay_status = "pending" if pm_norm == "online" else "completed"
+                paid_at = None if pay_status == "pending" else datetime.now(timezone.utc)
+                payment_id = str(uuid.uuid4())
+                payment_status_value = pay_status
+                try:
+                    await conn.execute(
+                        """
+                        INSERT INTO payments (
+                            id, order_id, restaurant_id, user_id, branch_id,
+                            method, status, amount, currency, paid_at
+                        ) VALUES (
+                            $1, $2, $3, $4, $5,
+                            $6::payment_method, $7::payment_status, $8, 'INR', $9
+                        )
+                        """,
+                        payment_id,
+                        order_id,
+                        user.restaurant_id,
+                        tenant["user_id"],
+                        tenant.get("branch_id"),
+                        pm_norm,
+                        pay_status,
+                        float(total_amount),
+                        paid_at,
+                    )
+                    if pay_status == "completed":
+                        await conn.execute(
+                            "UPDATE orders SET status = 'Confirmed', updated_at = now() WHERE id = $1",
+                            order_id,
+                        )
+                except Exception as exc:
+                    # Don't fail checkout if the payments insert blows up — log and continue.
+                    logger.warning(
+                        "checkout_payment_insert_failed",
+                        order_id=order_id,
+                        method=pm_norm,
+                        error=str(exc),
+                    )
+                    payment_id = None
+                    payment_status_value = None
+
             response = {
                 "id": order_id,
                 "order_number": order_number,
-                "status": OrderStatus.PENDING.value,
+                "status": "Confirmed" if payment_status_value == "completed" else OrderStatus.PENDING.value,
                 "source": source,
                 "order_type": source,
                 "payment_method": payment_method,
+                "payment_id": payment_id,
+                "payment_status": payment_status_value,
                 "subtotal": float(subtotal),
                 "tax_amount": float(tax_amount),
                 "discount_amount": float(discount_amount),
