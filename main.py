@@ -128,6 +128,49 @@ def create_app() -> FastAPI:
         allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Idempotency-Key"],
     )
 
+    # -- Structured exception handlers --
+    # All error responses follow the shape:
+    #   {"error": {"code": "...", "message": "...", "details": {}, "retryable": bool}}
+    # This is consistent across AppException (business errors), request
+    # validation failures, and unhandled server errors.
+
+    from fastapi import Request as _Req
+    from fastapi.responses import JSONResponse as _JSONResp
+    from fastapi.exceptions import RequestValidationError as _RVE
+    from app.core.exceptions import AppException as _AppEx
+
+    @app.exception_handler(_AppEx)
+    async def app_exception_handler(request: _Req, exc: _AppEx) -> _JSONResp:
+        request_id = getattr(request.state, "request_id", None)
+        return _JSONResp(
+            status_code=exc.status_code,
+            content={
+                "error": {
+                    "code": exc.error_code,
+                    "message": exc.detail,
+                    "details": {},
+                    "retryable": getattr(exc, "retryable", False),
+                },
+                "request_id": request_id,
+            },
+        )
+
+    @app.exception_handler(_RVE)
+    async def validation_exception_handler(request: _Req, exc: _RVE) -> _JSONResp:
+        request_id = getattr(request.state, "request_id", None)
+        return _JSONResp(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Request validation failed",
+                    "details": {"errors": exc.errors()},
+                    "retryable": False,
+                },
+                "request_id": request_id,
+            },
+        )
+
     # -- Routes --
     app.include_router(api_router)
 

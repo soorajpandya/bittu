@@ -125,7 +125,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if not allowed:
                 return JSONResponse(
                     status_code=429,
-                    content={"detail": "Rate limit exceeded", "error_code": "RATE_LIMIT_EXCEEDED"},
+                    content={
+                        "error": {
+                            "code": "RATE_LIMIT_EXCEEDED",
+                            "message": "Rate limit exceeded",
+                            "details": {},
+                            "retryable": True,
+                        }
+                    },
                     headers={"Retry-After": "60"},
                 )
         except Exception:
@@ -181,8 +188,12 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 status_code=500,
                 content={
-                    "detail": detail,
-                    "error_code": "INTERNAL_ERROR",
+                    "error": {
+                        "code": "INTERNAL_ERROR",
+                        "message": detail,
+                        "details": {},
+                        "retryable": True,
+                    },
                     "request_id": request_id,
                 },
             )
