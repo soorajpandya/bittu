@@ -35,7 +35,13 @@ async def razorpay_payment_webhook(request: Request):
     entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
 
     logger.info("razorpay_payment_webhook", event=event, payment_id=entity.get("id"))
-    await _payment_svc.handle_webhook(event=event, payload=entity)
+    await _payment_svc.handle_webhook(
+        event=event,
+        payload=entity,
+        raw_payload=payload,
+        signature=signature,
+        gateway="razorpay",
+    )
     return {"status": "ok"}
 
 

@@ -243,47 +243,88 @@ class PaymentService:
 
     async def handle_webhook(
         self,
+        *,
+        event: str,
         payload: dict,
-        signature: str,
+        raw_payload: Optional[dict] = None,
+        signature: Optional[str] = None,
+        gateway: str = "razorpay",
     ) -> dict:
         """
-        Process Razorpay webhook with idempotency.
-        Same webhook delivered multiple times → processed only once.
+        Process a payment-gateway webhook with **durable** idempotency.
+
+        The router is expected to have already verified the signature.  This
+        method:
+          1. Records the event in `webhook_events` (UNIQUE on gateway+event_id)
+             so a Redis flush cannot cause double-processing.
+          2. Skips processing if the row already existed (duplicate delivery).
+          3. Dispatches to the per-event handler.
+          4. Marks the ledger row processed/failed.
+
+        `payload` is the gateway-specific entity (e.g. razorpay payment.entity).
+        `raw_payload` is the full envelope for forensic audit (defaults to payload).
         """
-        # Verify webhook signature
-        webhook_body = str(payload).encode()
-        expected = hmac.HMAC(
-            _settings().RAZORPAY_WEBHOOK_SECRET.encode(),
-            webhook_body,
-            hashlib.sha256,
-        ).hexdigest()
+        # Lazy import to avoid circular dep
+        from app.services.reconciliation_service import reconciliation_service
 
-        if not hmac.compare_digest(expected, signature):
-            logger.warning("webhook_signature_invalid")
-            raise PaymentError("Webhook signature verification failed")
+        envelope = raw_payload if raw_payload is not None else payload
+        event_id = (
+            envelope.get("event_id")
+            or envelope.get("id")
+            or payload.get("id")
+            or ""
+        )
+        gateway_payment_id = payload.get("id") if event.startswith("payment.") else None
+        gateway_order_id = payload.get("order_id")
 
-        event_id = payload.get("event_id") or payload.get("id", "")
-        event_type = payload.get("event", "")
+        ledger = await reconciliation_service.record_webhook(
+            gateway=gateway,
+            event_type=event,
+            event_id=event_id or None,
+            gateway_payment_id=gateway_payment_id,
+            gateway_order_id=gateway_order_id,
+            raw_payload=envelope,
+            signature=signature,
+            signature_valid=True,  # router validates before calling
+        )
+        if ledger["duplicate"]:
+            logger.info("webhook_duplicate_skipped", gateway=gateway, event_id=event_id)
+            return {"status": "already_processed", "webhook_id": ledger["id"]}
 
-        # Idempotency: skip if already processed
-        existing = await check_idempotency(f"webhook:{event_id}")
-        if existing:
-            logger.info("webhook_duplicate_skipped", event_id=event_id)
-            return {"status": "already_processed"}
+        webhook_id = ledger["id"]
 
-        # Process based on event type
-        if event_type == "payment.captured":
-            await self._handle_payment_captured(payload)
-        elif event_type == "payment.failed":
-            await self._handle_payment_failed(payload)
-        elif event_type == "refund.processed":
-            await self._handle_refund_processed(payload)
+        try:
+            # Razorpay sends `event` like "payment.captured" with the entity in
+            # payload.payload.payment.entity. The legacy handlers expect the
+            # full envelope, so we re-wrap when needed.
+            wrapped = {"payload": {"payment": {"entity": payload}, "refund": {"entity": payload}}}
 
-        # Mark as processed
-        await set_idempotency(f"webhook:{event_id}", "processed", ttl=86400)
+            if event == "payment.captured":
+                await self._handle_payment_captured(wrapped)
+            elif event == "payment.failed":
+                await self._handle_payment_failed(wrapped)
+            elif event == "refund.processed":
+                await self._handle_refund_processed(wrapped)
+            else:
+                await reconciliation_service.mark_webhook_processed(
+                    webhook_id, status="skipped",
+                    error_message=f"unhandled event_type: {event}",
+                )
+                logger.info("webhook_unhandled", event=event)
+                return {"status": "unhandled", "webhook_id": webhook_id}
 
-        logger.info("webhook_processed", event_id=event_id, event_type=event_type)
-        return {"status": "processed"}
+            await reconciliation_service.mark_webhook_processed(
+                webhook_id, status="processed",
+            )
+            logger.info("webhook_processed", event_id=event_id, event_type=event)
+            return {"status": "processed", "webhook_id": webhook_id}
+
+        except Exception as exc:
+            await reconciliation_service.mark_webhook_processed(
+                webhook_id, status="failed", error_message=str(exc),
+            )
+            logger.exception("webhook_processing_failed", event=event, event_id=event_id)
+            raise
 
     # ── REFUND ──
 

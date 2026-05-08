@@ -179,6 +179,9 @@ router.include_router(subledger_tax.tax_router)
 router.include_router(reports.router)
 # ── Bank Reconciliation ──
 router.include_router(bank_recon.router)
+# ── Cross-table Reconciliation Engine ──
+from app.api.v1 import reconciliation as _reconciliation
+router.include_router(_reconciliation.router)
 # ── Financial Operating System ──
 router.include_router(finance.router)
 # ── Statement & Settlement ──
