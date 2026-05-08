@@ -1,4 +1,5 @@
 from typing import Any
+import json
 
 from app.core.database import get_connection
 from app.core.logging import get_logger
@@ -36,7 +37,7 @@ async def log_activity(
                 payload.action,
                 payload.entity_type,
                 payload.entity_id,
-                payload.metadata,
+                json.dumps(payload.metadata, default=str),
             )
     except Exception as exc:
         # Authorization/business flows must continue even if log persistence fails.

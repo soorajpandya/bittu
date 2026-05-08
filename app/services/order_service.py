@@ -151,9 +151,11 @@ class OrderService:
             raise ValidationError("Order must contain at least one item")
 
         tenant = tenant_insert_fields(user)
-        source_value = order_type or source or "pos"
-        # Normalise client-side aliases to the order_source enum values.
-        # Frontend may send 'dine_in', 'dinein', 'takeaway', 'website' etc.
+        # `source` is the order_source enum (pos/app/qr_table/online/delivery_partner).
+        # `order_type` is a UX category (dine_in/takeaway/delivery) and lives in metadata only.
+        # `source` ALWAYS wins over order_type. We only fall back to order_type when
+        # the client did not send `source` at all (legacy clients).
+        _ALLOWED = {"pos", "app", "qr_table", "online", "delivery_partner"}
         _SOURCE_ALIASES = {
             "dine_in":   "qr_table",
             "dinein":    "qr_table",
@@ -168,10 +170,17 @@ class OrderService:
             "mobile":    "app",
             "delivery":  "delivery_partner",
         }
-        normalised = _SOURCE_ALIASES.get(str(source_value).strip().lower(), source_value)
-        if normalised not in {"pos", "app", "qr_table", "online", "delivery_partner"}:
-            normalised = "pos"
-        source_value = normalised
+
+        def _normalise(v):
+            v = str(v or "").strip().lower()
+            return _SOURCE_ALIASES.get(v, v)
+
+        primary = _normalise(source)
+        if primary in _ALLOWED:
+            source_value = primary
+        else:
+            fallback = _normalise(order_type)
+            source_value = fallback if fallback in _ALLOWED else "pos"
 
         # ── Main transaction: create order + claim idempotency ────────────────
         try:
@@ -821,7 +830,6 @@ class OrderService:
                 f"""
                 SELECT
                     o.id,
-                    o.order_number,
                     COALESCE(o.metadata->>'order_number', LEFT(o.id::text, 8)) AS display_order_number,
                     o.status,
                     o.source,
