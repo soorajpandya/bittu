@@ -45,9 +45,11 @@ CREATE INDEX IF NOT EXISTS idx_bst_restaurant_status
 CREATE INDEX IF NOT EXISTS idx_bittu_settlements_restaurant_status_settled
     ON bittu_settlements (restaurant_id, settlement_status, settled_at DESC);
 
--- Daily closing reports: bucket by settled_at::date.
-CREATE INDEX IF NOT EXISTS idx_bittu_settlements_settled_date
-    ON bittu_settlements ((settled_at::date))
+-- Daily closing reports: bucket by settled_at (timestamptz).
+-- Note: (settled_at::date) is STABLE not IMMUTABLE under variable timezones,
+-- so we index settled_at directly.  Daily-bucket queries can range-scan it.
+CREATE INDEX IF NOT EXISTS idx_bittu_settlements_settled_at
+    ON bittu_settlements (settled_at)
     WHERE settled_at IS NOT NULL;
 
 
