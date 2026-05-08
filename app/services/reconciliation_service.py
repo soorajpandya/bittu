@@ -62,9 +62,18 @@ logger = get_logger(__name__)
 # Order statuses considered "paid / fulfilled" (case-insensitive compare).
 PAID_ORDER_STATUSES = {"confirmed", "preparing", "ready", "completed", "served", "delivered"}
 
+# Cash-equivalent payment methods (bypass the gateway / settlement / webhook leg).
+# Anything NOT in this set is treated as an online / gateway payment whose money
+# eventually lands in the bank via pg_settlements.
+CASH_METHODS = {"cash", "counter", "cod"}
+
 
 def _owner_id(user: UserContext) -> str:
     return user.owner_id if user.is_branch_user else user.user_id
+
+
+def _is_cash(method: Optional[str]) -> bool:
+    return (method or "").lower() in CASH_METHODS
 
 
 def _to_float(value) -> float:
@@ -200,7 +209,7 @@ class ReconciliationService:
                 # ─ scenario 1: payment received but order not updated ─
                 rows = await conn.fetch(
                     """
-                    SELECT p.id AS payment_id, p.order_id, p.amount, p.paid_at,
+                    SELECT p.id AS payment_id, p.order_id, p.amount, p.paid_at, p.method,
                            o.status AS order_status, o.total_amount AS order_total
                     FROM   payments p
                     JOIN   orders o ON o.id = p.order_id
@@ -226,7 +235,11 @@ class ReconciliationService:
                             f"Payment {r['payment_id']} captured at {r['paid_at']:%Y-%m-%d %H:%M} "
                             f"but order is still in '{r['order_status']}'."
                         ),
-                        metadata={"order_status": r["order_status"]},
+                        metadata={
+                            "order_status": r["order_status"],
+                            "method": r["method"],
+                            "channel": "cash" if _is_cash(r["method"]) else "online",
+                        },
                     ))
 
                 # ─ scenario 2: order created but no payment ─
@@ -265,7 +278,10 @@ class ReconciliationService:
                 # ─ scenario 3: duplicate payments (same order, > 1 completed) ─
                 rows = await conn.fetch(
                     """
-                    SELECT order_id, COUNT(*) AS dup_count, SUM(amount) AS total_paid
+                    SELECT order_id,
+                           COUNT(*)                  AS dup_count,
+                           SUM(amount)               AS total_paid,
+                           ARRAY_AGG(DISTINCT method) AS methods
                     FROM   payments
                     WHERE  user_id = $1
                       AND  status  = 'completed'
@@ -276,6 +292,8 @@ class ReconciliationService:
                     owner, period_start, period_end,
                 )
                 for r in rows:
+                    methods = [m for m in (r["methods"] or []) if m]
+                    is_mixed = any(_is_cash(m) for m in methods) and any(not _is_cash(m) for m in methods)
                     discrepancies.append(dict(
                         kind="duplicate_payment",
                         severity="critical",
@@ -286,9 +304,16 @@ class ReconciliationService:
                         delta_amount=None,
                         description=(
                             f"{r['dup_count']} completed payments exist for the same order "
-                            f"(total captured: ₹{_to_float(r['total_paid']):.2f})."
+                            f"(total captured: ₹{_to_float(r['total_paid']):.2f}; "
+                            f"methods: {', '.join(methods) or 'unknown'})."
                         ),
-                        metadata={"duplicate_count": int(r["dup_count"])},
+                        metadata={
+                            "duplicate_count": int(r["dup_count"]),
+                            "methods": methods,
+                            "channel": "mixed" if is_mixed else (
+                                "cash" if methods and all(_is_cash(m) for m in methods) else "online"
+                            ),
+                        },
                     ))
 
                 # ─ scenario 4: failed / stuck settlements (pending > 7d) ─
@@ -389,7 +414,7 @@ class ReconciliationService:
                 # ─ bonus: amount mismatch (paid != ordered) ─
                 rows = await conn.fetch(
                     """
-                    SELECT p.id AS payment_id, p.order_id, p.amount AS paid,
+                    SELECT p.id AS payment_id, p.order_id, p.amount AS paid, p.method,
                            o.total_amount AS ordered
                     FROM   payments p
                     JOIN   orders o ON o.id = p.order_id
@@ -413,7 +438,10 @@ class ReconciliationService:
                             f"Payment ₹{_to_float(r['paid']):.2f} differs from order total "
                             f"₹{_to_float(r['ordered']):.2f}."
                         ),
-                        metadata={},
+                        metadata={
+                            "method": r["method"],
+                            "channel": "cash" if _is_cash(r["method"]) else "online",
+                        },
                     ))
 
                 # ─ insert all discrepancies ─
@@ -586,6 +614,7 @@ class ReconciliationService:
         customer_id: Optional[int] = None,
         from_date: Optional[datetime] = None,
         to_date: Optional[datetime] = None,
+        channel: Optional[str] = None,        # 'cash' | 'online' | 'mixed'
         limit: int = 50,
         offset: int = 0,
     ) -> dict:
@@ -606,6 +635,7 @@ class ReconciliationService:
         if customer_id: _add("customer_id = $?", customer_id)
         if from_date:   _add("detected_at >= $?", from_date)
         if to_date:     _add("detected_at <= $?", to_date)
+        if channel:     _add("metadata->>'channel' = $?", channel)
 
         where = " AND ".join(clauses)
         params.extend([limit, offset])
@@ -685,13 +715,31 @@ class ReconciliationService:
                 """,
                 owner, period_start, period_end,
             )
+            # Payments split by channel (cash vs online).  Anything in CASH_METHODS
+            # is treated as cash; everything else flows through a gateway and is
+            # expected to land in pg_settlements -> bank.
+            cash_methods_sql = "(" + ",".join(f"'{m}'" for m in CASH_METHODS) + ")"
             p = await conn.fetchrow(
-                """
-                SELECT COUNT(*)                                           AS n,
-                       COALESCE(SUM(amount) FILTER (WHERE status='completed'), 0) AS captured,
-                       COALESCE(SUM(amount) FILTER (WHERE status='pending'),   0) AS pending,
-                       COALESCE(SUM(amount) FILTER (WHERE status='failed'),    0) AS failed,
-                       COALESCE(SUM(amount) FILTER (WHERE status='refunded'),  0) AS refunded
+                f"""
+                SELECT
+                  -- totals
+                  COUNT(*)                                                                     AS n,
+                  COALESCE(SUM(amount) FILTER (WHERE status='completed'), 0)                   AS captured,
+                  COALESCE(SUM(amount) FILTER (WHERE status='pending'),   0)                   AS pending,
+                  COALESCE(SUM(amount) FILTER (WHERE status='failed'),    0)                   AS failed,
+                  COALESCE(SUM(amount) FILTER (WHERE status='refunded'),  0)                   AS refunded,
+                  -- cash
+                  COUNT(*)                FILTER (WHERE LOWER(method) IN {cash_methods_sql})   AS cash_n,
+                  COALESCE(SUM(amount)    FILTER (WHERE status='completed'
+                                              AND LOWER(method) IN {cash_methods_sql}), 0)     AS cash_captured,
+                  -- online (everything else)
+                  COUNT(*)                FILTER (WHERE LOWER(method) NOT IN {cash_methods_sql}) AS online_n,
+                  COALESCE(SUM(amount)    FILTER (WHERE status='completed'
+                                              AND LOWER(method) NOT IN {cash_methods_sql}), 0) AS online_captured,
+                  COALESCE(SUM(amount)    FILTER (WHERE status='pending'
+                                              AND LOWER(method) NOT IN {cash_methods_sql}), 0) AS online_pending,
+                  COALESCE(SUM(amount)    FILTER (WHERE status='refunded'
+                                              AND LOWER(method) NOT IN {cash_methods_sql}), 0) AS online_refunded
                 FROM   payments
                 WHERE  user_id = $1 AND created_at BETWEEN $2 AND $3
                 """,
@@ -702,8 +750,10 @@ class ReconciliationService:
                 SELECT COUNT(*) AS n,
                        COALESCE(SUM(gross_amount), 0)  AS gross,
                        COALESCE(SUM(gateway_fee),  0)  AS fees,
+                       COALESCE(SUM(tax_on_fee),   0)  AS tax,
                        COALESCE(SUM(net_amount),   0)  AS net,
-                       COALESCE(SUM(net_amount) FILTER (WHERE status='reconciled'), 0) AS reconciled_net
+                       COALESCE(SUM(net_amount) FILTER (WHERE status='reconciled'), 0) AS reconciled_net,
+                       COALESCE(SUM(gross_amount) FILTER (WHERE status='pending'),  0) AS pending_gross
                 FROM   pg_settlements
                 WHERE  restaurant_id = $1::uuid
                   AND  settlement_date BETWEEN $2::date AND $3::date
@@ -747,13 +797,69 @@ class ReconciliationService:
                 "pending_amount":  _to_float(p["pending"]),
                 "failed_amount":   _to_float(p["failed"]),
                 "refunded_amount": _to_float(p["refunded"]),
+                # ─ channel split: cash bypasses bank, online lands via settlements ─
+                "cash": {
+                    "count":           int(p["cash_n"] or 0),
+                    "captured_amount": _to_float(p["cash_captured"]),
+                },
+                "online": {
+                    "count":           int(p["online_n"] or 0),
+                    "captured_amount": _to_float(p["online_captured"]),
+                    "pending_amount":  _to_float(p["online_pending"]),
+                    "refunded_amount": _to_float(p["online_refunded"]),
+                },
             },
             "settlements": {
-                "count": int(s["n"] or 0),
-                "gross_amount": _to_float(s["gross"]),
-                "fees_amount":  _to_float(s["fees"]),
-                "net_amount":   _to_float(s["net"]),
+                "count":          int(s["n"] or 0),
+                "gross_amount":   _to_float(s["gross"]),
+                "fees_amount":    _to_float(s["fees"]),
+                "tax_on_fees":    _to_float(s["tax"]),
+                "net_amount":     _to_float(s["net"]),
                 "reconciled_net_amount": _to_float(s["reconciled_net"]),
+                "pending_gross_amount":  _to_float(s["pending_gross"]),
+            },
+            # ──── BANK-SIDE RECONCILIATION (online channel only) ────
+            # If everything is reconciled the bank delta should equal zero:
+            #   captured_online == settled_net + in_clearing + fees + tax + refunded_online
+            "bank_reconciliation": {
+                "online_captured":    _to_float(p["online_captured"]),
+                "settled_net":        _to_float(s["net"]),
+                "settlement_fees":    _to_float(s["fees"]),
+                "settlement_tax":     _to_float(s["tax"]),
+                "in_clearing":        round(
+                    _to_float(p["online_captured"])
+                    - _to_float(s["gross"])
+                    - _to_float(p["online_refunded"]),
+                    2,
+                ),
+                "unsettled_pending":  _to_float(s["pending_gross"]),
+                "refunded_online":    _to_float(p["online_refunded"]),
+                "delta":              round(
+                    _to_float(p["online_captured"])
+                    - _to_float(s["net"])
+                    - _to_float(s["fees"])
+                    - _to_float(s["tax"])
+                    - _to_float(p["online_refunded"])
+                    - max(
+                        _to_float(p["online_captured"])
+                        - _to_float(s["gross"])
+                        - _to_float(p["online_refunded"]),
+                        0.0,
+                    ),
+                    2,
+                ),
+                "note": (
+                    "Bank-side recon excludes cash (DR Cash, CR AR — never touches bank). "
+                    "`delta` should be 0 when fully reconciled; non-zero indicates a "
+                    "mismatch between what the gateway captured and what landed in the bank."
+                ),
+            },
+            "cash_reconciliation": {
+                "cash_captured":      _to_float(p["cash_captured"]),
+                "note": (
+                    "Cash never appears on the bank statement until physically deposited. "
+                    "Match against the cash-drawer journal, not against bank lines."
+                ),
             },
             "open_issues_by_kind": {row["kind"]: int(row["n"]) for row in issues},
             "webhooks": {

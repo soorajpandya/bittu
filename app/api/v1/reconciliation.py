@@ -90,6 +90,11 @@ async def list_discrepancies(
     customer_id: Optional[int] = None,
     from_date: Optional[datetime] = None,
     to_date:   Optional[datetime] = None,
+    channel:   Optional[str] = Query(
+        None,
+        pattern="^(cash|online|mixed)$",
+        description="Filter by payment channel: cash | online | mixed (cash bypasses bank).",
+    ),
     limit:  int = Query(50, ge=1, le=500),
     offset: int = Query(0,  ge=0),
     user: UserContext = Depends(require_permission("bank_recon.read")),
@@ -99,7 +104,7 @@ async def list_discrepancies(
         user,
         kind=kind, severity=severity, status=status,
         order_id=order_id, payment_id=payment_id, customer_id=customer_id,
-        from_date=from_date, to_date=to_date,
+        from_date=from_date, to_date=to_date, channel=channel,
         limit=limit, offset=offset,
     )
 
