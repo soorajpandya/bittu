@@ -182,6 +182,9 @@ router.include_router(bank_recon.router)
 # ── Cross-table Reconciliation Engine ──
 from app.api.v1 import reconciliation as _reconciliation
 router.include_router(_reconciliation.router)
+# ── Merchant Wallet (cash + online + platform revenue) ──
+from app.api.v1 import merchant_wallet as _merchant_wallet
+router.include_router(_merchant_wallet.router)
 # ── Financial Operating System ──
 router.include_router(finance.router)
 # ── Statement & Settlement ──

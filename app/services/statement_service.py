@@ -51,8 +51,16 @@ from app.services.activity_log_service import log_activity
 logger = get_logger(__name__)
 
 # ── Fee constants ─────────────────────────────────────────────────────────────
-BITTU_FEE_RATE = Decimal("0.001500")   # 0.15%
-GST_RATE       = Decimal("0.180000")   # 18% GST on the platform fee
+# Total merchant-side deduction is fixed at 0.30 % of the gross transaction.
+# That headline rate is split into:
+#   * platform fee   = TOTAL_DEDUCTION_RATE / (1 + GST_RATE)   (~0.2542 %)
+#   * GST on the fee = platform_fee * GST_RATE                 (~0.0458 %)
+# Computing in this order guarantees `fee + gst == total` to the paisa.
+TOTAL_DEDUCTION_RATE = Decimal("0.003000")  # 0.30 % flat (incl. GST)
+GST_RATE             = Decimal("0.180000")  # 18 % GST applied on the fee
+BITTU_FEE_RATE       = (TOTAL_DEDUCTION_RATE / (Decimal("1") + GST_RATE)).quantize(
+    Decimal("0.000001"), rounding=ROUND_HALF_UP
+)  # ≈ 0.002542
 
 
 def _q2(val) -> Decimal:
@@ -68,11 +76,17 @@ def _q6(val) -> Decimal:
 def _calc_fee(gross: Decimal) -> tuple[Decimal, Decimal, Decimal]:
     """
     Return (bittu_fee, gst_on_fee, net_settlement).
-    Uses full 6dp precision internally, rounds net to 2dp.
+
+    Computes the headline 0.30% total deduction first, then derives the
+    base fee and GST so that  base + gst == total  to the paisa.  This
+    is the same approach a payment gateway uses on its merchant
+    statements: the visible deduction matches the bank line exactly.
     """
-    bittu_fee = _q6(gross * BITTU_FEE_RATE)
-    gst_on_fee = _q6(bittu_fee * GST_RATE)
-    net = _q2(gross - bittu_fee - gst_on_fee)
+    gross = _q2(gross)
+    total_deduction = _q2(gross * TOTAL_DEDUCTION_RATE)        # exact 0.30%
+    bittu_fee       = _q2(total_deduction / (Decimal("1") + GST_RATE))
+    gst_on_fee      = _q2(total_deduction - bittu_fee)         # plug so sum is exact
+    net             = _q2(gross - total_deduction)
     return bittu_fee, gst_on_fee, net
 
 
@@ -273,7 +287,7 @@ class StatementService:
                 "message":  upcoming_eta_message,
             },
             "fee_info": {
-                "bittu_fee_rate_pct": "0.15%",
+                "bittu_fee_rate_pct": "0.2542%",
                 "gst_rate_pct":       "18%",
                 "description": "Bittu charges 0.15% platform fee + 18% GST on fee per settlement",
             },
@@ -612,7 +626,7 @@ class StatementService:
                 "bittu_fee_amount":     float(settlement["bittu_fee_amount"]),
                 "gst_amount":           float(settlement["gst_amount"]),
                 "net_settlement_amount": float(settlement["net_settlement_amount"]),
-                "fee_rate_pct":         "0.15%",
+                "fee_rate_pct":         "0.2542%",
                 "gst_rate_pct":         "18%",
                 "formula": (
                     f"₹{float(settlement['gross_amount']):,.2f} "
@@ -1242,7 +1256,7 @@ class StatementService:
         bittu_fee, gst_on_fee, net = _calc_fee(gross)
         return {
             "gross_amount":    float(gross),
-            "bittu_fee_rate":  "0.15%",
+            "bittu_fee_rate":  "0.2542%",
             "bittu_fee":       float(bittu_fee),
             "gst_rate":        "18%",
             "gst_on_fee":      float(gst_on_fee),
