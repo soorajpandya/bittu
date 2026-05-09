@@ -80,9 +80,12 @@ class MerchantWalletService:
 
         If `as_of_date` is provided, only records created on or before the end
         of that day (UTC) are included — useful for historical snapshots.
+
+        PERF: All four aggregates are computed in ONE round trip via CTEs,
+        and we avoid LOWER() on indexed columns so the planner can use
+        `idx_payments_restaurant_method_status` and `idx_orders_restaurant_id`.
         """
         rid = _restaurant_id(user)
-        owner = _owner_id(user)
 
         # Build cutoff (end-of-day UTC) for historical snapshots.
         if as_of_date is not None:
@@ -90,94 +93,115 @@ class MerchantWalletService:
                 as_of_date, datetime.max.time()
             ).replace(tzinfo=timezone.utc)
             as_of_iso = cutoff.isoformat()
-            date_clause = " AND created_at <= $2::timestamptz"
-            params = (rid, cutoff)
         else:
             cutoff = None
             as_of_iso = datetime.now(timezone.utc).isoformat()
-            date_clause = ""
-            params = (rid,)
+
+        # Pre-compute case variants once — avoids LOWER() on the column,
+        # which would otherwise prevent index use.
+        cash_methods_variants: list[str] = []
+        for m in CASH_METHODS:
+            cash_methods_variants.extend({m, m.upper(), m.capitalize()})
+        order_status_variants: list[str] = []
+        for s in ("confirmed", "preparing", "ready", "completed", "served", "delivered"):
+            order_status_variants.extend({s, s.upper(), s.capitalize()})
+
+        # Cutoff clause is parameterised: when NULL the comparison is skipped.
+        # Using `($2::timestamptz IS NULL OR created_at <= $2)` lets one
+        # prepared plan serve both live and historical calls.
+        sql = """
+        WITH cash AS (
+          SELECT
+            COALESCE(SUM(amount) FILTER (WHERE status='completed'),0)::numeric(14,2) AS collected,
+            COALESCE(SUM(amount) FILTER (WHERE status='refunded'), 0)::numeric(14,2) AS refunded,
+            COUNT(*)              FILTER (WHERE status='completed')                  AS tx_count
+          FROM payments
+          WHERE restaurant_id = $1::uuid
+            AND method = ANY($3::text[])
+            AND ($2::timestamptz IS NULL OR created_at <= $2::timestamptz)
+        ),
+        online_captured AS (
+          SELECT COALESCE(SUM(amount),0)::numeric(14,2) AS amount
+          FROM payments
+          WHERE restaurant_id = $1::uuid
+            AND status = 'completed'
+            AND NOT (method = ANY($3::text[]))
+            AND ($2::timestamptz IS NULL OR created_at <= $2::timestamptz)
+        ),
+        settle AS (
+          SELECT
+            COALESCE(SUM(gross_amount)
+              FILTER (WHERE settlement_status IN ('pending','processing','sent_to_bank'))
+            ,0)::numeric(14,2) AS pending_gross,
+            COALESCE(SUM(net_settlement_amount)
+              FILTER (WHERE settlement_status IN ('pending','processing','sent_to_bank'))
+            ,0)::numeric(14,2) AS pending_net,
+            COALESCE(SUM(net_settlement_amount)
+              FILTER (WHERE settlement_status='settled')
+            ,0)::numeric(14,2) AS settled_lifetime,
+            COALESCE(SUM(gross_amount)
+              FILTER (WHERE settlement_status='settled')
+            ,0)::numeric(14,2) AS settled_gross_lifetime,
+            COALESCE(SUM(gross_amount)
+              FILTER (WHERE settlement_status IN ('failed','reversed'))
+            ,0)::numeric(14,2) AS failed_or_reversed,
+            COALESCE(SUM(bittu_fee_amount)
+              FILTER (WHERE settlement_status='settled')
+            ,0)::numeric(14,2) AS platform_fee_paid,
+            COALESCE(SUM(gst_amount)
+              FILTER (WHERE settlement_status='settled')
+            ,0)::numeric(14,2) AS gst_on_fee_paid,
+            COUNT(*) FILTER (WHERE settlement_status='settled')                       AS settled_count,
+            COUNT(*) FILTER (WHERE settlement_status IN ('pending','processing','sent_to_bank')) AS pending_count
+          FROM bittu_settlements
+          WHERE restaurant_id = $1::uuid
+            AND ($2::timestamptz IS NULL OR created_at <= $2::timestamptz)
+        ),
+        ords AS (
+          SELECT
+            COUNT(*)                                       AS total_orders,
+            COALESCE(SUM(total_amount),0)::numeric(14,2)   AS total_sales
+          FROM orders
+          WHERE restaurant_id = $1::uuid
+            AND status = ANY($4::text[])
+            AND ($2::timestamptz IS NULL OR created_at <= $2::timestamptz)
+        )
+        SELECT
+          cash.collected, cash.refunded, cash.tx_count,
+          online_captured.amount AS online_captured,
+          settle.pending_gross, settle.pending_net,
+          settle.settled_lifetime, settle.settled_gross_lifetime,
+          settle.failed_or_reversed, settle.platform_fee_paid, settle.gst_on_fee_paid,
+          settle.settled_count, settle.pending_count,
+          ords.total_orders, ords.total_sales
+        FROM cash, online_captured, settle, ords
+        """
 
         async with get_connection() as conn:
-            cash_methods_sql = "(" + ",".join(f"'{m}'" for m in CASH_METHODS) + ")"
-
-            # ─ Cash side ───────────────────────────────────────────────
-            cash = await conn.fetchrow(
-                f"""
-                SELECT
-                  COALESCE(SUM(amount) FILTER (WHERE status='completed'),0)::numeric(14,2)
-                      AS collected,
-                  COALESCE(SUM(amount) FILTER (WHERE status='refunded'), 0)::numeric(14,2)
-                      AS refunded,
-                  COUNT(*) FILTER (WHERE status='completed') AS tx_count
-                FROM   payments
-                WHERE  restaurant_id = $1::uuid
-                  AND  LOWER(method) IN {cash_methods_sql}
-                  {date_clause}
-                """,
-                *params,
+            row = await conn.fetchrow(
+                sql,
+                rid,
+                cutoff,
+                cash_methods_variants,
+                order_status_variants,
             )
 
-            # ─ Online side: settlement-driven ──────────────────────────
-            online = await conn.fetchrow(
-                f"""
-                SELECT
-                  COALESCE(SUM(gross_amount)
-                    FILTER (WHERE settlement_status IN ('pending','processing','sent_to_bank'))
-                  ,0)::numeric(14,2) AS pending_gross,
-                  COALESCE(SUM(net_settlement_amount)
-                    FILTER (WHERE settlement_status IN ('pending','processing','sent_to_bank'))
-                  ,0)::numeric(14,2) AS pending_net,
-                  COALESCE(SUM(net_settlement_amount)
-                    FILTER (WHERE settlement_status='settled')
-                  ,0)::numeric(14,2) AS settled_lifetime,
-                  COALESCE(SUM(gross_amount)
-                    FILTER (WHERE settlement_status='settled')
-                  ,0)::numeric(14,2) AS settled_gross_lifetime,
-                  COALESCE(SUM(gross_amount)
-                    FILTER (WHERE settlement_status IN ('failed','reversed'))
-                  ,0)::numeric(14,2) AS failed_or_reversed,
-                  COALESCE(SUM(bittu_fee_amount)
-                    FILTER (WHERE settlement_status='settled')
-                  ,0)::numeric(14,2) AS platform_fee_paid,
-                  COALESCE(SUM(gst_amount)
-                    FILTER (WHERE settlement_status='settled')
-                  ,0)::numeric(14,2) AS gst_on_fee_paid,
-                  COUNT(*) FILTER (WHERE settlement_status='settled') AS settled_count,
-                  COUNT(*) FILTER (WHERE settlement_status IN ('pending','processing','sent_to_bank'))
-                      AS pending_count
-                FROM   bittu_settlements
-                WHERE  restaurant_id = $1::uuid
-                  {date_clause}
-                """,
-                *params,
-            )
-
-            # ─ Online captured this period (for "online sales lifetime") ─
-            online_captured = await conn.fetchval(
-                f"""
-                SELECT COALESCE(SUM(amount),0)::numeric(14,2)
-                FROM   payments
-                WHERE  restaurant_id = $1::uuid
-                  AND  status='completed'
-                  AND  LOWER(method) NOT IN {cash_methods_sql}
-                  {date_clause}
-                """,
-                *params,
-            )
-
-            # ─ Total order count (sales activity) ──────────────────────
-            orders = await conn.fetchrow(
-                f"""
-                SELECT COUNT(*)                                 AS total_orders,
-                       COALESCE(SUM(total_amount),0)::numeric(14,2) AS total_sales
-                FROM   orders
-                WHERE  restaurant_id = $1::uuid
-                  AND  LOWER(status) IN ('confirmed','preparing','ready','completed','served','delivered')
-                  {date_clause}
-                """,
-                *params,
-            )
+        # Map row → previous local-variable shape so the response block
+        # below stays unchanged.
+        cash    = {"collected": row["collected"], "refunded": row["refunded"], "tx_count": row["tx_count"]}
+        online_captured = row["online_captured"]
+        online  = {
+            "pending_gross":          row["pending_gross"],
+            "pending_net":            row["pending_net"],
+            "settled_lifetime":       row["settled_lifetime"],
+            "settled_gross_lifetime": row["settled_gross_lifetime"],
+            "failed_or_reversed":     row["failed_or_reversed"],
+            "platform_fee_paid":      row["platform_fee_paid"],
+            "gst_on_fee_paid":        row["gst_on_fee_paid"],
+            "settled_count":          row["settled_count"],
+            "pending_count":          row["pending_count"],
+        }
+        orders  = {"total_orders": row["total_orders"], "total_sales": row["total_sales"]}
 
         cash_collected = _f(cash["collected"])
         cash_refunded  = _f(cash["refunded"])
