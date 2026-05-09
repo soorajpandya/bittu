@@ -68,13 +68,36 @@ class MerchantWalletService:
     # ────────────────────────────────────────────────────────────────────
     # WALLET SNAPSHOT
     # ────────────────────────────────────────────────────────────────────
-    async def wallet(self, user: UserContext) -> dict:
+    async def wallet(
+        self,
+        user: UserContext,
+        *,
+        as_of_date: Optional[date] = None,
+    ) -> dict:
         """
         Single-call snapshot of every balance an accountant cares about.
         All numbers are derived from immutable ledger sources.
+
+        If `as_of_date` is provided, only records created on or before the end
+        of that day (UTC) are included — useful for historical snapshots.
         """
         rid = _restaurant_id(user)
         owner = _owner_id(user)
+
+        # Build cutoff (end-of-day UTC) for historical snapshots.
+        if as_of_date is not None:
+            cutoff = datetime.combine(
+                as_of_date, datetime.max.time()
+            ).replace(tzinfo=timezone.utc)
+            as_of_iso = cutoff.isoformat()
+            date_clause = " AND created_at <= $2::timestamptz"
+            params = (rid, cutoff)
+        else:
+            cutoff = None
+            as_of_iso = datetime.now(timezone.utc).isoformat()
+            date_clause = ""
+            params = (rid,)
+
         async with get_connection() as conn:
             cash_methods_sql = "(" + ",".join(f"'{m}'" for m in CASH_METHODS) + ")"
 
@@ -90,13 +113,14 @@ class MerchantWalletService:
                 FROM   payments
                 WHERE  restaurant_id = $1::uuid
                   AND  LOWER(method) IN {cash_methods_sql}
+                  {date_clause}
                 """,
-                rid,
+                *params,
             )
 
             # ─ Online side: settlement-driven ──────────────────────────
             online = await conn.fetchrow(
-                """
+                f"""
                 SELECT
                   COALESCE(SUM(gross_amount)
                     FILTER (WHERE settlement_status IN ('pending','processing','sent_to_bank'))
@@ -124,8 +148,9 @@ class MerchantWalletService:
                       AS pending_count
                 FROM   bittu_settlements
                 WHERE  restaurant_id = $1::uuid
+                  {date_clause}
                 """,
-                rid,
+                *params,
             )
 
             # ─ Online captured this period (for "online sales lifetime") ─
@@ -136,20 +161,22 @@ class MerchantWalletService:
                 WHERE  restaurant_id = $1::uuid
                   AND  status='completed'
                   AND  LOWER(method) NOT IN {cash_methods_sql}
+                  {date_clause}
                 """,
-                rid,
+                *params,
             )
 
             # ─ Total order count (sales activity) ──────────────────────
             orders = await conn.fetchrow(
-                """
+                f"""
                 SELECT COUNT(*)                                 AS total_orders,
                        COALESCE(SUM(total_amount),0)::numeric(14,2) AS total_sales
                 FROM   orders
                 WHERE  restaurant_id = $1::uuid
                   AND  LOWER(status) IN ('confirmed','preparing','ready','completed','served','delivered')
+                  {date_clause}
                 """,
-                rid,
+                *params,
             )
 
         cash_collected = _f(cash["collected"])
@@ -163,7 +190,8 @@ class MerchantWalletService:
 
         return {
             "restaurant_id": rid,
-            "as_of":         datetime.now(timezone.utc).isoformat(),
+            "as_of":         as_of_iso,
+            "as_of_date":    as_of_date.isoformat() if as_of_date else None,
             # ─ Top-line activity ──────────────────────────────────────
             "sales": {
                 "total_orders":   int(orders["total_orders"] or 0),

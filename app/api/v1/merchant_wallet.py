@@ -30,10 +30,14 @@ logger = get_logger(__name__)
 @router.get("")
 @router.get("/")
 async def wallet(
+    as_of_date: Optional[date] = Query(
+        None,
+        description="Snapshot as of end of this date (UTC). Defaults to live/now.",
+    ),
     user: UserContext = Depends(require_permission("bank_recon.read")),
 ):
     """All balances + lifetime stats in a single payload."""
-    return await merchant_wallet_service.wallet(user)
+    return await merchant_wallet_service.wallet(user, as_of_date=as_of_date)
 
 
 # ── Fee preview ────────────────────────────────────────────────────────
