@@ -5,10 +5,12 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.core.auth import UserContext, require_permission
+from app.core.cache import cached_route, invalidate_prefix
 from app.services.offer_service import OfferService
 
 router = APIRouter(prefix="/offers", tags=["Offers"])
 _svc = OfferService()
+_CACHE_PREFIX = "offers"
 
 
 class OfferCreate(BaseModel):
@@ -38,6 +40,7 @@ class OfferUpdate(BaseModel):
 
 
 @router.get("")
+@cached_route(prefix=_CACHE_PREFIX, ttl=120)
 async def list_offers(
     active_only: bool = False,
     user: UserContext = Depends(require_permission("promotion.read")),
@@ -46,6 +49,7 @@ async def list_offers(
 
 
 @router.get("/{offer_id}")
+@cached_route(prefix=_CACHE_PREFIX, ttl=120)
 async def get_offer(
     offer_id: int,
     user: UserContext = Depends(require_permission("promotion.read")),
@@ -58,7 +62,9 @@ async def create_offer(
     body: OfferCreate,
     user: UserContext = Depends(require_permission("promotion.write")),
 ):
-    return await _svc.create_offer(user, body.model_dump())
+    result = await _svc.create_offer(user, body.model_dump())
+    await invalidate_prefix(_CACHE_PREFIX, user)
+    return result
 
 
 @router.patch("/{offer_id}")
@@ -67,7 +73,9 @@ async def update_offer(
     body: OfferUpdate,
     user: UserContext = Depends(require_permission("promotion.write")),
 ):
-    return await _svc.update_offer(user, offer_id, body.model_dump(exclude_unset=True))
+    result = await _svc.update_offer(user, offer_id, body.model_dump(exclude_unset=True))
+    await invalidate_prefix(_CACHE_PREFIX, user)
+    return result
 
 
 @router.delete("/{offer_id}")
@@ -75,4 +83,6 @@ async def delete_offer(
     offer_id: int,
     user: UserContext = Depends(require_permission("promotion.delete")),
 ):
-    return await _svc.delete_offer(user, offer_id)
+    result = await _svc.delete_offer(user, offer_id)
+    await invalidate_prefix(_CACHE_PREFIX, user)
+    return result

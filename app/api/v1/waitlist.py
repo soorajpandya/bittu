@@ -22,10 +22,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.core.auth import UserContext, require_permission
+from app.core.cache import cached_route, invalidate_prefix
 from app.services.waitlist_service import WaitlistService
 
 router = APIRouter(prefix="/waitlist", tags=["Waitlist"])
 _svc = WaitlistService()
+_CACHE_PREFIX = "waitlist"
 
 
 # ── Request / Response models ─────────────────────────────────
@@ -66,7 +68,7 @@ async def add_to_waitlist(
     user: UserContext = Depends(require_permission("waitlist.read")),
 ):
     """Add a customer to the waitlist."""
-    return await _svc.add_entry(
+    result = await _svc.add_entry(
         user,
         customer_name=body.customer_name,
         party_size=body.party_size,
@@ -74,9 +76,12 @@ async def add_to_waitlist(
         source=body.source,
         notes=body.notes,
     )
+    await invalidate_prefix(_CACHE_PREFIX, user)
+    return result
 
 
 @router.get("")
+@cached_route(prefix=_CACHE_PREFIX, ttl=10)
 async def get_queue(
     status: Optional[str] = Query(None, pattern=r"^(waiting|notified|seated|skipped|cancelled)$"),
     limit: int = Query(50, ge=1, le=200),
@@ -88,6 +93,7 @@ async def get_queue(
 
 
 @router.get("/stats")
+@cached_route(prefix=_CACHE_PREFIX, ttl=30)
 async def get_stats(
     user: UserContext = Depends(require_permission("waitlist.admin")),
 ):
@@ -96,6 +102,7 @@ async def get_stats(
 
 
 @router.get("/history")
+@cached_route(prefix=_CACHE_PREFIX, ttl=60)
 async def get_history(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -117,6 +124,7 @@ async def notify_next(
     result = await _svc.notify_next(user, table_id=body.table_id)
     if not result:
         raise HTTPException(404, "No matching customer or no available table")
+    await invalidate_prefix(_CACHE_PREFIX, user)
     return result
 
 
@@ -125,7 +133,10 @@ async def expire_check(
     user: UserContext = Depends(require_permission("waitlist.read")),
 ):
     """Check and expire overdue notified entries."""
-    return {"expired": await _svc.expire_overdue(user)}
+    expired = await _svc.expire_overdue(user)
+    if expired:
+        await invalidate_prefix(_CACHE_PREFIX, user)
+    return {"expired": expired}
 
 
 @router.post("/{entry_id}/seat")
@@ -134,7 +145,9 @@ async def seat_customer(
     user: UserContext = Depends(require_permission("waitlist.manage")),
 ):
     """Seat a waitlisted customer."""
-    return await _svc.seat_customer(user, entry_id)
+    result = await _svc.seat_customer(user, entry_id)
+    await invalidate_prefix(_CACHE_PREFIX, user)
+    return result
 
 
 @router.post("/{entry_id}/skip")
@@ -144,7 +157,9 @@ async def skip_customer(
     user: UserContext = Depends(require_permission("waitlist.manage")),
 ):
     """Skip a waitlisted customer (no-show or manual)."""
-    return await _svc.skip_customer(user, entry_id, reason=reason)
+    result = await _svc.skip_customer(user, entry_id, reason=reason)
+    await invalidate_prefix(_CACHE_PREFIX, user)
+    return result
 
 
 @router.patch("/{entry_id}/cancel")
@@ -153,7 +168,9 @@ async def cancel_entry(
     user: UserContext = Depends(require_permission("waitlist.read")),
 ):
     """Cancel a waitlist entry."""
-    return await _svc.cancel_entry(user, entry_id)
+    result = await _svc.cancel_entry(user, entry_id)
+    await invalidate_prefix(_CACHE_PREFIX, user)
+    return result
 
 
 @router.put("/reorder")
@@ -162,10 +179,13 @@ async def reorder_queue(
     user: UserContext = Depends(require_permission("waitlist.admin")),
 ):
     """Admin reorder the waitlist queue."""
-    return await _svc.reorder(user, body.ordered_ids)
+    result = await _svc.reorder(user, body.ordered_ids)
+    await invalidate_prefix(_CACHE_PREFIX, user)
+    return result
 
 
 @router.get("/settings")
+@cached_route(prefix=_CACHE_PREFIX, ttl=300)
 async def get_settings(
     user: UserContext = Depends(require_permission("waitlist.admin")),
 ):
@@ -179,7 +199,9 @@ async def update_settings(
     user: UserContext = Depends(require_permission("waitlist.admin")),
 ):
     """Update waitlist settings."""
-    return await _svc.update_settings(user, body.model_dump(exclude_none=True))
+    result = await _svc.update_settings(user, body.model_dump(exclude_none=True))
+    await invalidate_prefix(_CACHE_PREFIX, user)
+    return result
 
 
 # ── Public endpoints (no auth) ───────────────────────────────

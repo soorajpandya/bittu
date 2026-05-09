@@ -19,6 +19,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
 from app.core.auth import UserContext, require_permission
+from app.core.cache import cached_route
 from app.core.logging import get_logger
 from app.services.merchant_wallet_service import merchant_wallet_service
 
@@ -37,7 +38,25 @@ async def wallet(
     user: UserContext = Depends(require_permission("bank_recon.read")),
 ):
     """All balances + lifetime stats in a single payload."""
+    return await _cached_wallet(as_of_date, user)
+
+
+# Historical snapshots are immutable, so we can cache them for a long time.
+# Live snapshots get a short TTL so realtime mutations show up quickly.
+@cached_route(prefix="merchant_wallet", ttl=15)
+async def _cached_wallet_live(as_of_date, user: UserContext):
     return await merchant_wallet_service.wallet(user, as_of_date=as_of_date)
+
+
+@cached_route(prefix="merchant_wallet_hist", ttl=86400)
+async def _cached_wallet_hist(as_of_date, user: UserContext):
+    return await merchant_wallet_service.wallet(user, as_of_date=as_of_date)
+
+
+async def _cached_wallet(as_of_date, user: UserContext):
+    if as_of_date is None:
+        return await _cached_wallet_live(as_of_date, user)
+    return await _cached_wallet_hist(as_of_date, user)
 
 
 # ── Fee preview ────────────────────────────────────────────────────────

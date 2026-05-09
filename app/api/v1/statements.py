@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, Query, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.auth import UserContext, require_permission
+from app.core.cache import cached_route
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.services.statement_service import statement_service
@@ -94,6 +95,16 @@ async def get_summary(
     from_date: Optional[date] = Query(None, description="Start date (default: 1st of current month)"),
     to_date: Optional[date]   = Query(None, description="End date (default: today)"),
     user: UserContext = Depends(require_permission("statements.read")),
+):
+    return await _cached_summary(branch_id, from_date, to_date, user)
+
+
+@cached_route(prefix="statements", ttl=30)
+async def _cached_summary(
+    branch_id: Optional[str],
+    from_date: Optional[date],
+    to_date: Optional[date],
+    user: UserContext,
 ):
     restaurant_id = _rid(user)
     effective_branch = branch_id or _bid(user)

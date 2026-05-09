@@ -5,10 +5,12 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.core.auth import UserContext, require_permission
+from app.core.cache import cached_route, invalidate_prefix
 from app.services.coupon_service import CouponService
 
 router = APIRouter(prefix="/coupons", tags=["Coupons"])
 _svc = CouponService()
+_CACHE_PREFIX = "coupons"
 
 
 class CouponCreate(BaseModel):
@@ -40,6 +42,7 @@ class CouponUpdate(BaseModel):
 
 
 @router.get("")
+@cached_route(prefix=_CACHE_PREFIX, ttl=120)
 async def list_coupons(
     active_only: bool = False,
     user: UserContext = Depends(require_permission("promotion.read")),
@@ -48,6 +51,7 @@ async def list_coupons(
 
 
 @router.get("/{coupon_id}")
+@cached_route(prefix=_CACHE_PREFIX, ttl=120)
 async def get_coupon(
     coupon_id: int,
     user: UserContext = Depends(require_permission("promotion.read")),
@@ -56,6 +60,7 @@ async def get_coupon(
 
 
 @router.get("/{coupon_id}/usage")
+@cached_route(prefix=_CACHE_PREFIX, ttl=30)
 async def get_coupon_usage(
     coupon_id: int,
     user: UserContext = Depends(require_permission("promotion.read")),
@@ -68,7 +73,9 @@ async def create_coupon(
     body: CouponCreate,
     user: UserContext = Depends(require_permission("promotion.write")),
 ):
-    return await _svc.create_coupon(user, body.model_dump())
+    result = await _svc.create_coupon(user, body.model_dump())
+    await invalidate_prefix(_CACHE_PREFIX, user)
+    return result
 
 
 @router.patch("/{coupon_id}")
@@ -77,7 +84,9 @@ async def update_coupon(
     body: CouponUpdate,
     user: UserContext = Depends(require_permission("promotion.write")),
 ):
-    return await _svc.update_coupon(user, coupon_id, body.model_dump(exclude_unset=True))
+    result = await _svc.update_coupon(user, coupon_id, body.model_dump(exclude_unset=True))
+    await invalidate_prefix(_CACHE_PREFIX, user)
+    return result
 
 
 @router.delete("/{coupon_id}")
@@ -85,4 +94,6 @@ async def delete_coupon(
     coupon_id: int,
     user: UserContext = Depends(require_permission("promotion.delete")),
 ):
-    return await _svc.delete_coupon(user, coupon_id)
+    result = await _svc.delete_coupon(user, coupon_id)
+    await invalidate_prefix(_CACHE_PREFIX, user)
+    return result

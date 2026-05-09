@@ -4,10 +4,12 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.core.auth import UserContext, require_permission
+from app.core.cache import cached_route, invalidate_prefix
 from app.services.restaurant_settings_service import RestaurantSettingsService
 
 router = APIRouter(prefix="/restaurant-settings", tags=["Restaurant Settings"])
 _svc = RestaurantSettingsService()
+_CACHE_PREFIX = "restaurant_settings"
 
 
 class SettingsUpdate(BaseModel):
@@ -29,6 +31,7 @@ class SettingsUpdate(BaseModel):
 
 
 @router.get("")
+@cached_route(prefix=_CACHE_PREFIX, ttl=300)
 async def get_settings(
     user: UserContext = Depends(require_permission("settings.read")),
 ):
@@ -40,4 +43,6 @@ async def update_settings(
     body: SettingsUpdate,
     user: UserContext = Depends(require_permission("settings.admin")),
 ):
-    return await _svc.upsert_settings(user, body.model_dump(exclude_unset=True))
+    result = await _svc.upsert_settings(user, body.model_dump(exclude_unset=True))
+    await invalidate_prefix(_CACHE_PREFIX, user)
+    return result

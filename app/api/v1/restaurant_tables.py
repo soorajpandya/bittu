@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, Query
 
 from app.core.auth import UserContext, get_current_user
+from app.core.cache import cached_route
 from app.core.database import get_connection
 from app.core.logging import get_logger
 
@@ -10,6 +11,7 @@ logger = get_logger(__name__)
 
 
 @router.get("")
+@cached_route(prefix="restaurant_tables", ttl=15)
 async def list_tables(
     include_orders: bool = Query(False),
     user: UserContext = Depends(get_current_user),
