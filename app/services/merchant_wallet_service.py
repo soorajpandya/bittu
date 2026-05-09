@@ -73,13 +73,22 @@ class MerchantWalletService:
         user: UserContext,
         *,
         as_of_date: Optional[date] = None,
+        from_date: Optional[date] = None,
+        to_date: Optional[date] = None,
     ) -> dict:
         """
         Single-call snapshot of every balance an accountant cares about.
         All numbers are derived from immutable ledger sources.
 
-        If `as_of_date` is provided, only records created on or before the end
-        of that day (UTC) are included — useful for historical snapshots.
+        If `from_date`/`to_date` are provided, every aggregate is scoped to
+        that window (inclusive, UTC end-of-day on `to_date`). Use this for
+        Today / This Week / This Month / Custom range KPIs.
+
+        Otherwise, if `as_of_date` is provided, only records created on or
+        before the end of that day (UTC) are included — historical lifetime
+        snapshot.
+
+        With no params it's a live lifetime snapshot.
 
         PERF: All four aggregates are computed in ONE round trip via CTEs,
         and we avoid LOWER() on indexed columns so the planner can use
@@ -87,14 +96,28 @@ class MerchantWalletService:
         """
         rid = _restaurant_id(user)
 
-        # Build cutoff (end-of-day UTC) for historical snapshots.
-        if as_of_date is not None:
-            cutoff = datetime.combine(
+        # Resolve the time window. A from/to range takes precedence over
+        # as_of_date. `from_ts` and `to_ts` are passed as parameters; either
+        # may be NULL to mean "no lower/upper bound".
+        from_ts: Optional[datetime] = None
+        to_ts:   Optional[datetime] = None
+
+        if from_date is not None or to_date is not None:
+            if from_date is not None:
+                from_ts = datetime.combine(
+                    from_date, datetime.min.time()
+                ).replace(tzinfo=timezone.utc)
+            if to_date is not None:
+                to_ts = datetime.combine(
+                    to_date, datetime.max.time()
+                ).replace(tzinfo=timezone.utc)
+            as_of_iso = (to_ts or datetime.now(timezone.utc)).isoformat()
+        elif as_of_date is not None:
+            to_ts = datetime.combine(
                 as_of_date, datetime.max.time()
             ).replace(tzinfo=timezone.utc)
-            as_of_iso = cutoff.isoformat()
+            as_of_iso = to_ts.isoformat()
         else:
-            cutoff = None
             as_of_iso = datetime.now(timezone.utc).isoformat()
 
         # Pre-compute case variants once — avoids LOWER() on the column,
@@ -106,9 +129,10 @@ class MerchantWalletService:
         for s in ("confirmed", "preparing", "ready", "completed", "served", "delivered"):
             order_status_variants.extend({s, s.upper(), s.capitalize()})
 
-        # Cutoff clause is parameterised: when NULL the comparison is skipped.
-        # Using `($2::timestamptz IS NULL OR created_at <= $2)` lets one
-        # prepared plan serve both live and historical calls.
+        # Cutoff clauses are parameterised: when NULL the comparison is skipped.
+        # Using `($2::timestamptz IS NULL OR created_at >= $2)` and
+        # `($3::timestamptz IS NULL OR created_at <= $3)` lets one prepared
+        # plan serve live, historical, and ranged calls.
         sql = """
         WITH cash AS (
           SELECT
@@ -117,16 +141,18 @@ class MerchantWalletService:
             COUNT(*)              FILTER (WHERE status='completed')                  AS tx_count
           FROM payments
           WHERE restaurant_id = $1::uuid
-            AND method = ANY($3::text[])
-            AND ($2::timestamptz IS NULL OR created_at <= $2::timestamptz)
+            AND method = ANY($4::text[])
+            AND ($2::timestamptz IS NULL OR created_at >= $2::timestamptz)
+            AND ($3::timestamptz IS NULL OR created_at <= $3::timestamptz)
         ),
         online_captured AS (
           SELECT COALESCE(SUM(amount),0)::numeric(14,2) AS amount
           FROM payments
           WHERE restaurant_id = $1::uuid
             AND status = 'completed'
-            AND NOT (method = ANY($3::text[]))
-            AND ($2::timestamptz IS NULL OR created_at <= $2::timestamptz)
+            AND NOT (method = ANY($4::text[]))
+            AND ($2::timestamptz IS NULL OR created_at >= $2::timestamptz)
+            AND ($3::timestamptz IS NULL OR created_at <= $3::timestamptz)
         ),
         settle AS (
           SELECT
@@ -155,7 +181,8 @@ class MerchantWalletService:
             COUNT(*) FILTER (WHERE settlement_status IN ('pending','processing','sent_to_bank')) AS pending_count
           FROM bittu_settlements
           WHERE restaurant_id = $1::uuid
-            AND ($2::timestamptz IS NULL OR created_at <= $2::timestamptz)
+            AND ($2::timestamptz IS NULL OR created_at >= $2::timestamptz)
+            AND ($3::timestamptz IS NULL OR created_at <= $3::timestamptz)
         ),
         ords AS (
           SELECT
@@ -163,8 +190,9 @@ class MerchantWalletService:
             COALESCE(SUM(total_amount),0)::numeric(14,2)   AS total_sales
           FROM orders
           WHERE restaurant_id = $1::uuid
-            AND status = ANY($4::text[])
-            AND ($2::timestamptz IS NULL OR created_at <= $2::timestamptz)
+            AND status = ANY($5::text[])
+            AND ($2::timestamptz IS NULL OR created_at >= $2::timestamptz)
+            AND ($3::timestamptz IS NULL OR created_at <= $3::timestamptz)
         )
         SELECT
           cash.collected, cash.refunded, cash.tx_count,
@@ -181,7 +209,8 @@ class MerchantWalletService:
             row = await conn.fetchrow(
                 sql,
                 rid,
-                cutoff,
+                from_ts,
+                to_ts,
                 cash_methods_variants,
                 order_status_variants,
             )
@@ -216,6 +245,8 @@ class MerchantWalletService:
             "restaurant_id": rid,
             "as_of":         as_of_iso,
             "as_of_date":    as_of_date.isoformat() if as_of_date else None,
+            "from_date":     from_date.isoformat() if from_date else None,
+            "to_date":       to_date.isoformat() if to_date else None,
             # ─ Top-line activity ──────────────────────────────────────
             "sales": {
                 "total_orders":   int(orders["total_orders"] or 0),

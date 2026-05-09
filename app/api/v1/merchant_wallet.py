@@ -33,30 +33,59 @@ logger = get_logger(__name__)
 async def wallet(
     as_of_date: Optional[date] = Query(
         None,
-        description="Snapshot as of end of this date (UTC). Defaults to live/now.",
+        description="Snapshot as of end of this date (UTC). Defaults to live/now. "
+                    "Ignored when from_date/to_date is provided.",
+    ),
+    from_date: Optional[date] = Query(
+        None,
+        description="Start of period (inclusive, UTC). Use with to_date for "
+                    "Today / This Week / This Month / Custom range.",
+    ),
+    to_date: Optional[date] = Query(
+        None,
+        description="End of period (inclusive, UTC). Defaults to today when "
+                    "from_date is provided without to_date.",
     ),
     user: UserContext = Depends(require_permission("bank_recon.read")),
 ):
-    """All balances + lifetime stats in a single payload."""
-    return await _cached_wallet(as_of_date, user)
+    """
+    All balances + sales totals for a period.
+
+    - No params           → lifetime snapshot (live).
+    - `as_of_date`        → historical lifetime snapshot up to end of that day.
+    - `from_date`/`to_date` → period-scoped aggregates (Today / This Week /
+                              This Month / Custom). Overrides `as_of_date`.
+    """
+    return await _cached_wallet(as_of_date, from_date, to_date, user)
 
 
 # Historical snapshots are immutable, so we can cache them for a long time.
 # Live snapshots get a short TTL so realtime mutations show up quickly.
 @cached_route(prefix="merchant_wallet", ttl=15)
-async def _cached_wallet_live(as_of_date, user: UserContext):
-    return await merchant_wallet_service.wallet(user, as_of_date=as_of_date)
+async def _cached_wallet_live(as_of_date, from_date, to_date, user: UserContext):
+    return await merchant_wallet_service.wallet(
+        user, as_of_date=as_of_date, from_date=from_date, to_date=to_date,
+    )
 
 
 @cached_route(prefix="merchant_wallet_hist", ttl=86400)
-async def _cached_wallet_hist(as_of_date, user: UserContext):
-    return await merchant_wallet_service.wallet(user, as_of_date=as_of_date)
+async def _cached_wallet_hist(as_of_date, from_date, to_date, user: UserContext):
+    return await merchant_wallet_service.wallet(
+        user, as_of_date=as_of_date, from_date=from_date, to_date=to_date,
+    )
 
 
-async def _cached_wallet(as_of_date, user: UserContext):
-    if as_of_date is None:
-        return await _cached_wallet_live(as_of_date, user)
-    return await _cached_wallet_hist(as_of_date, user)
+async def _cached_wallet(as_of_date, from_date, to_date, user: UserContext):
+    # A fully-historical window (to_date strictly before today) is immutable,
+    # so it can use the long-TTL bucket. Anything touching today is "live".
+    today = date.today()
+    is_historical = (
+        (from_date is None and as_of_date is not None and as_of_date < today)
+        or (to_date is not None and to_date < today)
+    )
+    if is_historical:
+        return await _cached_wallet_hist(as_of_date, from_date, to_date, user)
+    return await _cached_wallet_live(as_of_date, from_date, to_date, user)
 
 
 # ── Fee preview ────────────────────────────────────────────────────────
@@ -77,7 +106,7 @@ async def transactions(
     status:    Optional[str]  = Query(None, description="completed, refunded, pending, ..."),
     from_date: Optional[date] = Query(None),
     to_date:   Optional[date] = Query(None),
-    limit:     int = Query(50, ge=1, le=200),
+    limit:     int = Query(50, ge=1, le=1000),
     offset:    int = Query(0,  ge=0),
     user: UserContext = Depends(require_permission("bank_recon.read")),
 ):
@@ -96,7 +125,7 @@ async def settlements(
     status:    Optional[str]  = Query(None, description="pending, processing, sent_to_bank, settled, failed, reversed"),
     from_date: Optional[date] = Query(None),
     to_date:   Optional[date] = Query(None),
-    limit:     int = Query(50, ge=1, le=200),
+    limit:     int = Query(50, ge=1, le=1000),
     offset:    int = Query(0,  ge=0),
     user: UserContext = Depends(require_permission("bank_recon.read")),
 ):
