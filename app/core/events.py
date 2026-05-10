@@ -39,10 +39,29 @@ TABLE_ORDER_PLACED = "table.order_placed"
 TABLE_STATUS_CHANGED = "table.status_changed"
 TABLE_CALL_WAITER = "table.call_waiter"
 
-# Inventory events
+# Inventory events (legacy — kept for backward compatibility)
 INVENTORY_DEDUCTED = "inventory.deducted"
 INVENTORY_RESTORED = "inventory.restored"
 INVENTORY_LOW_STOCK = "inventory.low_stock"
+
+# Inventory events (event-sourced architecture — Section 2)
+# Every change to physical stock emits exactly one of these.
+INVENTORY_PURCHASED              = "inventory.purchased"
+INVENTORY_CONSUMED               = "inventory.consumed"
+INVENTORY_WASTED                 = "inventory.wasted"
+INVENTORY_EXPIRED                = "inventory.expired"
+INVENTORY_TRANSFERRED_OUT        = "inventory.transferred_out"
+INVENTORY_TRANSFERRED_IN         = "inventory.transferred_in"
+INVENTORY_ADJUSTED               = "inventory.adjusted"
+INVENTORY_RECOUNTED              = "inventory.recounted"
+INVENTORY_RETURN_TO_VENDOR       = "inventory.return_to_vendor"
+INVENTORY_RESTOCK_CANCELLED      = "inventory.restock_cancelled_order"
+INVENTORY_OUT_OF_STOCK           = "inventory.out_of_stock"
+INVENTORY_NEGATIVE_STOCK         = "inventory.negative_stock"
+INVENTORY_BATCH_EXPIRING         = "inventory.batch_expiring"
+INVENTORY_ALERT_RAISED           = "inventory.alert_raised"
+INVENTORY_SNAPSHOT_BUILT         = "inventory.snapshot_built"
+INVENTORY_RECONCILIATION_DRIFT   = "inventory.reconciliation_drift"
 
 # Delivery events
 DELIVERY_ASSIGNED = "delivery.assigned"

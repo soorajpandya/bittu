@@ -300,92 +300,69 @@ async def _create_order_gst_invoice(event: DomainEvent, order_id: str):
 
 
 async def _write_ledger_and_cogs(event: DomainEvent, order_id: str, order_items: list[dict]):
-    """Write consumption entries to inventory_ledger and compute COGS."""
+    """Write consumption entries to inventory_ledger (event-sourced) and compute COGS.
+
+    Delegates ledger writes to InventoryEventService (idempotent dedup_keys,
+    domain-event fan-out) instead of raw INSERTs. Passes mirror_master=False
+    because the legacy InventoryService.deduct_for_order already mutated
+    `ingredients.current_stock` upstream.
+    """
+    from app.services.inventory_event_service import inventory_event_service
+
     restaurant_id = event.restaurant_id
     branch_id = event.branch_id
     user_id = event.user_id or ""
     total_cogs = 0.0
 
     try:
+        # 1. Append CONSUMED ledger events idempotently (correlation_id = order_id).
+        result = await inventory_event_service.consume_for_order(
+            restaurant_id=restaurant_id,
+            branch_id=branch_id,
+            order_id=order_id,
+            order_items=order_items,
+            user_id=user_id,
+            allow_negative=True,        # legacy path already gated availability
+            mirror_master=False,        # ingredients already mutated
+        )
+
+        # 2. Compute COGS from the events we just wrote (cost_per_unit × out_qty).
         async with get_connection() as conn:
-            for oi in order_items:
-                item_id = oi.get("item_id")
-                quantity = oi.get("quantity", 1)
+            cogs_row = await conn.fetchrow(
+                """
+                SELECT COALESCE(SUM(quantity_out * COALESCE(unit_cost,0)), 0) AS cogs
+                  FROM inventory_ledger
+                 WHERE reference_type = 'order'
+                   AND reference_id   = $1
+                   AND transaction_type = 'consumption'
+                   AND reversed_by IS NULL
+                """,
+                order_id,
+            )
+            total_cogs = float(cogs_row["cogs"] or 0)
 
-                # Try recipes first, fallback to item_ingredients
-                mappings = await conn.fetch(
-                    """
-                    SELECT ri.ingredient_id, ri.quantity_required, ri.waste_percent,
-                           i.cost_per_unit, i.name AS ingredient_name
-                    FROM recipe_ingredients ri
-                    JOIN recipes r ON r.id = ri.recipe_id AND r.is_active = true
-                    JOIN ingredients i ON i.id = ri.ingredient_id
-                    WHERE r.item_id = $1
-                    """,
-                    item_id,
-                )
-
-                if not mappings:
-                    # Fallback to legacy item_ingredients
-                    mappings = await conn.fetch(
-                        """
-                        SELECT ii.ingredient_id, ii.quantity_used AS quantity_required,
-                               0::NUMERIC AS waste_percent,
-                               i.cost_per_unit, i.name AS ingredient_name
-                        FROM item_ingredients ii
-                        JOIN ingredients i ON i.id = ii.ingredient_id
-                        WHERE ii.item_id = $1
-                        """,
-                        item_id,
-                    )
-
-                for m in mappings:
-                    qty_required = float(m["quantity_required"]) * quantity
-                    waste = float(m["waste_percent"] or 0) / 100
-                    qty_with_waste = qty_required * (1 + waste)
-                    unit_cost = float(m["cost_per_unit"] or 0)
-                    line_cost = qty_with_waste * unit_cost
-                    total_cogs += line_cost
-
-                    # Write to inventory_ledger
-                    await conn.execute(
-                        """
-                        INSERT INTO inventory_ledger
-                            (restaurant_id, branch_id, ingredient_id, transaction_type,
-                             quantity_in, quantity_out, unit_cost,
-                             reference_type, reference_id, notes, created_by)
-                        VALUES ($1, $2, $3, 'consumption', 0, $4, $5,
-                                'order', $6, $7, $8)
-                        """,
-                        restaurant_id,
-                        branch_id,
-                        str(m["ingredient_id"]),
-                        qty_with_waste,
-                        unit_cost,
-                        order_id,
-                        f"Order {order_id}: {m['ingredient_name']}",
-                        user_id,
-                    )
-
-            # Update COGS on the order
             if total_cogs > 0:
                 await conn.execute(
                     "UPDATE orders SET cost_of_goods_sold = $1 WHERE id = $2",
                     total_cogs, order_id,
                 )
 
-            # 4. Journal entry: DR COGS, CR Inventory (via accounting engine)
-            if total_cogs > 0 and restaurant_id:
-                from app.services.accounting_engine import accounting_engine
-                await accounting_engine.record_cogs(
-                    restaurant_id=restaurant_id,
-                    branch_id=branch_id,
-                    order_id=order_id,
-                    amount=total_cogs,
-                    created_by=user_id,
-                )
+        # 3. Journal entry: DR COGS, CR Inventory (via accounting engine)
+        if total_cogs > 0 and restaurant_id:
+            from app.services.accounting_engine import accounting_engine
+            await accounting_engine.record_cogs(
+                restaurant_id=restaurant_id,
+                branch_id=branch_id,
+                order_id=order_id,
+                amount=total_cogs,
+                created_by=user_id,
+            )
 
-        logger.info("erp_ledger_cogs_written", order_id=order_id, cogs=total_cogs)
+        logger.info(
+            "erp_ledger_cogs_written",
+            order_id=order_id, cogs=total_cogs,
+            consumed=len(result.get("consumed", [])),
+        )
     except Exception:
         logger.exception("erp_ledger_cogs_failed", order_id=order_id)
 
@@ -420,20 +397,31 @@ async def _handle_order_cancelled(event: DomainEvent):
 
 
 async def _reverse_ledger_and_cogs(event: DomainEvent, order_id: str):
-    """Reverse inventory_ledger consumption entries and COGS."""
+    """Reverse inventory_ledger consumption entries and COGS.
+
+    Uses InventoryEventService.reverse_event so each reversal is recorded as
+    a 'restock_cancelled_order' ledger row with `reverses_event` pointing back
+    at the original CONSUMED row (perfect audit trail). Idempotent — already
+    reversed events are skipped.
+    """
+    from app.services.inventory_event_service import (
+        inventory_event_service, INVENTORY_RESTOCK_CANCELLED,
+    )
+
     restaurant_id = event.restaurant_id
     branch_id = event.branch_id
     user_id = event.user_id or ""
 
     try:
         async with get_connection() as conn:
-            # Find original consumption entries
+            # Find original (un-reversed) consumption events for this order
             ledger_entries = await conn.fetch(
                 """
-                SELECT ingredient_id, quantity_out, unit_cost
-                FROM inventory_ledger
-                WHERE reference_type = 'order' AND reference_id = $1
-                  AND transaction_type = 'consumption'
+                SELECT event_id, ingredient_id, quantity_out, unit_cost
+                  FROM inventory_ledger
+                 WHERE reference_type = 'order' AND reference_id = $1
+                   AND transaction_type = 'consumption'
+                   AND reversed_by IS NULL
                 """,
                 order_id,
             )
@@ -444,21 +432,24 @@ async def _reverse_ledger_and_cogs(event: DomainEvent, order_id: str):
                 cost = float(entry["unit_cost"] or 0)
                 total_cogs_reversed += qty * cost
 
-                # Write return entry
-                await conn.execute(
-                    """
-                    INSERT INTO inventory_ledger
-                        (restaurant_id, branch_id, ingredient_id, transaction_type,
-                         quantity_in, quantity_out, unit_cost,
-                         reference_type, reference_id, notes, created_by)
-                    VALUES ($1, $2, $3, 'return', $4, 0, $5,
-                            'order', $6, 'Cancelled order restoration', $7)
-                    """,
-                    restaurant_id, branch_id,
-                    str(entry["ingredient_id"]),
-                    qty, cost, order_id, user_id,
+        # Append reversal events (mirror_master=False — legacy
+        # InventoryService.restore_for_order already mutated ingredients).
+        for entry in ledger_entries:
+            try:
+                await inventory_event_service.reverse_event(
+                    original_event_id=str(entry["event_id"]),
+                    reversal_event_type=INVENTORY_RESTOCK_CANCELLED,
+                    notes=f"Order {order_id} cancelled — restock",
+                    created_by=user_id,
+                )
+            except Exception:
+                logger.exception(
+                    "inv_reverse_event_failed",
+                    order_id=order_id,
+                    event_id=str(entry["event_id"]),
                 )
 
+        async with get_connection() as conn:
             # Reset COGS on order
             await conn.execute(
                 "UPDATE orders SET cost_of_goods_sold = 0 WHERE id = $1", order_id,
@@ -467,7 +458,6 @@ async def _reverse_ledger_and_cogs(event: DomainEvent, order_id: str):
             # Reverse COGS journal via accounting engine
             if total_cogs_reversed > 0 and restaurant_id:
                 from app.services.accounting_engine import accounting_engine
-                # Find the original COGS journal entry and reverse it
                 je_row = await conn.fetchrow(
                     "SELECT id FROM journal_entries WHERE restaurant_id = $1 "
                     "AND reference_type = 'inventory_consumption' AND reference_id = $2 "
@@ -481,7 +471,6 @@ async def _reverse_ledger_and_cogs(event: DomainEvent, order_id: str):
                         created_by=user_id,
                     )
                 else:
-                    # Fallback: create explicit reversal journal
                     await accounting_engine.create_journal_entry(
                         reference_type="inventory_consumption",
                         reference_id=f"cogs_rev_{order_id}",

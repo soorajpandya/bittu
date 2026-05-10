@@ -56,6 +56,7 @@ SYSTEM_ACCOUNTS = {
     "SALARY_EXPENSE":       ("SALARY_EXPENSE",      "5021"),
     "UTILITIES_EXPENSE":    ("UTILITIES_EXPENSE",   "5022"),
     "MISC_EXPENSE":         ("MISC_EXPENSE",        "5030"),
+    "WASTAGE_EXPENSE":      ("WASTAGE_EXPENSE",     "5040"),
 }
 
 VALID_REFERENCE_TYPES = {
@@ -66,6 +67,8 @@ VALID_REFERENCE_TYPES = {
     "settlement", "gateway_fee",
     "invoice", "invoice_void", "tax_payment",
     "bank_recon", "partial_refund", "chargeback",
+    "wastage", "inventory_purchase", "inventory_transfer",
+    "inventory_count",
 }
 
 

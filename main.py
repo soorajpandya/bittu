@@ -65,10 +65,33 @@ async def lifespan(app: FastAPI):
     from app.services.erp_event_handlers import register_erp_handlers
     register_erp_handlers()
 
+    # Register inventory → accounting bridge (Section 5)
+    from app.services.inventory_accounting_handlers import (
+        register_inventory_accounting_handlers,
+    )
+    register_inventory_accounting_handlers()
+
+    # Inventory snapshot scheduler (Section 9)
+    snapshot_task = None
+    try:
+        from app.services.inventory_snapshot_scheduler import (
+            start_inventory_snapshot_scheduler,
+        )
+        snapshot_task = start_inventory_snapshot_scheduler()
+    except Exception as exc:
+        logger.error("inventory_snapshot_scheduler_start_failed", error=str(exc))
+
     logger.info("startup_complete", db=db_ok, redis=redis_ok)
     yield
 
     # --- shutdown ---
+    if snapshot_task is not None:
+        snapshot_task.cancel()
+        try:
+            await snapshot_task
+        except asyncio.CancelledError:
+            pass
+
     if subscriber_task is not None:
         subscriber_task.cancel()
         try:

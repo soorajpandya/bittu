@@ -19,16 +19,16 @@ class ScanBase64In(BaseModel):
 @router.post("/ai-menu-scan")
 async def ai_menu_scan(
     body: ScanBase64In,
-    user: UserContext = Depends(require_permission("menu.manage")),
+    user: UserContext = Depends(require_permission("menu.delete")),
 ):
-    """AI menu scan — primary endpoint used by frontend."""
+    """AI menu scan — primary endpoint used by frontend. Owner-only."""
     return await _svc.scan_menu_image(body.image_base64, body.mime_type)
 
 
 @router.post("/base64")
 async def scan_menu_base64(
     body: ScanBase64In,
-    user: UserContext = Depends(require_permission("menu.manage")),
+    user: UserContext = Depends(require_permission("menu.delete")),
 ):
     """Scan a menu image provided as base64 string."""
     return await _svc.scan_menu_image(body.image_base64, body.mime_type)
@@ -37,7 +37,7 @@ async def scan_menu_base64(
 @router.post("/upload")
 async def scan_menu_upload(
     file: UploadFile = File(...),
-    user: UserContext = Depends(require_permission("menu.manage")),
+    user: UserContext = Depends(require_permission("menu.delete")),
 ):
     """Scan a menu image uploaded as multipart file."""
     content = await file.read()
