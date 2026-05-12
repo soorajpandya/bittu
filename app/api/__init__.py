@@ -11,7 +11,6 @@ from app.api.v1 import (
     delivery,
     delivery_partners,
     staff,
-    subscriptions,
     notifications,
     analytics,
     webhooks,
@@ -94,7 +93,6 @@ router.include_router(inventory.router)
 router.include_router(delivery.router)
 router.include_router(delivery_partners.router)
 router.include_router(staff.router)
-router.include_router(subscriptions.router)
 router.include_router(notifications.router)
 router.include_router(analytics.router)
 router.include_router(webhooks.router)
