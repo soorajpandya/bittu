@@ -1,4 +1,17 @@
-"""API v1 router package."""
+"""API root router.
+
+Mounts:
+    /api/v1/...                 legacy (current production surface)
+    /api/platform/v1/...        platform-admin domain (Phase-0 skeleton)
+    /api/merchant/v1/...        merchant domain (Phase-0 skeleton)
+    /api/branch/v1/...          branch/staff domain (Phase-0 skeleton)
+    /api/public/v1/...          public/customer-facing (Phase-0 skeleton)
+    /api/internal/v1/...        worker/M2M (Phase-0 skeleton, service-token gated)
+    /api/financial/v1/...       financial infrastructure (Phase-0 skeleton)
+
+The Phase-0 domain routers are mounted but currently expose no endpoints.
+Handlers migrate into them per docs/ARCHITECTURE_V2.md §21.
+"""
 from fastapi import APIRouter
 
 from app.api.v1 import (
@@ -218,3 +231,26 @@ router.include_router(statements.router)
 router.include_router(food_images.router)
 # ── Waitlist ──
 router.include_router(waitlist.router)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Phase-0 (ARCHITECTURE_V2): mount new domain routers alongside legacy.
+# These currently expose no endpoints — they are the cutover surface.
+# Handlers migrate into them per docs/ARCHITECTURE_V2.md §21.
+# ──────────────────────────────────────────────────────────────────────
+from app.api.platform import router as _platform_router
+from app.api.merchant import router as _merchant_router
+from app.api.branch import router as _branch_router
+from app.api.public import router as _public_router
+from app.api.internal import router as _internal_router
+from app.api.financial import router as _financial_router
+
+_legacy_v1_router = router
+router = APIRouter()
+router.include_router(_legacy_v1_router)              # /api/v1/...   (already prefixed)
+router.include_router(_platform_router,  prefix="/api")  # /api/platform/v1/...
+router.include_router(_merchant_router,  prefix="/api")  # /api/merchant/v1/...
+router.include_router(_branch_router,    prefix="/api")  # /api/branch/v1/...
+router.include_router(_public_router,    prefix="/api")  # /api/public/v1/...
+router.include_router(_internal_router,  prefix="/api")  # /api/internal/v1/...
+router.include_router(_financial_router, prefix="/api")  # /api/financial/v1/...
