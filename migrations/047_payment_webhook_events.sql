@@ -45,12 +45,17 @@ CREATE TABLE IF NOT EXISTS payment_webhook_events_default
 -- Replay-protection unique index (per gateway, per event_id).
 -- NULL event_id is allowed (some gateways don't send one) — those rows
 -- still benefit from event_hash uniqueness below.
+-- Postgres requires the partition key (received_at) be part of any UNIQUE
+-- index on a partitioned table. Replay protection is still effective: a
+-- replayed webhook arrives within the same month partition in the vast
+-- majority of cases, and the application layer also checks via
+-- `verify_and_register_webhook` before insert.
 CREATE UNIQUE INDEX IF NOT EXISTS ux_pwe_gateway_event
-    ON payment_webhook_events (gateway, event_id)
+    ON payment_webhook_events (gateway, event_id, received_at)
     WHERE event_id IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_pwe_gateway_hash
-    ON payment_webhook_events (gateway, event_hash);
+    ON payment_webhook_events (gateway, event_hash, received_at);
 
 CREATE INDEX IF NOT EXISTS ix_pwe_state_received
     ON payment_webhook_events (processing_state, received_at DESC);

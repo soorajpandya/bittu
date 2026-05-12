@@ -59,10 +59,12 @@ BEGIN
 
     -- Drop+recreate so this migration is idempotent.
     EXECUTE format('DROP POLICY IF EXISTS p_%s_tenant ON %I', target_table, target_table);
+    -- Cast user_id to UUID in the policy expression so this works whether
+    -- the column is stored as UUID or TEXT.
     EXECUTE format(
         'CREATE POLICY p_%s_tenant ON %I
-            USING (fn_rls_owner_match(user_id))
-            WITH CHECK (fn_rls_owner_match(user_id))',
+            USING (fn_rls_owner_match(user_id::uuid))
+            WITH CHECK (fn_rls_owner_match(user_id::uuid))',
         target_table, target_table
     );
 END $$;
