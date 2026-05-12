@@ -6,7 +6,6 @@ from app.core.auth import UserContext, require_permission
 from app.services.misc_service import (
     SyncLogService,
     PaymentReminderService,
-    TrialEligibilityService,
     UserFunnelService,
     TableSessionDeviceService,
 )
@@ -14,7 +13,6 @@ from app.services.misc_service import (
 router = APIRouter(prefix="/misc", tags=["Restaurant Settings"])
 _sync = SyncLogService()
 _reminders = PaymentReminderService()
-_trial = TrialEligibilityService()
 _funnel = UserFunnelService()
 _sessions = TableSessionDeviceService()
 
@@ -35,13 +33,6 @@ async def list_payment_reminders(
     user: UserContext = Depends(require_permission("settings.admin")),
 ):
     return await _reminders.list_reminders(user, limit=limit, offset=offset)
-
-
-@router.get("/trial-status")
-async def get_trial_status(
-    user: UserContext = Depends(require_permission("settings.admin")),
-):
-    return await _trial.get_trial_status(user)
 
 
 @router.get("/funnel-events")

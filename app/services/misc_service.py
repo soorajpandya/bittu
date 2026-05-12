@@ -72,19 +72,6 @@ class PaymentReminderService:
         return [dict(r) for r in rows]
 
 
-class TrialEligibilityService:
-
-    async def get_trial_status(self, user: UserContext) -> dict:
-        uid = user.owner_id if user.is_branch_user else user.user_id
-        async with get_connection() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM trial_eligibility WHERE user_id = $1", uid
-            )
-        if not row:
-            return {"eligible": True, "used": False}
-        return dict(row)
-
-
 class UserFunnelService:
 
     async def list_events(self, user: UserContext, limit: int = 100, offset: int = 0) -> list[dict]:

@@ -1661,41 +1661,6 @@ async def item_profitability(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 13. DAILY P&L
-# ═══════════════════════════════════════════════════════════════════════════
-
-@router.get("/pnl/daily")
-async def daily_pnl(
-    branch_id: Optional[str] = Query(None),
-    start_date: Optional[date] = Query(None),
-    end_date: Optional[date] = Query(None),
-    user: UserContext = Depends(require_permission("erp.read")),
-):
-    rid = _rid(user)
-    bid = _bid(user, branch_id)
-    if not start_date:
-        start_date = date.today() - timedelta(days=30)
-    if not end_date:
-        end_date = date.today()
-    clauses = ["restaurant_id = $1", "pnl_date >= $2", "pnl_date <= $3"]
-    params: list = [rid, start_date, end_date]
-    if bid:
-        params.append(bid)
-        clauses.append(f"branch_id = ${len(params)}::uuid")
-    sql = f"""
-        SELECT pnl_date, total_revenue, total_cogs, gross_profit,
-               operating_expenses, net_profit, tax_collected,
-               total_orders, avg_order_value
-          FROM daily_pnl
-         WHERE {' AND '.join(clauses)}
-         ORDER BY pnl_date DESC
-    """
-    async with get_connection() as conn:
-        rows = await conn.fetch(sql, *params)
-    return [dict(r) for r in rows]
-
-
-# ═══════════════════════════════════════════════════════════════════════════
 # 14. TAX RULES (Dynamic Rule Engine)
 # ═══════════════════════════════════════════════════════════════════════════
 

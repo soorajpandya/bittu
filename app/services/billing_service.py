@@ -1,4 +1,4 @@
-"""Billing & Invoice Service — Read-only for billing_history and invoices."""
+"""Billing & Invoice Service — Read-only for order invoices."""
 from app.core.auth import UserContext
 from app.core.database import get_connection
 from app.core.exceptions import NotFoundError
@@ -8,26 +8,6 @@ logger = get_logger(__name__)
 
 
 class BillingService:
-
-    async def list_billing_history(self, user: UserContext, limit: int = 50, offset: int = 0) -> list[dict]:
-        uid = user.owner_id if user.is_branch_user else user.user_id
-        async with get_connection() as conn:
-            rows = await conn.fetch(
-                "SELECT * FROM billing_history WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
-                uid, limit, offset,
-            )
-        return [dict(r) for r in rows]
-
-    async def get_billing_record(self, user: UserContext, record_id: int) -> dict:
-        uid = user.owner_id if user.is_branch_user else user.user_id
-        async with get_connection() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM billing_history WHERE id = $1 AND user_id = $2",
-                record_id, uid,
-            )
-        if not row:
-            raise NotFoundError("BillingRecord", record_id)
-        return dict(row)
 
     async def list_invoices(self, user: UserContext, limit: int = 50, offset: int = 0) -> list[dict]:
         uid = user.owner_id if user.is_branch_user else user.user_id
