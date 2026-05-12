@@ -1,15 +1,16 @@
-"""Endpoint-scope DI gate.
+"""Endpoint-scope DI gates (Phase-1, platform-aware).
 
-Usage:
-    from app.dependencies.scopes import require_scope
-    from app.core.scopes import PLATFORM_PAYOUTS_APPROVE
+Three flavors:
 
-    @router.post("/payouts/{id}/approve",
-                 dependencies=[require_scope(PLATFORM_PAYOUTS_APPROVE)])
-    async def approve(...): ...
+    require_scope("merchant:orders:write")
+        Any authenticated user whose role grants the scope.
 
-The scope→role resolution is delegated to app.core.auth (legacy
-ROLE_PERMISSIONS during Phase 1; pluggable matrix afterwards).
+    require_platform_scope("platform:payouts:approve")
+        Caller must be a platform admin (row in platform_admin_users)
+        AND have the scope in their platform-role bundle.
+
+    resolve_claims
+        Plain dependency that returns the request Claims object.
 
 See docs/ARCHITECTURE_V2.md §5 + §7.
 """
@@ -17,44 +18,58 @@ from __future__ import annotations
 
 from fastapi import Depends, HTTPException, status
 
-from app.core.auth import UserContext, get_current_user, ROLE_PERMISSIONS
+from app.core.auth import UserContext, get_current_user
+from app.core.claims import Claims, build_claims
 
 
-def _scope_matches(role_perms: set[str], required: str) -> bool:
-    """Match `required` against a wildcard-aware role permission set.
+# ── platform-admin lookup ───────────────────────────────────────────
+async def _is_platform_admin(user_id: str) -> bool:
+    from app.core.database import get_connection  # avoid cycle
+    try:
+        async with get_connection() as c:
+            return bool(await c.fetchval(
+                "SELECT fn_is_platform_admin($1::uuid)", user_id
+            ))
+    except Exception:
+        # Fail-closed: if the helper isn't deployed, no platform access.
+        return False
 
-    A role perm of "orders:*" matches required "orders:read".
-    A role perm of "*" matches anything.
-    Domain-prefixed scopes ("merchant:orders:read") fall back to the
-    last two segments for legacy roles.
-    """
-    if "*" in role_perms or required in role_perms:
-        return True
-    # wildcard: "domain:*"
-    head = required.rsplit(":", 1)[0]
-    if f"{head}:*" in role_perms:
-        return True
-    # legacy fallback: drop leading audience prefix ("merchant:orders:read"
-    # → "orders:read") so existing ROLE_PERMISSIONS sets continue to apply.
-    parts = required.split(":")
-    if len(parts) == 3:
-        legacy = ":".join(parts[1:])
-        if legacy in role_perms or f"{parts[1]}:*" in role_perms:
-            return True
-    return False
+
+async def resolve_claims(
+    user: UserContext = Depends(get_current_user),
+) -> Claims:
+    is_admin = await _is_platform_admin(user.user_id)
+    return build_claims(user, is_platform_admin=is_admin)
 
 
 def require_scope(scope: str):
-    """Build a FastAPI dependency that asserts the caller has `scope`."""
+    """Generic scope gate. Works for merchant + branch + platform users."""
 
-    async def _dep(user: UserContext = Depends(get_current_user)) -> UserContext:
-        role = (user.role or "").lower()
-        perms = ROLE_PERMISSIONS.get(role, set())
-        if not _scope_matches(perms, scope):
+    async def _dep(claims: Claims = Depends(resolve_claims)) -> Claims:
+        if not claims.has_scope(scope):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"missing_scope:{scope}",
             )
-        return user
+        return claims
+
+    return Depends(_dep)
+
+
+def require_platform_scope(scope: str):
+    """Platform-only scope gate. Caller must be platform admin."""
+
+    async def _dep(claims: Claims = Depends(resolve_claims)) -> Claims:
+        if not claims.is_platform_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="platform_admin_required",
+            )
+        if not claims.has_scope(scope):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"missing_scope:{scope}",
+            )
+        return claims
 
     return Depends(_dep)

@@ -248,6 +248,22 @@ from app.api.financial import router as _financial_router
 _legacy_v1_router = router
 router = APIRouter()
 router.include_router(_legacy_v1_router)              # /api/v1/...   (already prefixed)
+
+# ── Phase-2 (ARCHITECTURE_V2 §21): dual-mount admin routers under
+# /api/platform/v1/admin/* so frontends can migrate per-endpoint.
+# Legacy /api/v1/admin/* paths get a Deprecation/Sunset/Link header
+# via DeprecationHeaderMiddleware. No URL is removed in this phase.
+_platform_router.include_router(_admin_audit_events.router)
+_platform_router.include_router(_admin_disputes.router)
+_platform_router.include_router(_admin_refunds.router)
+_platform_router.include_router(_admin_payouts.router)
+_platform_router.include_router(_admin_recon_engine.router)
+_platform_router.include_router(_admin_fee_plans.router)
+_platform_router.include_router(_admin_fin_reports.router)
+_platform_router.include_router(_admin_merchant_kyc.router)
+_platform_router.include_router(_admin_merchant_statements.router)
+_platform_router.include_router(_admin_tax_invoices.router)
+
 router.include_router(_platform_router,  prefix="/api")  # /api/platform/v1/...
 router.include_router(_merchant_router,  prefix="/api")  # /api/merchant/v1/...
 router.include_router(_branch_router,    prefix="/api")  # /api/branch/v1/...

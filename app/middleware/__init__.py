@@ -197,3 +197,34 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                     "request_id": request_id,
                 },
             )
+
+
+# --------------------------------------------------------------
+# Deprecation header (used by ARCHITECTURE_V2 dual-mount cutover)
+# --------------------------------------------------------------
+
+class DeprecationHeaderMiddleware(BaseHTTPMiddleware):
+    """Stamp Deprecation/Sunset/Link headers on legacy paths.
+
+    Uses prefix ? (sunset_date, replacement_prefix) mapping. When a
+    request matches a prefix, the response is annotated per RFC 8594
+    so clients can discover and migrate to the new path.
+    """
+
+    # path-prefix ? (sunset ISO date, replacement-prefix template)
+    _LEGACY_MAP: dict[str, tuple[str, str]] = {
+        # Phase-2 dual-mount: legacy admin paths mirror under platform/v1.
+        "/api/v1/admin/": ("2026-12-31", "/api/platform/v1/admin/"),
+    }
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        response = await call_next(request)
+        path = request.url.path
+        for legacy_prefix, (sunset, new_prefix) in self._LEGACY_MAP.items():
+            if path.startswith(legacy_prefix):
+                successor = new_prefix + path[len(legacy_prefix):]
+                response.headers["Deprecation"] = "true"
+                response.headers["Sunset"] = sunset
+                response.headers["Link"] = f'<{successor}>; rel="successor-version"'
+                break
+        return response

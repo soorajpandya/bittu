@@ -21,6 +21,7 @@ from app.middleware import (
     RateLimitMiddleware,
     ErrorHandlerMiddleware,
     SecurityHeadersMiddleware,
+    DeprecationHeaderMiddleware,
 )
 from app.api import router as api_router
 from app.realtime import ws_endpoint, ws_session_endpoint, redis_subscriber
@@ -135,6 +136,7 @@ def create_app() -> FastAPI:
     # CORSMiddleware must be outermost so CORS headers are present
     # even on error responses from ErrorHandlerMiddleware.
     app.add_middleware(ErrorHandlerMiddleware)
+    app.add_middleware(DeprecationHeaderMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
