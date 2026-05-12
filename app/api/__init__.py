@@ -26,8 +26,7 @@ from app.api.v1 import (
     # ── Google Business Profile ──
     google_business,
     # ── KYC / Verification ──
-    kyc,
-    digilocker,
+    # (merchant-facing kyc/digilocker routers removed; admin-only via admin_merchant_kyc)
     # ── AI / Voice ──
     voice,
     menu_scan,
@@ -107,16 +106,6 @@ router.include_router(cashfree.router)
 router.include_router(zivonpay.router)
 # ── Google Business Profile ──
 router.include_router(google_business.router)
-# ── KYC / Verification ──
-router.include_router(kyc.router)
-router.include_router(digilocker.router)
-# ── Onboard alias (Flutter sends redirect_to /onboard/callback) ──
-router.add_api_route(
-    "/onboard/callback",
-    digilocker.digilocker_callback,
-    methods=["GET"],
-    tags=["KYC"],
-)
 # ── AI / Voice ──
 router.include_router(voice.router)
 router.include_router(menu_scan.router)
@@ -227,9 +216,7 @@ from app.api.v1 import fin_reports as _fin_reports
 router.include_router(_fin_reports.router)
 from app.api.v1 import admin_fin_reports as _admin_fin_reports
 router.include_router(_admin_fin_reports.router)
-# ── Merchant KYC & Onboarding (Phase 9) — merchant + admin routers ──
-from app.api.v1 import merchant_kyc as _merchant_kyc
-router.include_router(_merchant_kyc.router)
+# ── Merchant KYC & Onboarding (Phase 9) — admin only ──
 from app.api.v1 import admin_merchant_kyc as _admin_merchant_kyc
 router.include_router(_admin_merchant_kyc.router)
 # ── Fee Engine v2 (Phase 10) — admin only ──
