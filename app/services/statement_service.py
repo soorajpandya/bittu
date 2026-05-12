@@ -47,6 +47,11 @@ from app.core.exceptions import NotFoundError, ValidationError, ConflictError
 from app.core.logging import get_logger
 from app.services.accounting_engine import accounting_engine
 from app.services.activity_log_service import log_activity
+from app.services.merchant_ledger_integration import (
+    post_settlement_settled,
+    post_settlement_reversed,
+)
+from app.services.escrow_integration import release_holds_for_settlement
 
 logger = get_logger(__name__)
 
@@ -1114,6 +1119,24 @@ class StatementService:
         if new_status == "settled":
             await self._record_settlement_accounting(row, actor_id)
             await self._update_daily_closing_for_settlement(row)
+            # Mirror into the immutable merchant ledger (best-effort,
+            # idempotent on settlement_id).  Runs OUTSIDE the SERIALIZABLE
+            # transaction so a ledger error cannot rollback the status
+            # change — ledger is a parallel record, not the source of truth.
+            await post_settlement_settled(
+                settlement_row=dict(row),
+                actor_id=actor_id,
+            )
+            # Phase 2: release escrow holds for every payment in the batch.
+            await release_holds_for_settlement(
+                settlement_row=dict(row),
+                actor_id=actor_id,
+            )
+        elif new_status == "reversed":
+            await post_settlement_reversed(
+                settlement_row=dict(row),
+                actor_id=actor_id,
+            )
 
         await log_activity(
             user_id=actor_id,

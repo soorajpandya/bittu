@@ -38,6 +38,8 @@ from app.core.exceptions import (
 )
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.services.merchant_ledger_integration import post_payment_received
+from app.services.escrow_integration import hold_payment_in_escrow
 
 logger = get_logger(__name__)
 
@@ -136,6 +138,32 @@ class PaymentService:
                 await conn.execute(
                     "UPDATE orders SET status = 'Confirmed', updated_at = now() WHERE id = $1",
                     order_id,
+                )
+                # Mirror cash receipt into the immutable merchant ledger.
+                # Gateway-driven (online/razorpay) payments are NOT mirrored
+                # here on purpose — see merchant_ledger_integration for the
+                # contract.  Best-effort: never raises.
+                await post_payment_received(
+                    merchant_id=user.restaurant_id,
+                    payment_id=payment_id,
+                    amount=payment_amount,
+                    method=method,
+                    order_id=order_id,
+                    branch_id=tenant.get("branch_id"),
+                    actor_id=user.user_id,
+                    conn=conn,
+                )
+                # Phase 2: place the same amount into escrow until T+N
+                # cron releases it.  Best-effort, idempotent on payment_id.
+                await hold_payment_in_escrow(
+                    merchant_id=user.restaurant_id,
+                    payment_id=payment_id,
+                    amount=payment_amount,
+                    method=method,
+                    order_id=order_id,
+                    branch_id=tenant.get("branch_id"),
+                    actor_id=user.user_id,
+                    conn=conn,
                 )
 
         # Audit log
@@ -490,19 +518,13 @@ class PaymentService:
             )
 
     async def _audit_payment(self, user: UserContext, payment_id: str, action: str, data: dict):
-        """Write to audit log for payment actions."""
-        try:
-            async with get_connection() as conn:
-                await conn.execute(
-                    """
-                    INSERT INTO audit_log (restaurant_id, user_id, action, entity_type, entity_id, new_data)
-                    VALUES ($1, $2, $3, 'payment', $4, $5::jsonb)
-                    """,
-                    user.restaurant_id,
-                    user.user_id,
-                    action,
-                    payment_id,
-                    str(data),
-                )
-        except Exception:
-            logger.exception("audit_log_error", action=action)
+        """Write to audit log for payment actions (forensic-safe JSON)."""
+        from app.core.audit_logger import audit_event
+        await audit_event(
+            action=action,
+            entity_type="payment",
+            entity_id=str(payment_id),
+            payload=data or {},
+            actor=user,
+            domain="merchant",
+        )

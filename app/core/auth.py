@@ -119,14 +119,24 @@ async def get_current_user(
     if cached:
         import orjson
         data = orjson.loads(cached)
-        return UserContext(**data)
+        ctx = UserContext(**data)
+        from app.core.database import set_tenant_context
+        set_tenant_context(ctx.owner_id or ctx.user_id)
+        return ctx
 
     # Resolve from DB (graceful: if DB is down, return minimal context from JWT)
     try:
         ctx = await _resolve_user_context(user_id, email)
     except Exception as exc:
         logger.warning("user_context_resolve_failed", user_id=user_id, error=str(exc))
+        from app.core.database import set_tenant_context
+        set_tenant_context(user_id)
         return UserContext(user_id=user_id, email=email)
+
+    # Stamp tenant context for RLS (owner-id wins; branch users still see their
+    # owner's data because tenant policy is keyed on user_id = owner).
+    from app.core.database import set_tenant_context
+    set_tenant_context(ctx.owner_id or ctx.user_id)
 
     # Cache for 5 minutes
     import orjson
@@ -292,6 +302,27 @@ def require_permission(permission: str):
         user.permission_meta = decision.meta
         if decision.role_id:
             user.role_id = decision.role_id
+        return user
+    return _check
+
+
+def require_platform_admin():
+    """Dependency that gates an endpoint to platform admins only.
+
+    Platform admin membership is stored in ``platform_admin_users`` (migration 039)
+    and checked via the SQL helper ``fn_is_platform_admin(user_id)``.  This is
+    intentionally decoupled from RBAC because RBAC roles are branch-scoped and
+    cannot represent a global cross-merchant admin.
+    """
+    from app.core.database import get_connection  # local import to avoid cycles
+
+    async def _check(user: UserContext = Depends(get_current_user)) -> UserContext:
+        async with get_connection() as c:
+            ok = await c.fetchval(
+                "SELECT fn_is_platform_admin($1::uuid)", user.user_id
+            )
+        if not ok:
+            raise ForbiddenError("Platform admin privilege required")
         return user
     return _check
 

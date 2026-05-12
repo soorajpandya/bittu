@@ -94,19 +94,88 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
+# ── Per-request tenant context (binds RLS migration 049) ──────────────────────
+# A contextvar lets us push the current tenant id from FastAPI middleware
+# (or directly from a service call) without changing every call signature.
+# `get_connection()` reads it and pushes it into the Postgres session via
+# `set_config('app.tenant_id', $1, true)` so RLS policies on user_id-owning
+# tables silently filter to that tenant. NULL/empty value = NO-OP (matches
+# the policy in 049, which allows access when the GUC is unset — used by
+# workers and platform-admin paths).
+import contextvars
+
+_current_tenant_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "bittu_current_tenant_id", default=None
+)
+_bypass_rls: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "bittu_bypass_rls", default=False
+)
+
+
+def set_tenant_context(tenant_id: str | None) -> contextvars.Token:
+    """Push a tenant id onto the current async context. Returns a token to reset."""
+    return _current_tenant_id.set(str(tenant_id) if tenant_id else None)
+
+
+def reset_tenant_context(token: contextvars.Token) -> None:
+    _current_tenant_id.reset(token)
+
+
+def get_current_tenant_id() -> str | None:
+    return _current_tenant_id.get()
+
+
+@asynccontextmanager
+async def use_tenant(tenant_id: str | None):
+    """`async with use_tenant(uid):` — scoped tenant context."""
+    token = set_tenant_context(tenant_id)
+    try:
+        yield
+    finally:
+        reset_tenant_context(token)
+
+
+@asynccontextmanager
+async def bypass_rls():
+    """Service-role scope: workers / platform-admin / cross-merchant readers.
+
+    The 049 policy treats unset `app.tenant_id` as a wildcard, so bypassing
+    is just clearing the GUC for the duration of this connection.
+    """
+    token = _bypass_rls.set(True)
+    try:
+        yield
+    finally:
+        _bypass_rls.reset(token)
+
+
+async def _apply_tenant_guc(conn: asyncpg.Connection) -> None:
+    if _bypass_rls.get():
+        # Force NULL → policy short-circuits to TRUE.
+        await conn.execute("SELECT set_config('app.tenant_id', '', true)")
+        return
+    tid = _current_tenant_id.get()
+    if tid:
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tid)
+    else:
+        await conn.execute("SELECT set_config('app.tenant_id', '', true)")
+
+
 @asynccontextmanager
 async def get_connection() -> AsyncGenerator[asyncpg.Connection, None]:
-    """Dependency: yields a raw asyncpg connection from pool."""
+    """Dependency: yields a raw asyncpg connection from pool, RLS-stamped."""
     pool = get_pool()
     async with pool.acquire() as conn:
+        await _apply_tenant_guc(conn)
         yield conn
 
 
 @asynccontextmanager
 async def get_transaction() -> AsyncGenerator[asyncpg.Connection, None]:
-    """Dependency: yields a connection inside a transaction."""
+    """Dependency: yields a connection inside a transaction, RLS-stamped."""
     pool = get_pool()
     async with pool.acquire() as conn:
+        await _apply_tenant_guc(conn)
         async with conn.transaction():
             yield conn
 
@@ -119,5 +188,16 @@ async def get_serializable_transaction() -> AsyncGenerator[asyncpg.Connection, N
     """
     pool = get_pool()
     async with pool.acquire() as conn:
+        await _apply_tenant_guc(conn)
         async with conn.transaction(isolation="serializable"):
+            yield conn
+
+
+@asynccontextmanager
+async def get_service_connection() -> AsyncGenerator[asyncpg.Connection, None]:
+    """Worker / cross-merchant connection that bypasses RLS for the call."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        async with bypass_rls():
+            await _apply_tenant_guc(conn)
             yield conn

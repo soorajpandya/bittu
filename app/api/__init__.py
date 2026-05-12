@@ -185,6 +185,60 @@ router.include_router(_reconciliation.router)
 # ── Merchant Wallet (cash + online + platform revenue) ──
 from app.api.v1 import merchant_wallet as _merchant_wallet
 router.include_router(_merchant_wallet.router)
+# ── Merchant Ledger (immutable append-only money-movement ledger, Phase 1) ──
+from app.api.v1 import merchant_ledger as _merchant_ledger
+router.include_router(_merchant_ledger.router)
+# ── Escrow Ledger (T+N held funds tracking, Phase 2) ──
+from app.api.v1 import escrow as _escrow
+router.include_router(_escrow.router)
+# ── Bank Reconciliation Engine (Phase 3) — merchant + admin routers ──
+from app.api.v1 import recon_engine as _recon_engine
+router.include_router(_recon_engine.router)
+from app.api.v1 import admin_recon_engine as _admin_recon_engine
+router.include_router(_admin_recon_engine.router)
+# ── Payouts / Disbursement Engine (Phase 4) — merchant + admin routers ──
+from app.api.v1 import payouts as _payouts
+router.include_router(_payouts.router)
+from app.api.v1 import admin_payouts as _admin_payouts
+router.include_router(_admin_payouts.router)
+# ── Statements & Tax Invoices (Phase 5) — merchant + admin routers ──
+from app.api.v1 import tax_invoices as _tax_invoices
+router.include_router(_tax_invoices.router)
+from app.api.v1 import merchant_statements as _merchant_statements
+router.include_router(_merchant_statements.router)
+from app.api.v1 import admin_tax_invoices as _admin_tax_invoices
+router.include_router(_admin_tax_invoices.router)
+from app.api.v1 import admin_merchant_statements as _admin_merchant_statements
+router.include_router(_admin_merchant_statements.router)
+# ── Audit & Compliance (Phase 6) — merchant + admin routers ──
+from app.api.v1 import audit_events as _audit_events
+router.include_router(_audit_events.router)
+from app.api.v1 import admin_audit_events as _admin_audit_events
+router.include_router(_admin_audit_events.router)
+# ── Refunds & Disputes (Phase 7) — merchant + admin routers ──
+from app.api.v1 import refunds as _refunds
+router.include_router(_refunds.router)
+from app.api.v1 import admin_refunds as _admin_refunds
+router.include_router(_admin_refunds.router)
+from app.api.v1 import disputes as _disputes
+router.include_router(_disputes.router)
+from app.api.v1 import admin_disputes as _admin_disputes
+router.include_router(_admin_disputes.router)
+# ── Financial Reports / Analytics (Phase 8) — merchant + admin routers ──
+from app.api.v1 import fin_reports as _fin_reports
+router.include_router(_fin_reports.router)
+from app.api.v1 import admin_fin_reports as _admin_fin_reports
+router.include_router(_admin_fin_reports.router)
+# ── Merchant KYC & Onboarding (Phase 9) — merchant + admin routers ──
+from app.api.v1 import merchant_kyc as _merchant_kyc
+router.include_router(_merchant_kyc.router)
+from app.api.v1 import admin_merchant_kyc as _admin_merchant_kyc
+router.include_router(_admin_merchant_kyc.router)
+# ── Fee Engine v2 (Phase 10) — merchant + admin routers ──
+from app.api.v1 import fee_plans as _fee_plans
+router.include_router(_fee_plans.router)
+from app.api.v1 import admin_fee_plans as _admin_fee_plans
+router.include_router(_admin_fee_plans.router)
 # ── Financial Operating System ──
 router.include_router(finance.router)
 # ── Statement & Settlement ──

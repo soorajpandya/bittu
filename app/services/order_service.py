@@ -53,13 +53,18 @@ class OrderService:
     # ── Item lookup helper ──
 
     async def _lookup_item(self, conn, item_id, item_name, user_id):
-        """Look up an item by ID or name. Returns the DB row or raises NotFoundError."""
+        """Look up an item by ID or name. Tenant-scoped on BOTH branches.
+
+        SECURITY: by-id lookup MUST include `user_id = $2` — otherwise a malicious
+        client can quote any item_id from any merchant and have its price/availability
+        accepted server-side (cross-tenant pricing fraud — audit finding A3.2).
+        """
         row = None
         if item_id:
             row = await conn.fetchrow(
                 """SELECT "Item_ID", "Item_Name", price, "Available_Status"
-                   FROM items WHERE "Item_ID" = $1""",
-                item_id,
+                   FROM items WHERE "Item_ID" = $1 AND user_id = $2""",
+                item_id, user_id,
             )
         if not row and item_name:
             row = await conn.fetchrow(
@@ -531,6 +536,37 @@ class OrderService:
                         await conn.execute(
                             "UPDATE orders SET status = 'Confirmed', updated_at = now() WHERE id = $1",
                             order_id,
+                        )
+                        # Mirror non-gateway receipts into the immutable
+                        # merchant ledger.  Online/gateway payments stay
+                        # 'pending' here and are intentionally NOT wired.
+                        # Best-effort: never raises.
+                        from app.services.merchant_ledger_integration import (
+                            post_payment_received,
+                        )
+                        await post_payment_received(
+                            merchant_id=user.restaurant_id,
+                            payment_id=payment_id,
+                            amount=total_amount,
+                            method=pm_norm,
+                            order_id=order_id,
+                            branch_id=tenant.get("branch_id"),
+                            actor_id=user.user_id,
+                            conn=conn,
+                        )
+                        # Phase 2: also place into escrow (T+N hold).
+                        from app.services.escrow_integration import (
+                            hold_payment_in_escrow,
+                        )
+                        await hold_payment_in_escrow(
+                            merchant_id=user.restaurant_id,
+                            payment_id=payment_id,
+                            amount=total_amount,
+                            method=pm_norm,
+                            order_id=order_id,
+                            branch_id=tenant.get("branch_id"),
+                            actor_id=user.user_id,
+                            conn=conn,
                         )
                 except Exception as exc:
                     # Don't fail checkout if the payments insert blows up — log and continue.

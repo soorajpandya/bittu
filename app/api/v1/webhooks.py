@@ -1,10 +1,14 @@
-"""Webhook endpoints — Razorpay payment & subscription callbacks."""
-import hmac
-import hashlib
-from fastapi import APIRouter, Request, HTTPException
+"""Webhook endpoints — gateway-agnostic, replay-safe, forensic-stored.
+
+NOTE: Razorpay-specific code paths are being removed in subsequent batches.
+For now we keep the route names but the verification + storage goes through
+`app.core.webhook_security` so all gateways share one safe pipeline.
+"""
+from fastapi import APIRouter, Request
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.core.webhook_security import verify_and_register_webhook
 from app.services.payment_service import PaymentService
 from app.services.subscription_service import SubscriptionService
 
@@ -15,49 +19,84 @@ _payment_svc = PaymentService()
 _subscription_svc = SubscriptionService()
 
 
-def _verify_razorpay_signature(body: bytes, signature: str, secret: str) -> bool:
-    expected = hmac.HMAC(secret.encode(), body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature)
+def _razorpay_payment_event_id(payload: dict) -> str | None:
+    return (
+        payload.get("payload", {})
+        .get("payment", {})
+        .get("entity", {})
+        .get("id")
+    )
 
 
 @router.post("/razorpay/payment")
 async def razorpay_payment_webhook(request: Request):
-    """Razorpay payment event callback."""
+    """Razorpay payment event callback (replay-safe)."""
     settings = get_settings()
     body = await request.body()
-    signature = request.headers.get("X-Razorpay-Signature", "")
 
-    if not _verify_razorpay_signature(body, signature, settings.RAZORPAY_WEBHOOK_SECRET):
-        raise HTTPException(status_code=400, detail="Invalid signature")
+    result = await verify_and_register_webhook(
+        request=request,
+        body=body,
+        gateway="razorpay",
+        secret=settings.RAZORPAY_WEBHOOK_SECRET,
+        event_id_extractor=_razorpay_payment_event_id,
+        event_type_extractor=lambda p: p.get("event"),
+    )
+    if result.duplicate:
+        return {"status": "ok", "duplicate": True, "event_id": result.event_id}
 
     payload = await request.json()
     event = payload.get("event", "")
     entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
 
-    logger.info("razorpay_payment_webhook", event=event, payment_id=entity.get("id"))
-    await _payment_svc.handle_webhook(
+    logger.info(
+        "razorpay_payment_webhook",
         event=event,
-        payload=entity,
-        raw_payload=payload,
-        signature=signature,
-        gateway="razorpay",
+        payment_id=entity.get("id"),
+        latency_ms=result.latency_ms,
     )
+    try:
+        await _payment_svc.handle_webhook(
+            event=event,
+            payload=entity,
+            raw_payload=payload,
+            signature=request.headers.get("X-Razorpay-Signature", ""),
+            gateway="razorpay",
+        )
+        await result.mark_processed(status="processed")
+    except Exception as exc:
+        await result.mark_processed(status="failed", error=str(exc)[:500])
+        raise
     return {"status": "ok"}
 
 
 @router.post("/razorpay/subscription")
 async def razorpay_subscription_webhook(request: Request):
-    """Razorpay subscription lifecycle callback."""
+    """Razorpay subscription lifecycle callback (replay-safe)."""
     settings = get_settings()
     body = await request.body()
-    signature = request.headers.get("X-Razorpay-Signature", "")
 
-    if not _verify_razorpay_signature(body, signature, settings.RAZORPAY_WEBHOOK_SECRET):
-        raise HTTPException(status_code=400, detail="Invalid signature")
+    result = await verify_and_register_webhook(
+        request=request,
+        body=body,
+        gateway="razorpay",
+        secret=settings.RAZORPAY_WEBHOOK_SECRET,
+        event_id_extractor=lambda p: (p.get("payload", {})
+                                       .get("subscription", {})
+                                       .get("entity", {}).get("id")),
+        event_type_extractor=lambda p: p.get("event"),
+    )
+    if result.duplicate:
+        return {"status": "ok", "duplicate": True, "event_id": result.event_id}
 
     payload = await request.json()
     event = payload.get("event", "")
 
-    logger.info("razorpay_subscription_webhook", event=event)
-    await _subscription_svc.handle_payment_webhook(event_type=event, payload=payload)
+    logger.info("razorpay_subscription_webhook", event=event, latency_ms=result.latency_ms)
+    try:
+        await _subscription_svc.handle_payment_webhook(event_type=event, payload=payload)
+        await result.mark_processed(status="processed")
+    except Exception as exc:
+        await result.mark_processed(status="failed", error=str(exc)[:500])
+        raise
     return {"status": "ok"}
