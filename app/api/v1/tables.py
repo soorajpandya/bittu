@@ -14,7 +14,7 @@ from app.services.dinein_session_service import DineInSessionService
 
 _TABLES_LIST_CACHE_TTL = 30  # seconds — table list is invalidated on any table change
 
-router = APIRouter(prefix="/tables", tags=["Tables"])
+router = APIRouter(prefix="/tables", tags=["Dine-In"])
 _svc = TableSessionService()
 _dinein_svc = DineInSessionService()
 logger = get_logger(__name__)

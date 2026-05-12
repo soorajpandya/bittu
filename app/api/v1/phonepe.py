@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.phonepe_service import PhonePeService
 
-router = APIRouter(prefix="/phonepe", tags=["PhonePe"])
+router = APIRouter(prefix="/phonepe", tags=["Payments"])
 _svc = PhonePeService()
 
 

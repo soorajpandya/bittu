@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.payu_service import PayUService
 
-router = APIRouter(prefix="/payu", tags=["PayU"])
+router = APIRouter(prefix="/payu", tags=["Payments"])
 _svc = PayUService()
 
 

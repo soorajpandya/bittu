@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.cashfree_pg_service import CashfreeService
 
-router = APIRouter(prefix="/cashfree", tags=["Cashfree PG"])
+router = APIRouter(prefix="/cashfree", tags=["Payments"])
 _svc = CashfreeService()
 
 

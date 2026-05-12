@@ -9,7 +9,7 @@ from app.core.auth import UserContext, get_current_user
 from app.core.logging import get_logger
 from app.services.digilocker_service import DigiLockerService
 
-router = APIRouter(prefix="/digilocker", tags=["DigiLocker KYC"])
+router = APIRouter(prefix="/digilocker", tags=["KYC"])
 _svc = DigiLockerService()
 logger = get_logger(__name__)
 

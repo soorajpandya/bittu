@@ -20,7 +20,7 @@ from app.core.auth import UserContext, require_platform_admin
 from app.core.logging import get_logger
 from app.services.recon_engine_service import recon_engine_service
 
-router = APIRouter(prefix="/admin/recon", tags=["Bank Reconciliation Engine (Admin)"])
+router = APIRouter(prefix="/admin/recon", tags=["Reconciliation (Admin)"])
 logger = get_logger(__name__)
 
 

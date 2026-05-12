@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.favourite_service import FavouriteService
 
-router = APIRouter(prefix="/favourites", tags=["Favourites"])
+router = APIRouter(prefix="/favourites", tags=["Customers"])
 _svc = FavouriteService()
 
 

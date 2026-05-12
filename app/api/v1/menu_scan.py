@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.menu_scanner_service import MenuScannerService
 
-router = APIRouter(prefix="/menu-scan", tags=["AI Menu Scanner"])
+router = APIRouter(prefix="/menu-scan", tags=["Menu"])
 _svc = MenuScannerService()
 
 

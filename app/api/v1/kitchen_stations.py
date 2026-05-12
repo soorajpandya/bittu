@@ -8,7 +8,7 @@ from app.core.auth import UserContext, require_permission
 from app.core.database import get_connection
 from app.core.logging import get_logger
 
-router = APIRouter(prefix="/kitchen-stations", tags=["Kitchen Stations"])
+router = APIRouter(prefix="/kitchen-stations", tags=["Kitchen"])
 logger = get_logger(__name__)
 
 

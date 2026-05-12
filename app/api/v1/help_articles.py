@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from app.services.misc_service import HelpArticleService
 
-router = APIRouter(prefix="/help", tags=["Help Articles"])
+router = APIRouter(prefix="/help", tags=["Restaurant Settings"])
 _svc = HelpArticleService()
 
 

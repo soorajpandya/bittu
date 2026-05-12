@@ -7,7 +7,7 @@ from app.core.auth import UserContext, require_permission
 from app.core.cache import cached_route, invalidate_prefix
 from app.services.pincode_service import PincodeService
 
-router = APIRouter(prefix="/pincodes", tags=["Deliverable Pincodes"])
+router = APIRouter(prefix="/pincodes", tags=["Delivery"])
 _svc = PincodeService()
 _CACHE_PREFIX = "pincodes"
 

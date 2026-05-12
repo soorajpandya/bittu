@@ -15,7 +15,7 @@ from app.services.subledger_service import subledger_service
 from app.services.tax_service import tax_service
 from app.services.expense_service import ExpenseService
 
-router = APIRouter(prefix="/reports", tags=["Financial Reports"])
+router = APIRouter(prefix="/reports", tags=["Reports"])
 logger = get_logger(__name__)
 
 

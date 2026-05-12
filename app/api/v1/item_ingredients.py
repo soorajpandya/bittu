@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.item_ingredient_service import ItemIngredientService
 
-router = APIRouter(prefix="/item-ingredients", tags=["Item Ingredients"])
+router = APIRouter(prefix="/item-ingredients", tags=["Menu"])
 _svc = ItemIngredientService()
 
 

@@ -28,7 +28,7 @@ from app.core.exceptions import NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.services.statement_service import statement_service
 
-router = APIRouter(prefix="/statements", tags=["Statement & Settlement"])
+router = APIRouter(prefix="/statements", tags=["Settlements"])
 logger = get_logger(__name__)
 
 

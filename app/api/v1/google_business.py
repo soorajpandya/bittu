@@ -29,7 +29,7 @@ from app.services.google.sync import sync_single_restaurant
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/google", tags=["Google Business Profile"])
+router = APIRouter(prefix="/google", tags=["Restaurant Settings"])
 
 _auth_svc = GoogleAuthService()
 _locations_svc = GoogleLocationsService()

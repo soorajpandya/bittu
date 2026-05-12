@@ -20,7 +20,7 @@ from app.core.exceptions import ValidationError
 from app.core.logging import get_logger
 from app.services.recon_engine_service import recon_engine_service
 
-router = APIRouter(prefix="/recon", tags=["Bank Reconciliation Engine"])
+router = APIRouter(prefix="/recon", tags=["Reconciliation"])
 logger = get_logger(__name__)
 
 

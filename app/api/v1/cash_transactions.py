@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.cash_transaction_service import CashTransactionService
 
-router = APIRouter(prefix="/cash-transactions", tags=["Cash Transactions"])
+router = APIRouter(prefix="/cash-transactions", tags=["Accounting"])
 _svc = CashTransactionService()
 
 

@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.item_customization_service import ItemVariantService
 
-router = APIRouter(prefix="/item-variants", tags=["Item Variants"])
+router = APIRouter(prefix="/item-variants", tags=["Menu"])
 _svc = ItemVariantService()
 
 

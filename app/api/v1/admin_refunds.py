@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from app.core.auth import require_platform_admin
 from app.services.refund_service import refund_service
 
-router = APIRouter(prefix="/admin/refunds", tags=["Admin Refunds"])
+router = APIRouter(prefix="/admin/refunds", tags=["Refunds (Admin)"])
 
 
 class _AdminCreateBody(BaseModel):

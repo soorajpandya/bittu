@@ -19,7 +19,7 @@ from app.core.auth import UserContext, require_platform_admin
 from app.core.logging import get_logger
 from app.services.tax_invoice_service import tax_invoice_service
 
-router = APIRouter(prefix="/admin/tax-invoices", tags=["Tax Invoices (Admin)"])
+router = APIRouter(prefix="/admin/tax-invoices", tags=["Invoices (Admin)"])
 logger = get_logger(__name__)
 
 

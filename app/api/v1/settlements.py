@@ -11,7 +11,7 @@ from app.services.settlement_service import settlement_service
 from app.services.accounting_rules_engine import rules_engine
 
 router = APIRouter(prefix="/settlements", tags=["Settlements"])
-rules_router = APIRouter(prefix="/accounting/rules", tags=["Accounting Rules"])
+rules_router = APIRouter(prefix="/accounting/rules", tags=["Accounting"])
 logger = get_logger(__name__)
 
 

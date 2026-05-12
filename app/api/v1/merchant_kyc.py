@@ -15,7 +15,7 @@ from app.core.auth import UserContext, require_permission
 from app.core.exceptions import ValidationError
 from app.services.kyc_service import kyc_service
 
-router = APIRouter(prefix="/merchant-kyc", tags=["Merchant KYC (Phase 9)"])
+router = APIRouter(prefix="/merchant-kyc", tags=["KYC"])
 
 
 def _mid(user: UserContext) -> str:

@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from app.core.auth import require_platform_admin
 from app.services.dispute_service import dispute_service
 
-router = APIRouter(prefix="/admin/disputes", tags=["Admin Disputes"])
+router = APIRouter(prefix="/admin/disputes", tags=["Disputes (Admin)"])
 
 
 class _AdminOpenBody(BaseModel):

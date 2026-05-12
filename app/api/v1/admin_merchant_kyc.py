@@ -15,7 +15,7 @@ from app.core.auth import UserContext, require_platform_admin
 from app.core.exceptions import ValidationError
 from app.services.kyc_service import kyc_service
 
-router = APIRouter(prefix="/admin/merchant-kyc", tags=["Merchant KYC (Admin)"])
+router = APIRouter(prefix="/admin/merchant-kyc", tags=["KYC (Admin)"])
 
 
 # ──────────────────────────── pydantic ───────────────────────────────

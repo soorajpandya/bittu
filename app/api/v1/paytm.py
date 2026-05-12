@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.paytm_service import PaytmService
 
-router = APIRouter(prefix="/paytm", tags=["Paytm"])
+router = APIRouter(prefix="/paytm", tags=["Payments"])
 _svc = PaytmService()
 
 

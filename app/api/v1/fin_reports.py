@@ -16,7 +16,7 @@ from app.core.auth import UserContext, require_permission
 from app.core.exceptions import ValidationError
 from app.services.reporting_service import reporting_service
 
-router = APIRouter(prefix="/fin-reports", tags=["Financial Reports (Phase 8)"])
+router = APIRouter(prefix="/fin-reports", tags=["Reports"])
 
 
 def _mid(user: UserContext) -> str:

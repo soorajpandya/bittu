@@ -117,7 +117,7 @@ router.add_api_route(
     "/onboard/callback",
     digilocker.digilocker_callback,
     methods=["GET"],
-    tags=["DigiLocker KYC"],
+    tags=["KYC"],
 )
 # ── AI / Voice ──
 router.include_router(voice.router)

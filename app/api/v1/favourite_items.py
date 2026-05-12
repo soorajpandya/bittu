@@ -5,7 +5,7 @@ from app.core.auth import UserContext, get_current_user
 from app.services.favourite_service import FavouriteService
 from app.core.logging import get_logger
 
-router = APIRouter(prefix="/favourite-items", tags=["Favourite Items"])
+router = APIRouter(prefix="/favourite-items", tags=["Customers"])
 _svc = FavouriteService()
 logger = get_logger(__name__)
 

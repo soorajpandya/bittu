@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.combo_service import ComboService
 
-router = APIRouter(prefix="/combos", tags=["Combos"])
+router = APIRouter(prefix="/combos", tags=["Menu"])
 _svc = ComboService()
 
 

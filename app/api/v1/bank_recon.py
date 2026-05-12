@@ -10,7 +10,7 @@ from app.core.auth import UserContext, require_permission
 from app.core.logging import get_logger
 from app.services.bank_recon_service import bank_recon_service
 
-router = APIRouter(prefix="/bank-recon", tags=["Bank Reconciliation"])
+router = APIRouter(prefix="/bank-recon", tags=["Reconciliation"])
 logger = get_logger(__name__)
 
 

@@ -16,7 +16,7 @@ from app.core.auth import UserContext, require_permission
 from app.core.exceptions import ValidationError
 from app.services.fee_service import fee_service
 
-router = APIRouter(prefix="/fee-plans", tags=["Fee Plans (Phase 10)"])
+router = APIRouter(prefix="/fee-plans", tags=["Fee Plans"])
 
 
 def _mid(user: UserContext) -> str:

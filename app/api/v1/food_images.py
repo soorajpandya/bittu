@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from app.core.auth import UserContext, require_permission
 from app.services.food_image_service import FoodImageService, MAX_BATCH_SIZE
 
-router = APIRouter(prefix="/food-images", tags=["Food Images"])
+router = APIRouter(prefix="/food-images", tags=["Menu"])
 _svc = FoodImageService()
 
 

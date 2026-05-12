@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.razorpay_extended_service import RazorpayExtendedService
 
-router = APIRouter(prefix="/razorpay", tags=["Razorpay Extended"])
+router = APIRouter(prefix="/razorpay", tags=["Payments"])
 _svc = RazorpayExtendedService()
 
 

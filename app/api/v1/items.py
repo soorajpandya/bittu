@@ -16,7 +16,7 @@ _ITEMS_CACHE_TTL = 300  # 5 minutes
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/items", tags=["Items"])
+router = APIRouter(prefix="/items", tags=["Menu"])
 
 
 def require_owner_or_manager(user: UserContext = Depends(get_current_user)) -> UserContext:

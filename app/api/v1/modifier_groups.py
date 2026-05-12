@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.modifier_service import ModifierService
 
-router = APIRouter(prefix="/modifier-groups", tags=["Modifier Groups"])
+router = APIRouter(prefix="/modifier-groups", tags=["Menu"])
 _svc = ModifierService()
 
 

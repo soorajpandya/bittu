@@ -11,7 +11,7 @@ from app.core.exceptions import NotFoundError
 from app.services.auth_service import _initialize_restaurant_and_branch
 from app.core.logging import get_logger
 
-router = APIRouter(prefix="/restaurants", tags=["Restaurants"])
+router = APIRouter(prefix="/restaurants", tags=["Restaurant Settings"])
 logger = get_logger(__name__)
 
 

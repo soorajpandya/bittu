@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.due_payment_service import DuePaymentService
 
-router = APIRouter(prefix="/due-payments", tags=["Due Payments"])
+router = APIRouter(prefix="/due-payments", tags=["Accounting"])
 _svc = DuePaymentService()
 
 

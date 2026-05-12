@@ -19,7 +19,7 @@ from app.core.logging import get_logger
 from app.services.merchant_statement_service import merchant_statement_service
 
 router = APIRouter(prefix="/admin/merchant-statements",
-                   tags=["Merchant Statements (Admin)"])
+                   tags=["Statements (Admin)"])
 logger = get_logger(__name__)
 
 

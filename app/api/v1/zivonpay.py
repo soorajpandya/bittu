@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.zivonpay_service import ZivonpayService
 
-router = APIRouter(prefix="/zivonpay", tags=["Zivonpay"])
+router = APIRouter(prefix="/zivonpay", tags=["Payments"])
 _svc = ZivonpayService()
 
 

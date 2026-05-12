@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from app.core.auth import UserContext, require_permission
 from app.services.invoice_import_service import InvoiceImportService
 
-router = APIRouter(prefix="/invoice-import", tags=["Invoice Import"])
+router = APIRouter(prefix="/invoice-import", tags=["Invoices"])
 _svc = InvoiceImportService()
 
 

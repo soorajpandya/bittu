@@ -18,7 +18,7 @@ from app.core.auth import UserContext, get_current_user, require_permission
 from app.core.database import get_connection
 from app.core.logging import get_logger
 
-router = APIRouter(prefix="/ingredients", tags=["Ingredients"])
+router = APIRouter(prefix="/ingredients", tags=["Inventory"])
 logger = get_logger(__name__)
 
 

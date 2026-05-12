@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from app.core.auth import require_platform_admin
 from app.services.audit_service import audit_service
 
-router = APIRouter(prefix="/admin/audit/events", tags=["Admin Audit Events"])
+router = APIRouter(prefix="/admin/audit/events", tags=["Audit (Admin)"])
 
 
 @router.get("/")

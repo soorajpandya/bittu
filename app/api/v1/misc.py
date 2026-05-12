@@ -11,7 +11,7 @@ from app.services.misc_service import (
     TableSessionDeviceService,
 )
 
-router = APIRouter(prefix="/misc", tags=["Miscellaneous"])
+router = APIRouter(prefix="/misc", tags=["Restaurant Settings"])
 _sync = SyncLogService()
 _reminders = PaymentReminderService()
 _trial = TrialEligibilityService()

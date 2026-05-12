@@ -23,7 +23,7 @@ from app.core.cache import cached_route
 from app.core.logging import get_logger
 from app.services.merchant_wallet_service import merchant_wallet_service
 
-router = APIRouter(prefix="/merchant-wallet", tags=["Merchant Wallet"])
+router = APIRouter(prefix="/merchant-wallet", tags=["Merchant Ledger"])
 logger = get_logger(__name__)
 
 

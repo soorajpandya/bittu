@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.customer_address_service import CustomerAddressService
 
-router = APIRouter(prefix="/customer-addresses", tags=["Customer Addresses"])
+router = APIRouter(prefix="/customer-addresses", tags=["Customers"])
 _svc = CustomerAddressService()
 
 

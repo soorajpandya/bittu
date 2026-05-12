@@ -9,8 +9,8 @@ from app.core.logging import get_logger
 from app.services.subledger_service import subledger_service
 from app.services.tax_service import tax_service
 
-subledger_router = APIRouter(prefix="/subledger", tags=["Sub-Ledger"])
-tax_router = APIRouter(prefix="/tax", tags=["Tax Liability"])
+subledger_router = APIRouter(prefix="/subledger", tags=["Accounting"])
+tax_router = APIRouter(prefix="/tax", tags=["Accounting"])
 logger = get_logger(__name__)
 
 

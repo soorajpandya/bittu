@@ -25,7 +25,7 @@ from app.core.auth import UserContext, require_permission
 from app.core.cache import cached_route, invalidate_prefix
 from app.services.waitlist_service import WaitlistService
 
-router = APIRouter(prefix="/waitlist", tags=["Waitlist"])
+router = APIRouter(prefix="/waitlist", tags=["Dine-In"])
 _svc = WaitlistService()
 _CACHE_PREFIX = "waitlist"
 

@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, get_current_user, require_permission
 from app.services.cashfree_verify_service import CashfreeVerifyService
 
-router = APIRouter(prefix="/kyc", tags=["KYC / Verification"])
+router = APIRouter(prefix="/kyc", tags=["KYC"])
 _svc = CashfreeVerifyService()
 
 

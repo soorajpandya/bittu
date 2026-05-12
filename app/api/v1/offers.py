@@ -8,7 +8,7 @@ from app.core.auth import UserContext, require_permission
 from app.core.cache import cached_route, invalidate_prefix
 from app.services.offer_service import OfferService
 
-router = APIRouter(prefix="/offers", tags=["Offers"])
+router = APIRouter(prefix="/offers", tags=["Promotions"])
 _svc = OfferService()
 _CACHE_PREFIX = "offers"
 

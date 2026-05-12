@@ -12,8 +12,8 @@ from app.services.accounting_service import AccountingService, get_account_by_co
 from app.services.accounting_engine import accounting_engine
 
 router = APIRouter(prefix="/accounting", tags=["Accounting"])
-accounts_router = APIRouter(prefix="/accounts", tags=["Chart of Accounts"])
-reports_router = APIRouter(prefix="/reports", tags=["Reports"])
+accounts_router = APIRouter(prefix="/accounts", tags=["Accounting"])
+reports_router = APIRouter(prefix="/reports", tags=["Accounting"])
 _svc = AccountingService()
 logger = get_logger(__name__)
 

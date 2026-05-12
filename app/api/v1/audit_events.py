@@ -19,7 +19,7 @@ from app.core.auth import UserContext, require_permission
 from app.core.exceptions import ValidationError
 from app.services.audit_service import audit_service
 
-router = APIRouter(prefix="/audit/events", tags=["Audit Events"])
+router = APIRouter(prefix="/audit/events", tags=["Audit"])
 
 
 def _merchant_id(user: UserContext) -> str:

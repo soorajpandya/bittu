@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from app.core.auth import UserContext, require_permission
 from app.services.misc_service import AuditService
 
-router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
+router = APIRouter(prefix="/audit-logs", tags=["Audit"])
 _svc = AuditService()
 
 

@@ -52,7 +52,7 @@ from app.services.tax_service import tax_service
 from app.services.bank_recon_service import bank_recon_service
 from app.services.finance_service import finance_service
 
-router = APIRouter(prefix="/finance", tags=["Financial Operating System"])
+router = APIRouter(prefix="/finance", tags=["Reports"])
 logger = get_logger(__name__)
 
 

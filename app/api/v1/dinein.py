@@ -14,7 +14,7 @@ from app.core.exceptions import NotFoundError
 from app.core.logging import get_logger
 from app.services.dinein_session_service import DineInSessionService
 
-router = APIRouter(prefix="/dinein", tags=["Dine-In Sessions"])
+router = APIRouter(prefix="/dinein", tags=["Dine-In"])
 _svc = DineInSessionService()
 logger = get_logger(__name__)
 

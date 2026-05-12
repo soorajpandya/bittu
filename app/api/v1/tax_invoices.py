@@ -18,7 +18,7 @@ from app.core.exceptions import ValidationError
 from app.core.logging import get_logger
 from app.services.tax_invoice_service import tax_invoice_service
 
-router = APIRouter(prefix="/tax-invoices", tags=["Tax Invoices"])
+router = APIRouter(prefix="/tax-invoices", tags=["Invoices"])
 logger = get_logger(__name__)
 
 

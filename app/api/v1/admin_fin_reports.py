@@ -15,7 +15,7 @@ from app.core.auth import require_platform_admin
 from app.core.exceptions import ValidationError
 from app.services.reporting_service import reporting_service
 
-router = APIRouter(prefix="/admin/fin-reports", tags=["Financial Reports (Admin)"])
+router = APIRouter(prefix="/admin/fin-reports", tags=["Reports (Admin)"])
 
 
 def _default_window(from_date: Optional[date], to_date: Optional[date]) -> tuple[date, date]:

@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.services.delivery_service import DeliveryService
 
-router = APIRouter(prefix="/delivery-partners", tags=["Delivery Partners"])
+router = APIRouter(prefix="/delivery-partners", tags=["Delivery"])
 _svc = DeliveryService()
 
 
