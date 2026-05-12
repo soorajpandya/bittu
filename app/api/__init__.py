@@ -8,8 +8,6 @@ from app.api.v1 import (
     kitchen,
     tables,
     inventory,
-    delivery,
-    delivery_partners,
     staff,
     notifications,
     analytics,
@@ -44,16 +42,12 @@ from app.api.v1 import (
     # ── Customers & CRM ──
     customers,
     customer_addresses,
-    feedback,
     favourites,
     # ── Business Operations ──
-    coupons,
-    offers,
     restaurant_settings,
     cash_transactions,
     due_payments,
     purchase_orders,
-    pincodes,
     # ── Billing / Admin ──
     billing,
     audit_logs,
@@ -89,8 +83,6 @@ router.include_router(payments.router)
 router.include_router(kitchen.router)
 router.include_router(tables.router)
 router.include_router(inventory.router)
-router.include_router(delivery.router)
-router.include_router(delivery_partners.router)
 router.include_router(staff.router)
 router.include_router(notifications.router)
 router.include_router(analytics.router)
@@ -123,16 +115,12 @@ router.include_router(menu.router)
 # ── Customers & CRM ──
 router.include_router(customers.router)
 router.include_router(customer_addresses.router)
-router.include_router(feedback.router)
 router.include_router(favourites.router)
 # ── Business Operations ──
-router.include_router(coupons.router)
-router.include_router(offers.router)
 router.include_router(restaurant_settings.router)
 router.include_router(cash_transactions.router)
 router.include_router(due_payments.router)
 router.include_router(purchase_orders.router)
-router.include_router(pincodes.router)
 # ── Billing / Admin ──
 router.include_router(billing.router)
 router.include_router(audit_logs.router)
