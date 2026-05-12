@@ -197,6 +197,27 @@ def create_app() -> FastAPI:
     # -- Routes --
     app.include_router(api_router)
 
+    # -- Pin OpenAPI version to 3.0.3 --
+    # FastAPI emits 3.1.0 by default, which the bundled Swagger UI 4.15.5
+    # cannot render ("does not specify a valid version field"). Re-stamp
+    # the cached schema so /docs and /redoc work without a CDN upgrade.
+    from fastapi.openapi.utils import get_openapi as _get_openapi
+
+    def _custom_openapi():
+        if app.openapi_schema:
+            return app.openapi_schema
+        schema = _get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
+        schema["openapi"] = "3.0.3"
+        app.openapi_schema = schema
+        return schema
+
+    app.openapi = _custom_openapi
+
     # -- Self-hosted Docs (no CDN dependency) --
     import swagger_ui_bundle, os as _os
     _swagger_static = _os.path.join(_os.path.dirname(swagger_ui_bundle.__file__), "vendor", "swagger-ui-4.15.5")
