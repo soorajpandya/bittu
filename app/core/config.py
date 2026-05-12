@@ -5,7 +5,7 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 
     # ── App ──
     APP_NAME: str = "BITTU"
@@ -80,20 +80,9 @@ class Settings(BaseSettings):
     CASHFREE_SECRET_KEY: str = ""
     CASHFREE_MODE: str = "sandbox"  # sandbox | live
 
-    # ── Cashfree Verification / KYC ──
-    CF_VERIFY_CLIENT_ID: str = ""
-    CF_VERIFY_CLIENT_SECRET: str = ""
-    CF_VERIFY_PUBLIC_KEY: str = ""  # RSA public key PEM for x-cf-signature
-    CF_VERIFY_MODE: str = "sandbox"  # sandbox | production
-
-    # ── Cashfree 1-Click Onboarding (separate credentials) ──
+    # ── Cashfree 1-Click Onboarding ──
     CF_ONECLICK_CLIENT_ID: str = ""
     CF_ONECLICK_CLIENT_SECRET: str = ""
-
-    # ── Cashfree DigiLocker ──
-    CF_DIGILOCKER_CLIENT_ID: str = ""
-    CF_DIGILOCKER_CLIENT_SECRET: str = ""
-    CF_DIGILOCKER_MODE: str = "sandbox"  # sandbox | live
 
     # ── Zivonpay ──
     ZIVONPAY_MERCHANT_ID: str = ""

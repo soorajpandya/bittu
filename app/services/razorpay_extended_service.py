@@ -1,5 +1,5 @@
 """
-Razorpay Extended APIs — Customers, Plans, Subscriptions, QR Codes.
+Razorpay Extended APIs — Customers, QR Codes.
 
 Supplements the core PaymentService (which handles orders, verification, webhooks).
 All calls use Basic Auth: base64(key_id:key_secret).
@@ -52,87 +52,6 @@ class RazorpayExtendedService:
         return data
 
     # ── Plans ──
-
-    async def create_plan(
-        self,
-        plan_name: str,
-        amount_paise: int,
-        period: str = "monthly",
-        interval: int = 1,
-        description: str = "",
-    ) -> dict:
-        """Create a Razorpay subscription plan."""
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{RAZORPAY_BASE}/plans",
-                json={
-                    "period": period,
-                    "interval": interval,
-                    "item": {
-                        "name": plan_name,
-                        "amount": amount_paise,
-                        "currency": "INR",
-                        "description": description,
-                    },
-                },
-                headers=_headers(),
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        logger.info("razorpay_plan_created", plan_id=data.get("id"))
-        return data
-
-    async def get_plan(self, plan_id: str) -> dict:
-        """Fetch a Razorpay plan by ID."""
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(
-                f"{RAZORPAY_BASE}/plans/{plan_id}",
-                headers=_headers(),
-            )
-            resp.raise_for_status()
-            return resp.json()
-
-    # ── Subscriptions ──
-
-    async def create_subscription(
-        self,
-        plan_id: str,
-        total_count: int,
-        user_id: str = "",
-        plan_name: str = "",
-        user_email: str = "",
-    ) -> dict:
-        """Create a Razorpay subscription."""
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{RAZORPAY_BASE}/subscriptions",
-                json={
-                    "plan_id": plan_id,
-                    "total_count": total_count,
-                    "quantity": 1,
-                    "customer_notify": 1,
-                    "notes": {
-                        "user_id": user_id,
-                        "plan_name": plan_name,
-                        "user_email": user_email,
-                    },
-                },
-                headers=_headers(),
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        logger.info("razorpay_subscription_created", sub_id=data.get("id"))
-        return data
-
-    async def fetch_subscription(self, subscription_id: str) -> dict:
-        """Fetch a Razorpay subscription by ID."""
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(
-                f"{RAZORPAY_BASE}/subscriptions/{subscription_id}",
-                headers=_headers(),
-            )
-            resp.raise_for_status()
-            return resp.json()
 
     # ── QR Codes ──
 

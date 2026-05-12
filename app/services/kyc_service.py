@@ -1,8 +1,7 @@
 """
 Merchant KYC service — Phase 9.
 
-Self-contained merchant-level KYC engine. Independent of the existing
-user-level Cashfree-driven `kyc_verifications` table. NO gateway wiring.
+Self-contained merchant-level KYC engine. NO gateway wiring.
 
 State model lives in `merchant_kyc_profiles.status`:
     draft → submitted → under_review → {approved, rejected}
