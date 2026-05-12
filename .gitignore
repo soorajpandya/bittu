@@ -41,7 +41,19 @@ Thumbs.db
 *.log
 
 # ── SSL Certs (never commit) ──
+deploy/nginx/ssl/
 nginx/ssl/
 *.pem
 *.key
 *.crt
+
+# ── Disposable / one-shot dev scripts ──
+# Anything prefixed with _ at the repo root is local-only scratch
+# (migration runners, smoke tests, inspection scripts, etc.)
+/_*.py
+/_*.sh
+/_*.txt
+/_*.json
+/scrap.py
+/check_*.py
+/fix_*.py
