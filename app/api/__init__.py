@@ -232,9 +232,7 @@ from app.api.v1 import merchant_kyc as _merchant_kyc
 router.include_router(_merchant_kyc.router)
 from app.api.v1 import admin_merchant_kyc as _admin_merchant_kyc
 router.include_router(_admin_merchant_kyc.router)
-# ── Fee Engine v2 (Phase 10) — merchant + admin routers ──
-from app.api.v1 import fee_plans as _fee_plans
-router.include_router(_fee_plans.router)
+# ── Fee Engine v2 (Phase 10) — admin only ──
 from app.api.v1 import admin_fee_plans as _admin_fee_plans
 router.include_router(_admin_fee_plans.router)
 # ── Financial Operating System ──
