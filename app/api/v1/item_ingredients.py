@@ -1,5 +1,5 @@
 """Item Ingredients endpoints."""
-from typing import Optional
+from typing import Optional, Union
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
@@ -12,7 +12,9 @@ _svc = ItemIngredientService()
 
 class IngredientLink(BaseModel):
     item_id: int
-    ingredient_id: int
+    # ingredients.id is TEXT in the DB but the frontend often sends a numeric
+    # primary key (e.g. 93). Accept either and let the service stringify.
+    ingredient_id: Union[int, str]
     quantity_used: Optional[float] = 0
     unit: Optional[str] = None
 

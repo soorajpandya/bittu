@@ -36,6 +36,10 @@ class ItemIngredientService:
 
     async def add_ingredient(self, user: UserContext, data: dict) -> dict:
         uid = user.owner_id if user.is_branch_user else user.user_id
+        # ingredients.id and item_ingredients.ingredient_id are TEXT columns;
+        # frontend may send a numeric id (e.g. 93). Coerce to str so asyncpg
+        # can bind the value.
+        ingredient_id = str(data["ingredient_id"])
         async with get_serializable_transaction() as conn:
             row = await conn.fetchrow(
                 """
@@ -43,7 +47,7 @@ class ItemIngredientService:
                 VALUES ($1,$2,$3,$4,$5)
                 RETURNING *
                 """,
-                uid, data["item_id"], data["ingredient_id"],
+                uid, data["item_id"], ingredient_id,
                 data.get("quantity_used", 0), data.get("unit"),
             )
         logger.info("item_ingredient_added", id=str(row["id"]))
