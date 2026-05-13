@@ -127,6 +127,11 @@ class TableSessionService:
                     branch_id=user.branch_id,
                 ))
 
+                try:
+                    await cache_delete(f"tables_list:{user.owner_id if user.is_branch_user else user.user_id}")
+                except Exception:
+                    pass
+
                 return {
                     "session_id": session_id,
                     "session_token": session_token,
@@ -1169,6 +1174,10 @@ class TableSessionService:
                     "UPDATE restaurant_tables SET current_order_id = $1 WHERE id = $2",
                     order_id, table_id,
                 )
+                try:
+                    await cache_delete(f"tables_list:{owner_id}")
+                except Exception:
+                    pass
 
             # Clear cart
             await conn.execute(

@@ -1621,13 +1621,17 @@ class DineInSessionService:
 
         async with get_transaction() as conn:
             session = await conn.fetchrow(
-                "SELECT id, table_id, restaurant_id, status FROM dine_in_sessions WHERE id = $1 FOR UPDATE",
+                "SELECT id, table_id, restaurant_id, user_id, status FROM dine_in_sessions WHERE id = $1 FOR UPDATE",
                 session_id,
             )
             if not session:
                 raise NotFoundError("Session", session_id)
             if session["status"] != "active":
                 # Already closed — treat as idempotent success
+                try:
+                    await cache_delete(f"tables_list:{session['user_id']}")
+                except Exception:
+                    pass
                 return {
                     "status": session["status"],
                     "session_id": session_id,
@@ -1668,6 +1672,11 @@ class DineInSessionService:
                 """,
                 str(session["table_id"]),
             )
+
+        try:
+            await cache_delete(f"tables_list:{session['user_id']}")
+        except Exception:
+            pass
 
         await emit_and_publish(DomainEvent(
             event_type=SESSION_CLOSED,
