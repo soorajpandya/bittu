@@ -1,5 +1,6 @@
 """Items CRUD endpoints."""
-from typing import Optional, List, Any
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Optional, List, Any, Literal
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel, ConfigDict
@@ -19,6 +20,94 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/items", tags=["Menu"])
 
 
+# ── Pricing helpers ──────────────────────────────────────────
+
+_ALLOWED_GST_RATES = {0, 5, 12, 18, 28}
+_TWO = Decimal("0.01")
+
+
+def _q2(value: float | int | Decimal | None) -> Optional[Decimal]:
+    """Round to 2 decimal places, half-up."""
+    if value is None:
+        return None
+    return Decimal(str(value)).quantize(_TWO, rounding=ROUND_HALF_UP)
+
+
+def _resolve_pricing(
+    *,
+    pricing_type: Optional[str],
+    gst_rate: Optional[float],
+    is_tax_inclusive: Optional[bool],
+    price_before_tax: Optional[float],
+    final_price: Optional[float],
+    price: Optional[float],
+    existing: Optional[dict] = None,
+) -> dict:
+    """Validate + normalise the pricing/GST quintet.
+
+    Rules (server-enforced, never trust the client for `final_price`):
+      * pricing_type ∈ {mrp, configurable}
+      * gst_rate ∈ {0,5,12,18,28}
+      * mrp           → is_tax_inclusive=true,  final_price = price (= MRP)
+                        price_before_tax derived from final_price / (1+gst%)
+      * configurable  → is_tax_inclusive=false, price_before_tax required > 0
+                        final_price = price_before_tax × (1 + gst_rate/100)
+      * legacy `price` mirrors:
+            mrp          → price = final_price
+            configurable → price = price_before_tax
+    Returns a dict of canonical column values to persist.
+    """
+    ex = existing or {}
+
+    pt = (pricing_type or ex.get("pricing_type") or "configurable").lower()
+    if pt not in ("mrp", "configurable"):
+        raise HTTPException(422, "pricing_type must be 'mrp' or 'configurable'")
+
+    rate = gst_rate if gst_rate is not None else ex.get("gst_rate")
+    if rate is None:
+        rate = 5
+    try:
+        rate_f = float(rate)
+    except (TypeError, ValueError):
+        raise HTTPException(422, "gst_rate must be numeric")
+    if rate_f not in _ALLOWED_GST_RATES:
+        raise HTTPException(422, f"gst_rate must be one of {sorted(_ALLOWED_GST_RATES)}")
+
+    if pt == "mrp":
+        # MRP-mode: final_price (or legacy price) = printed MRP, GST baked in.
+        mrp = final_price if final_price is not None else (price if price is not None else ex.get("final_price"))
+        if mrp is None:
+            raise HTTPException(422, "mrp items require `final_price` (or legacy `price`)")
+        mrp_d = _q2(mrp)
+        base_d = _q2(Decimal(str(mrp_d)) / (Decimal("1") + Decimal(str(rate_f)) / Decimal("100")))
+        return {
+            "pricing_type":     "mrp",
+            "gst_rate":         rate_f,
+            "is_tax_inclusive": True,
+            "price_before_tax": base_d,
+            "final_price":      mrp_d,
+            "price":            mrp_d,        # legacy mirror
+        }
+
+    # configurable
+    base = price_before_tax
+    if base is None:
+        # fall back to legacy `price` on first save / patch when omitted
+        base = price if price is not None else ex.get("price_before_tax")
+    if base is None or float(base) <= 0:
+        raise HTTPException(422, "configurable items require `price_before_tax` > 0")
+    base_d = _q2(base)
+    final_d = _q2(Decimal(str(base_d)) * (Decimal("1") + Decimal(str(rate_f)) / Decimal("100")))
+    return {
+        "pricing_type":     "configurable",
+        "gst_rate":         rate_f,
+        "is_tax_inclusive": False,
+        "price_before_tax": base_d,
+        "final_price":      final_d,
+        "price":            base_d,           # legacy mirror = pre-tax base
+    }
+
+
 def require_owner_or_manager(user: UserContext = Depends(get_current_user)) -> UserContext:
     """Require owner or manager role."""
     if user.role not in ("owner", "manager"):
@@ -31,7 +120,13 @@ def require_owner_or_manager(user: UserContext = Depends(get_current_user)) -> U
 class ItemCreate(BaseModel):
     Item_Name: str
     Description: Optional[str] = None
-    price: float
+    price: Optional[float] = None
+    # Pricing / GST taxonomy (see migration 058)
+    pricing_type: Literal["mrp", "configurable"] = "configurable"
+    gst_rate: float = 5
+    is_tax_inclusive: Optional[bool] = None
+    price_before_tax: Optional[float] = None
+    final_price: Optional[float] = None
     Available_Status: bool = True
     Category: Optional[str] = None
     Subcategory: Optional[str] = None
@@ -51,6 +146,11 @@ class ItemUpdate(BaseModel):
     Item_Name: Optional[str] = None
     Description: Optional[str] = None
     price: Optional[float] = None
+    pricing_type: Optional[Literal["mrp", "configurable"]] = None
+    gst_rate: Optional[float] = None
+    is_tax_inclusive: Optional[bool] = None
+    price_before_tax: Optional[float] = None
+    final_price: Optional[float] = None
     Available_Status: Optional[bool] = None
     Category: Optional[str] = None
     Subcategory: Optional[str] = None
@@ -73,6 +173,11 @@ class ItemResponse(BaseModel):
     Item_Name: str
     Description: Optional[str] = None
     price: Any  # numeric → Decimal from DB
+    pricing_type: Optional[str] = None
+    gst_rate: Optional[Any] = None
+    is_tax_inclusive: Optional[bool] = None
+    price_before_tax: Optional[Any] = None
+    final_price: Optional[Any] = None
     Available_Status: Optional[bool] = None
     Category: Optional[str] = None
     Subcategory: Optional[str] = None
@@ -144,9 +249,20 @@ async def create_item(
     body: ItemCreate,
     user: UserContext = Depends(require_owner_or_manager),
 ):
+    # ── Resolve pricing/GST quintet (server is the source of truth) ──
+    pricing = _resolve_pricing(
+        pricing_type=body.pricing_type,
+        gst_rate=body.gst_rate,
+        is_tax_inclusive=body.is_tax_inclusive,
+        price_before_tax=body.price_before_tax,
+        final_price=body.final_price,
+        price=body.price,
+    )
+    legacy_price = pricing["price"]
+
     # ── Duplicate check: same name + price for this tenant ──
     clause, check_params = tenant_where_clause(user)
-    check_params.extend([body.Item_Name.strip(), body.price])
+    check_params.extend([body.Item_Name.strip(), legacy_price])
     async with get_connection() as conn:
         existing = await conn.fetchrow(
             f"""SELECT "Item_ID", "Item_Name", price FROM items
@@ -158,20 +274,23 @@ async def create_item(
     if existing:
         raise HTTPException(
             status_code=409,
-            detail=f"Item '{body.Item_Name}' with price {body.price} already exists (ID: {existing['Item_ID']})",
+            detail=f"Item '{body.Item_Name}' with price {legacy_price} already exists (ID: {existing['Item_ID']})",
         )
 
     fields = [
         '"Item_Name"', '"Description"', 'price', '"Available_Status"', '"Category"',
         '"Subcategory"', '"Cuisine"', '"Spice_Level"', '"Prep_Time_Min"', '"Image_url"',
         'is_veg', 'tags', 'sort_order', 'dine_in_available', 'takeaway_available',
-        'delivery_available', 'restaurant_id', 'branch_id', 'user_id'
+        'delivery_available', 'restaurant_id', 'branch_id', 'user_id',
+        'pricing_type', 'gst_rate', 'is_tax_inclusive', 'price_before_tax', 'final_price',
     ]
     values = [
-        body.Item_Name, body.Description, body.price, body.Available_Status, body.Category,
+        body.Item_Name, body.Description, legacy_price, body.Available_Status, body.Category,
         body.Subcategory, body.Cuisine, body.Spice_Level, body.Prep_Time_Min, body.Image_url,
         body.is_veg, body.tags, body.sort_order, body.dine_in_available, body.takeaway_available,
-        body.delivery_available, user.restaurant_id, user.branch_id, user.user_id
+        body.delivery_available, user.restaurant_id, user.branch_id, user.user_id,
+        pricing["pricing_type"], pricing["gst_rate"], pricing["is_tax_inclusive"],
+        pricing["price_before_tax"], pricing["final_price"],
     ]
     placeholders = ", ".join(f"${i+1}" for i in range(len(values)))
 
@@ -263,19 +382,33 @@ async def bulk_import_items(
                 })
                 continue
 
-            # Insert
+            # AI scan defaults: configurable @ 5% GST; treat incoming price as
+            # pre-tax base so final_price stays consistent with the rest of API.
+            pricing = _resolve_pricing(
+                pricing_type="configurable",
+                gst_rate=5,
+                is_tax_inclusive=False,
+                price_before_tax=item.price,
+                final_price=None,
+                price=item.price,
+            )
             row = await conn.fetchrow(
                 """INSERT INTO items (
                     "Item_Name", "Description", price, "Available_Status",
                     "Category", "Subcategory", "Cuisine", "Spice_Level",
                     "Prep_Time_Min", "Image_url", is_veg,
-                    restaurant_id, branch_id, user_id
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                    restaurant_id, branch_id, user_id,
+                    pricing_type, gst_rate, is_tax_inclusive,
+                    price_before_tax, final_price
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+                          $15,$16,$17,$18,$19)
                 RETURNING *""",
-                item.item_name, item.description, item.price, True,
+                item.item_name, item.description, pricing["price"], True,
                 item.category, item.subcategory, item.cuisine, item.spice_level,
                 item.prep_time_min, item.image_url, item.is_veg,
                 user.restaurant_id, user.branch_id, user.user_id,
+                pricing["pricing_type"], pricing["gst_rate"], pricing["is_tax_inclusive"],
+                pricing["price_before_tax"], pricing["final_price"],
             )
             created_items.append(dict(row))
             # Add to set so subsequent dupes within same batch are caught
@@ -339,14 +472,48 @@ async def update_item(
         "Image_url": '"Image_url"', "is_veg": "is_veg", "tags": "tags",
         "sort_order": "sort_order", "dine_in_available": "dine_in_available",
         "takeaway_available": "takeaway_available", "delivery_available": "delivery_available",
+        "pricing_type": "pricing_type", "gst_rate": "gst_rate",
+        "is_tax_inclusive": "is_tax_inclusive", "price_before_tax": "price_before_tax",
+        "final_price": "final_price",
     }
+    patch = body.model_dump(exclude_unset=True)
+
+    # If any pricing field was touched, re-resolve the whole quintet from
+    # current row + patch so `final_price` is always derived server-side.
+    pricing_fields = {"pricing_type", "gst_rate", "is_tax_inclusive",
+                      "price_before_tax", "final_price", "price"}
+    if patch.keys() & pricing_fields:
+        async with get_connection() as conn:
+            existing = await conn.fetchrow(
+                'SELECT pricing_type, gst_rate, is_tax_inclusive, '
+                'price_before_tax, final_price, price '
+                'FROM items WHERE "Item_ID" = $1',
+                item_id,
+            )
+        ex_dict = dict(existing) if existing else {}
+        pricing = _resolve_pricing(
+            pricing_type=patch.get("pricing_type"),
+            gst_rate=patch.get("gst_rate"),
+            is_tax_inclusive=patch.get("is_tax_inclusive"),
+            price_before_tax=patch.get("price_before_tax"),
+            final_price=patch.get("final_price"),
+            price=patch.get("price"),
+            existing={k: float(v) if isinstance(v, Decimal) else v
+                      for k, v in ex_dict.items() if v is not None},
+        )
+        # Replace any client-supplied pricing with the canonical resolved set.
+        for k in pricing_fields:
+            patch.pop(k, None)
+        patch.update(pricing)
+
     updates = []
     params = []
-    for field, value in body.model_dump(exclude_unset=True).items():
-        if value is not None:
-            col = _col_map.get(field, field)
-            updates.append(f"{col} = ${len(params)+1}")
-            params.append(value)
+    for field, value in patch.items():
+        if value is None:
+            continue
+        col = _col_map.get(field, field)
+        updates.append(f"{col} = ${len(params)+1}")
+        params.append(value)
 
     if not updates:
         return await get_item(item_id, user)
