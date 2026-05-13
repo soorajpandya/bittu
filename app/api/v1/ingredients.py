@@ -139,9 +139,9 @@ async def create_ingredient(
             )
             VALUES (
                 $1, $2::uuid, $3::uuid, $4, $5,
-                $6, $6,
-                $7, $8, COALESCE($7, 0),
-                $9, $10, $11, $12,
+                $6::numeric, $6::numeric,
+                $7::numeric, $8::numeric, COALESCE($7::numeric, 0)::int,
+                $9::numeric, $10::numeric, $11, $12,
                 $13, $14, $15, $16,
                 $17, $18, $19, TRUE, NOW(), NOW()
             )
