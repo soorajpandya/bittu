@@ -6,11 +6,11 @@ inside Bittu POS.
 
 Architecture
 ─────────────────────────────────────────────────────────────────────────────
-Bittu charges a 0.15% platform fee + 18% GST on that fee per collected
+Bittu charges a 0.4% platform fee + 18% GST on that fee per collected
 payment, then settles the net amount to the merchant's bank account.
 
   Gross Amount (collected from customers)
-  – Bittu Platform Fee  (gross × 0.15%)
+  – Bittu Platform Fee  (gross × 0.4%)
   – GST on Fee          (fee × 18%)
   = Net Settlement Amount  (credited to merchant bank)
 
@@ -44,6 +44,7 @@ from uuid import UUID, uuid4
 
 from app.core.database import get_connection, get_serializable_transaction
 from app.core.exceptions import NotFoundError, ValidationError, ConflictError
+from app.core.ist import ist_today
 from app.core.logging import get_logger
 from app.services.accounting_engine import accounting_engine
 from app.services.activity_log_service import log_activity
@@ -97,7 +98,7 @@ def _calc_fee(gross: Decimal) -> tuple[Decimal, Decimal, Decimal]:
 
 def _make_reference(restaurant_id: str) -> str:
     """Generate a human-readable settlement reference like STL-20260506-XXXX."""
-    today = date.today().strftime("%Y%m%d")
+    today = ist_today().strftime("%Y%m%d")
     suffix = str(uuid4())[:8].upper()
     return f"STL-{today}-{suffix}"
 
@@ -152,7 +153,7 @@ class StatementService:
         """
         rid = UUID(restaurant_id)
         bid = UUID(branch_id) if branch_id else None
-        today = date.today()
+        today = ist_today()
         from_d = from_date or date(today.year, today.month, 1)
         to_d   = to_date   or today
 
@@ -176,7 +177,7 @@ class StatementService:
                     COALESCE(SUM(p.amount), 0) AS total_received
                 FROM payments p
                 WHERE p.restaurant_id = $1
-                  AND DATE(p.created_at) BETWEEN $2 AND $3
+                  AND DATE(p.created_at AT TIME ZONE 'Asia/Kolkata') BETWEEN $2 AND $3
                   AND p.status = 'completed'
                   {p_branch}
             """, *base_params)
@@ -191,7 +192,7 @@ class StatementService:
                 SELECT COALESCE(SUM(p.amount), 0) AS today_collection
                 FROM payments p
                 WHERE p.restaurant_id = $1
-                  AND DATE(p.created_at) = CURRENT_DATE
+                  AND DATE(p.created_at AT TIME ZONE 'Asia/Kolkata') = (now() AT TIME ZONE 'Asia/Kolkata')::date
                   AND p.status = 'completed'
                   {today_branch}
             """, *today_params)
@@ -205,7 +206,7 @@ class StatementService:
                     COALESCE(SUM(bs.gst_amount), 0)                             AS gst_on_charges
                 FROM bittu_settlements bs
                 WHERE bs.restaurant_id = $1
-                  AND DATE(bs.created_at) BETWEEN $2 AND $3
+                  AND DATE(bs.created_at AT TIME ZONE 'Asia/Kolkata') BETWEEN $2 AND $3
                   AND bs.settlement_status != 'reversed'
                   {s_branch}
             """, *base_params)
@@ -294,7 +295,7 @@ class StatementService:
             "fee_info": {
                 "bittu_fee_rate_pct": "0.2542%",
                 "gst_rate_pct":       "18%",
-                "description": "Bittu charges 0.15% platform fee + 18% GST on fee per settlement",
+                "description": "Bittu charges 0.4% platform fee + 18% GST on fee per settlement",
             },
         }
 
@@ -324,14 +325,14 @@ class StatementService:
         """
         rid = UUID(restaurant_id)
         bid = UUID(branch_id) if branch_id else None
-        today = date.today()
+        today = ist_today()
         from_d = from_date or (today - timedelta(days=30))
         to_d   = to_date   or today
 
         params: list = [rid, from_d, to_d]
         conditions = [
             "p.restaurant_id = $1",
-            "DATE(p.created_at) BETWEEN $2 AND $3",
+            "DATE(p.created_at AT TIME ZONE 'Asia/Kolkata') BETWEEN $2 AND $3",
             "p.status = 'completed'",
         ]
         idx = 4
@@ -457,7 +458,7 @@ class StatementService:
         """
         rid   = UUID(restaurant_id)
         bid   = UUID(branch_id) if branch_id else None
-        today = date.today()
+        today = ist_today()
         from_d = from_date or (today - timedelta(days=30))
         to_d   = to_date   or today
 
@@ -515,7 +516,7 @@ class StatementService:
                 FROM bittu_settlements bs
                 LEFT JOIN bittu_settlement_transactions bst ON bst.settlement_id = bs.id
                 WHERE bs.restaurant_id = $1
-                  AND DATE(bs.created_at) BETWEEN $2 AND $3
+                  AND DATE(bs.created_at AT TIME ZONE 'Asia/Kolkata') BETWEEN $2 AND $3
                   {real_branch}
                 GROUP BY bs.id
 
@@ -523,8 +524,8 @@ class StatementService:
 
                 -- Virtual daily groups: payments not yet in any settlement batch
                 SELECT
-                    ('VIRT-' || DATE(p.created_at)::text)          AS id,
-                    ('PENDING-' || DATE(p.created_at)::text)        AS settlement_reference,
+                    ('VIRT-' || DATE(p.created_at AT TIME ZONE 'Asia/Kolkata')::text)          AS id,
+                    ('PENDING-' || DATE(p.created_at AT TIME ZONE 'Asia/Kolkata')::text)        AS settlement_reference,
                     SUM(p.amount::numeric)                          AS gross_amount,
                     ROUND(SUM(p.amount::numeric) * 0.001500, 6)    AS bittu_fee_amount,
                     ROUND(SUM(p.amount::numeric) * 0.001500
@@ -546,7 +547,7 @@ class StatementService:
                     true                                             AS is_virtual
                 FROM payments p
                 WHERE p.restaurant_id = $1
-                  AND DATE(p.created_at) BETWEEN $2 AND $3
+                  AND DATE(p.created_at AT TIME ZONE 'Asia/Kolkata') BETWEEN $2 AND $3
                   AND p.status = 'completed'
                   {virt_branch}
                   AND NOT EXISTS (
@@ -554,7 +555,7 @@ class StatementService:
                       WHERE bst2.payment_id = p.id
                         AND bst2.transaction_type = 'payment'
                   )
-                GROUP BY DATE(p.created_at)
+                GROUP BY DATE(p.created_at AT TIME ZONE 'Asia/Kolkata')
                 HAVING SUM(p.amount) > 0
             )
         """
@@ -742,7 +743,7 @@ class StatementService:
         """
         rid = UUID(restaurant_id)
         bid = UUID(branch_id) if branch_id else None
-        today = date.today()
+        today = ist_today()
         from_d = from_date or date(today.year, today.month, 1)
         to_d   = to_date   or today
 
@@ -768,7 +769,7 @@ class StatementService:
                 FROM bittu_settlements bs
                 LEFT JOIN bittu_settlement_transactions bst ON bst.settlement_id = bs.id
                 WHERE bs.restaurant_id = $1
-                  AND DATE(bs.created_at) BETWEEN $2 AND $3
+                  AND DATE(bs.created_at AT TIME ZONE 'Asia/Kolkata') BETWEEN $2 AND $3
                   {branch_clause}
                   {status_clause}
                 GROUP BY bs.id
@@ -879,7 +880,7 @@ class StatementService:
                 return {"settlement_transaction_id": str(existing), "status": "already_queued"}
 
         # Find or create today's open settlement batch for this branch
-        today = date.today()
+        today = ist_today()
         idem_key = f"batch_{restaurant_id}_{branch_id or 'main'}_{today.isoformat()}"
         eta = _expected_eta(cycle)
 
@@ -1240,7 +1241,7 @@ class StatementService:
         """
         rid   = row["restaurant_id"]
         bid   = row.get("branch_id")
-        today = date.today()
+        today = ist_today()
         net   = float(row["net_settlement_amount"])
         fee   = float(row["bittu_fee_amount"]) + float(row["gst_amount"])
 
@@ -1286,7 +1287,7 @@ class StatementService:
             "total_deductions": float(bittu_fee + gst_on_fee),
             "net_settlement":  float(net),
             "formula": (
-                f"₹{float(gross):,.2f} × 0.15% = ₹{float(bittu_fee):,.4f} fee "
+                f"₹{float(gross):,.2f} × 0.4% = ₹{float(bittu_fee):,.4f} fee "
                 f"+ ₹{float(gst_on_fee):,.4f} GST = ₹{float(net):,.2f} net"
             ),
         }

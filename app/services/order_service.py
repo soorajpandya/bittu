@@ -17,9 +17,9 @@ Abuse prevention:
 
 Date/timezone contract:
   - All timestamps stored in UTC (TIMESTAMPTZ).
-  - from_date/to_date query filters are interpreted as UTC calendar days:
-      from_date inclusive  → created_at >= from_date::date (00:00 UTC)
-      to_date   inclusive  → created_at <  (to_date::date + INTERVAL '1 day')
+  - from_date/to_date query filters are interpreted as IST calendar days:
+      from_date inclusive  → created_at >= 00:00 IST on from_date  (UTC)
+      to_date   inclusive  → created_at <  00:00 IST on (to_date+1) (UTC)
 """
 import json
 import time
@@ -43,6 +43,7 @@ from app.core.exceptions import (
     NotFoundError, ConflictError, ForbiddenError,
     LockAcquisitionError, ValidationError, CheckoutError,
 )
+from app.core.ist import ist_range_utc
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -837,10 +838,10 @@ class OrderService:
         """
         Fetch orders with tenant isolation, newest-first, with inline items.
 
-        Date filter semantics (UTC)
+        Date filter semantics (IST)
         ---------------------------
-        from_date  inclusive : created_at >= from_date::date (midnight UTC)
-        to_date    inclusive : created_at <  (to_date::date + INTERVAL '1 day')
+        from_date  inclusive : created_at >= 00:00 IST on from_date  (UTC instant)
+        to_date    inclusive : created_at <  00:00 IST on (to_date+1) (UTC instant)
 
         Response shape
         --------------
@@ -857,6 +858,11 @@ class OrderService:
         Order items are aggregated in-DB via json_agg so a single SQL round-trip
         returns orders + their items.  No per-order detail fetch is needed.
         """
+        try:
+            from_ts, to_ts = ist_range_utc(from_date, to_date)
+        except ValueError as e:
+            raise ValidationError(str(e))
+
         clause, params = tenant_where_clause(user, "o")
 
         conditions = [clause]
@@ -874,13 +880,13 @@ class OrderService:
             params.append(order_type)
             conditions.append(f"o.source = ${len(params)}::order_source")
         if from_date:
-            params.append(from_date)
-            # Inclusive: >= midnight UTC on that date
-            conditions.append(f"o.created_at >= ${len(params)}::date")
+            params.append(from_ts)
+            # Inclusive lower bound: created_at >= IST midnight of from_date (UTC)
+            conditions.append(f"o.created_at >= ${len(params)}")
         if to_date:
-            params.append(to_date)
-            # Inclusive day: < start of next day UTC
-            conditions.append(f"o.created_at < (${len(params)}::date + INTERVAL '1 day')")
+            params.append(to_ts)
+            # Inclusive upper bound: created_at < IST midnight of (to_date + 1 day) (UTC)
+            conditions.append(f"o.created_at < ${len(params)}")
 
         where = " AND ".join(conditions)
 

@@ -37,6 +37,7 @@ from uuid import UUID
 from app.core.auth import UserContext
 from app.core.database import get_connection, get_transaction
 from app.core.exceptions import NotFoundError, ValidationError
+from app.core.ist import IST, ist_day_start_utc, ist_day_end_utc, parse_datetime
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -312,9 +313,28 @@ class MerchantLedgerService:
         if utr_number:
             _add("utr_number = ?", utr_number)
         if from_date:
-            _add("created_at >= ?::timestamptz", from_date)
+            try:
+                # Date-only ('YYYY-MM-DD') is interpreted as IST midnight; full
+                # ISO timestamps are kept as-is (already absolute UTC).
+                if len(str(from_date)) == 10:
+                    from datetime import date as _date
+                    from_dt = ist_day_start_utc(_date.fromisoformat(str(from_date)))
+                else:
+                    from_dt = parse_datetime(from_date)
+            except ValueError as e:
+                raise ValidationError("invalid from_date") from e
+            _add("created_at >= ?", from_dt)
         if to_date:
-            _add("created_at <= ?::timestamptz", to_date)
+            try:
+                if len(str(to_date)) == 10:
+                    from datetime import date as _date
+                    to_dt = ist_day_end_utc(_date.fromisoformat(str(to_date)))
+                    _add("created_at < ?", to_dt)
+                else:
+                    to_dt = parse_datetime(to_date)
+                    _add("created_at <= ?", to_dt)
+            except ValueError as e:
+                raise ValidationError("invalid to_date") from e
 
         # Branch isolation for branch users.
         if user.is_branch_user and user.branch_id:
@@ -326,15 +346,14 @@ class MerchantLedgerService:
                 cur_ts, cur_id = cursor.split("|", 1)
             except ValueError as e:
                 raise ValidationError("invalid cursor") from e
-            # Validate cursor pieces before hitting SQL casts.
             try:
-                datetime.fromisoformat(cur_ts.replace("Z", "+00:00"))
+                cur_dt = datetime.fromisoformat(cur_ts.replace("Z", "+00:00"))
             except Exception as e:
                 raise ValidationError("invalid cursor timestamp") from e
-            params.append(cur_ts)
+            params.append(cur_dt)
             params.append(_parse_uuid(cur_id, "cursor id"))
             clauses.append(
-                f"(created_at, id) < (${len(params) - 1}::timestamptz, ${len(params)}::uuid)"
+                f"(created_at, id) < (${len(params) - 1}, ${len(params)}::uuid)"
             )
 
         params.append(limit + 1)  # +1 to detect next page
