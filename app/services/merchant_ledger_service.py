@@ -29,6 +29,7 @@ with `merchant_wallet_service`).
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID
@@ -74,6 +75,14 @@ def _f(value) -> float:
     if value is None:
         return 0.0
     return float(Decimal(str(value)).quantize(Decimal("0.0001")))
+
+
+def _parse_uuid(value: str, field_name: str) -> UUID:
+    """Parse a UUID string and raise API validation errors on bad input."""
+    try:
+        return UUID(str(value))
+    except Exception as e:
+        raise ValidationError(f"invalid {field_name}") from e
 
 
 def _row_to_dict(row) -> dict[str, Any]:
@@ -295,11 +304,11 @@ class MerchantLedgerService:
                 raise ValidationError(f"unknown transaction_type {transaction_type!r}")
             _add("transaction_type = ?::merchant_ledger_txn_type", transaction_type)
         if settlement_id:
-            _add("settlement_id = ?::uuid", settlement_id)
+            _add("settlement_id = ?::uuid", _parse_uuid(settlement_id, "settlement_id"))
         if payment_id:
-            _add("payment_id = ?::uuid", payment_id)
+            _add("payment_id = ?::uuid", _parse_uuid(payment_id, "payment_id"))
         if order_id:
-            _add("order_id = ?::uuid", order_id)
+            _add("order_id = ?::uuid", _parse_uuid(order_id, "order_id"))
         if utr_number:
             _add("utr_number = ?", utr_number)
         if from_date:
@@ -317,8 +326,13 @@ class MerchantLedgerService:
                 cur_ts, cur_id = cursor.split("|", 1)
             except ValueError as e:
                 raise ValidationError("invalid cursor") from e
+            # Validate cursor pieces before hitting SQL casts.
+            try:
+                datetime.fromisoformat(cur_ts.replace("Z", "+00:00"))
+            except Exception as e:
+                raise ValidationError("invalid cursor timestamp") from e
             params.append(cur_ts)
-            params.append(cur_id)
+            params.append(_parse_uuid(cur_id, "cursor id"))
             clauses.append(
                 f"(created_at, id) < (${len(params) - 1}::timestamptz, ${len(params)}::uuid)"
             )
