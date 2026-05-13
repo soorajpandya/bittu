@@ -55,7 +55,7 @@ async def _post_journal(event: DomainEvent, *,
         return
 
     event_id = (event.payload or {}).get("event_id")
-    ref_id = str(event_id) if event_id else f"{reference_type}:{event.id}"
+    ref_id = str(event_id) if event_id else f"{reference_type}:{event.correlation_id or event.timestamp}"
 
     try:
         await accounting_engine.create_journal_entry(
@@ -75,7 +75,7 @@ async def _post_journal(event: DomainEvent, *,
     except Exception:
         logger.exception(
             "inventory_journal_failed",
-            event_type=event.type, ref_id=ref_id, amt=amt,
+            event_type=event.event_type, ref_id=ref_id, amt=amt,
         )
 
 
