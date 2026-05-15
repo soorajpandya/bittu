@@ -62,7 +62,7 @@ class UpdateInvoiceIn(BaseModel):
 
 
 class NotifyIn(BaseModel):
-    medium: str = Field(..., regex="^(sms|email)$")
+    medium: str = Field(..., pattern="^(sms|email)$")
 
 
 # ── Invoices ──────────────────────────────────────────────────────────────
@@ -71,7 +71,7 @@ class NotifyIn(BaseModel):
 @router.get("")
 async def list_invoices(
     status: Optional[str] = Query(
-        None, regex="^(draft|issued|partially_paid|paid|expired|cancelled)$"
+        None, pattern="^(draft|issued|partially_paid|paid|expired|cancelled)$"
     ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),

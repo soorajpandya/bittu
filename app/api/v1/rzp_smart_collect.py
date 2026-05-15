@@ -64,7 +64,7 @@ class AddPayerIn(BaseModel):
 
 @router.get("/virtual-accounts")
 async def list_virtual_accounts(
-    status: Optional[str] = Query(None, regex="^(active|closed)$"),
+    status: Optional[str] = Query(None, pattern="^(active|closed)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: UserContext = Depends(require_permission("razorpay.smart_collect.read")),
