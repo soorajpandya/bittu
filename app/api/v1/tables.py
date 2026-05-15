@@ -1,5 +1,6 @@
 """Table Session / QR ordering endpoints."""
 import orjson
+import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, model_validator
@@ -29,6 +30,7 @@ async def _resolve_active_dinein_session_id(
     Compatibility helper:
     - If session_id is already a dine_in_sessions.id → return it
     - Else treat it as legacy table_sessions.id, resolve to table_id, then pick active dine_in_sessions.id
+    - Else treat it as a restaurant_tables.id directly, then pick active dine_in_sessions.id
     """
     dinein = await conn.fetchrow(
         "SELECT id FROM dine_in_sessions WHERE id = $1 AND user_id = $2",
@@ -43,7 +45,20 @@ async def _resolve_active_dinein_session_id(
         session_id,
         owner_id,
     )
-    if not legacy:
+    table_id_candidate: Optional[str] = None
+    if legacy:
+        table_id_candidate = str(legacy["table_id"])
+    else:
+        # Fallback: caller may have passed restaurant_tables.id directly
+        table_row = await conn.fetchrow(
+            "SELECT id FROM restaurant_tables WHERE id = $1 AND user_id = $2",
+            session_id,
+            owner_id,
+        )
+        if table_row:
+            table_id_candidate = str(table_row["id"])
+
+    if not table_id_candidate:
         return session_id
 
     active = await conn.fetchrow(
@@ -54,7 +69,7 @@ async def _resolve_active_dinein_session_id(
         ORDER BY created_at DESC
         LIMIT 1
         """,
-        str(legacy["table_id"]),
+        table_id_candidate,
         owner_id,
     )
     return str(active["id"]) if active else session_id
@@ -74,10 +89,12 @@ class StartSessionIn(BaseModel):
 
 
 class JoinSessionIn(BaseModel):
-    session_token: Optional[str] = None
-    table_id: Optional[str] = None
-    device_id: str
-    device_name: Optional[str] = None
+    model_config = {"populate_by_name": True, "extra": "ignore"}
+
+    session_token: Optional[str] = Field(default=None, alias="sessionToken")
+    table_id: Optional[str] = Field(default=None, alias="tableId")
+    device_id: Optional[str] = Field(default=None, alias="deviceId")
+    device_name: Optional[str] = Field(default=None, alias="deviceName")
 
     @model_validator(mode="after")
     def _validate_join_target(self):
@@ -126,7 +143,17 @@ async def list_tables(
                 " FROM restaurant_tables WHERE user_id = $1 ORDER BY table_number ASC",
                 owner_id,
             )
-        result = [dict(r) for r in rows]
+        # Normalize legacy status values for frontend ('blank'→'available', 'running'→'occupied').
+        _STATUS_MAP = {"blank": "available", "running": "occupied"}
+        result = []
+        for r in rows:
+            d = dict(r)
+            raw_status = (d.get("status") or "").lower()
+            d["status"] = _STATUS_MAP.get(raw_status, raw_status or "available")
+            # Belt-and-braces: if is_occupied true, force 'occupied'.
+            if d.get("is_occupied"):
+                d["status"] = "occupied"
+            result.append(d)
         try:
             await cache_set(cache_key, orjson.dumps(result, default=str).decode(), ttl=_TABLES_LIST_CACHE_TTL)
         except Exception:
@@ -293,12 +320,25 @@ async def join_session(
     body: JoinSessionIn,
     user: Optional[UserContext] = Depends(get_current_user_optional),
 ):
+    logger.info(
+        "join_session called",
+        extra={
+            "has_session_token": bool(body.session_token),
+            "table_id": body.table_id,
+            "has_device_id": bool(body.device_id),
+            "user_id": getattr(user, "id", None) if user else None,
+        },
+    )
+    # Auto-generate a device_id when client omits it (admin/POS flow doesn't need a stable one).
+    device_id = body.device_id or f"pos-{uuid.uuid4()}"
+    device_name = body.device_name or "POS"
+
     # Public/QR join: token is enough (no JWT required)
     if body.session_token:
         return await _svc.join_session(
             session_token=body.session_token,
-            device_id=body.device_id,
-            device_name=body.device_name,
+            device_id=device_id,
+            device_name=device_name,
         )
 
     # Admin/POS join-by-table: requires JWT so we can safely create a session
@@ -309,8 +349,8 @@ async def join_session(
     return await _svc.join_or_create_session_by_table(
         user=user,
         table_id=body.table_id,  # type: ignore[arg-type]
-        device_id=body.device_id,
-        device_name=body.device_name,
+        device_id=device_id,
+        device_name=device_name,
     )
 
 

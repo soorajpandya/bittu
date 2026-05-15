@@ -381,7 +381,7 @@ async def debug_context(
     summary="Preview Bittu fee for a given gross amount",
     description=(
         "Returns real-time fee breakdown for a hypothetical gross amount:\n"
-        "  gross × 0.15% = Bittu fee\n"
+        "  gross × 0.4% = Bittu fee\n"
         "  fee × 18% = GST on fee\n"
         "  net = gross − fee − GST\n\n"
         "Useful for the frontend to show merchants what they will receive."

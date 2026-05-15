@@ -29,6 +29,7 @@ class _CreateBody(BaseModel):
     order_id: Optional[str] = None
     customer_contact: Optional[str] = None
     notes: Optional[dict] = None
+    speed: str = "normal"  # razorpay: normal|optimum (ignored for non-online payments)
 
 
 class _TransitionBody(BaseModel):
@@ -43,7 +44,7 @@ async def create_refund(
     body: _CreateBody,
     user: UserContext = Depends(require_permission("refunds.write")),
 ):
-    return await refund_service.create(
+    return await refund_service.create_and_dispatch(
         merchant_id=_mid(user),
         payment_id=body.payment_id,
         amount=body.amount,
@@ -52,6 +53,7 @@ async def create_refund(
         order_id=body.order_id,
         customer_contact=body.customer_contact,
         notes=body.notes,
+        speed=body.speed,
         initiated_by_user_id=user.user_id,
     )
 

@@ -250,7 +250,7 @@ async def get_session_bill(
     """Get complete bill snapshot for a table session."""
     owner_id = user.owner_id if user.is_branch_user else user.user_id
 
-    # Compatibility: some clients pass table_sessions.id here.
+    # Compatibility: some clients pass table_sessions.id or restaurant_tables.id here.
     resolved_session_id = session_id
     async with get_connection() as conn:
         dinein = await conn.fetchrow(
@@ -259,12 +259,24 @@ async def get_session_bill(
             owner_id,
         )
         if not dinein:
+            table_id_candidate = None
             legacy = await conn.fetchrow(
                 "SELECT table_id FROM table_sessions WHERE id = $1 AND user_id = $2",
                 session_id,
                 owner_id,
             )
             if legacy:
+                table_id_candidate = str(legacy["table_id"])
+            else:
+                table_row = await conn.fetchrow(
+                    "SELECT id FROM restaurant_tables WHERE id = $1 AND user_id = $2",
+                    session_id,
+                    owner_id,
+                )
+                if table_row:
+                    table_id_candidate = str(table_row["id"])
+
+            if table_id_candidate:
                 active = await conn.fetchrow(
                     """
                     SELECT id
@@ -273,7 +285,7 @@ async def get_session_bill(
                     ORDER BY created_at DESC
                     LIMIT 1
                     """,
-                    str(legacy["table_id"]),
+                    table_id_candidate,
                     owner_id,
                 )
                 if active:

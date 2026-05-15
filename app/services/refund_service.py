@@ -1,14 +1,17 @@
 """
-Refund service — Phase 7.
+Refund service — Phase 7 + Phase 4 (Razorpay deep wiring).
 
 Models the refund lifecycle (initiated → processing → succeeded|failed|cancelled).
 On transition to ``succeeded`` we post a DEBIT to the merchant_ledger via
 ``fn_post_merchant_ledger_entry`` with transaction_type='refund' so balances
 stay correct.
 
-This service does NOT call any payment gateway. ``gateway_refund_id`` is a
-free-form field that operations can fill in if/when a gateway integration is
-added later.
+`create()` is the pure local-only path retained for offline / cash refunds.
+`create_and_dispatch()` (Phase 4) is the gateway-aware orchestrator: it
+creates the local row, calls Razorpay's refund API (idempotent on
+``refund:{refund_uuid}``), mirrors into ``rzp_refunds``, and transitions the
+local row according to the gateway's reply (pending → processing,
+processed → succeeded → ledger DEBIT, failed → failed).
 """
 from __future__ import annotations
 
@@ -323,6 +326,247 @@ class RefundService:
                 str(merchant_id), str(payment_id),
             )
         return Decimal(str(v or 0))
+
+    # ────────────────────────────────────────────────────────────────
+    # Gateway-aware orchestrator (Phase 4)
+    # ────────────────────────────────────────────────────────────────
+    async def create_and_dispatch(
+        self,
+        *,
+        merchant_id: str | UUID,
+        payment_id: str | UUID,
+        amount: Decimal | str | float,
+        reason: Optional[str] = None,
+        kind: str = "partial",
+        order_id: Optional[str | UUID] = None,
+        customer_contact: Optional[str] = None,
+        notes: Optional[dict] = None,
+        speed: str = "normal",  # razorpay: normal|optimum
+        initiated_by_user_id: Optional[str | UUID] = None,
+        initiated_by_admin_id: Optional[str | UUID] = None,
+    ) -> dict:
+        """
+        Create a refund and (if the payment was online) dispatch it to Razorpay.
+
+        Idempotent on ``refund:{refund_uuid}`` — the gateway's idempotency
+        cache returns the same razorpay refund row on retry. The local row's
+        terminal state is governed by the gateway response, NOT the API call:
+
+          * razorpay status='processed' → local 'succeeded' → ledger DEBIT
+          * razorpay status='pending'   → local 'processing' (webhook later
+                                          fires the success transition)
+          * razorpay status='failed'    → local 'failed'
+
+        For non-online payments (cash / upi-cash-equivalent), this falls
+        through to plain ``create()`` — the operator owns the ledger
+        movement via the existing transition() workflow.
+        """
+        # 1. Pre-fetch the gateway payment id BEFORE touching the local row,
+        #    so we know whether to dispatch.
+        async with get_connection() as c:
+            pay = await c.fetchrow(
+                """
+                SELECT id::text                AS id,
+                       razorpay_payment_id     AS rzp_payment_id,
+                       method                  AS method,
+                       amount                  AS amount,
+                       status                  AS status
+                FROM payments
+                WHERE id = $1::uuid
+                """,
+                str(payment_id),
+            )
+        if pay is None:
+            raise NotFoundError("payment not found")
+        rzp_payment_id = pay["rzp_payment_id"]
+
+        # 2. Create the local row (existing path — full validation, audit).
+        local = await self.create(
+            merchant_id=merchant_id,
+            payment_id=payment_id,
+            amount=amount,
+            reason=reason,
+            kind=kind,
+            order_id=order_id,
+            customer_contact=customer_contact,
+            notes=notes,
+            initiated_by_user_id=initiated_by_user_id,
+            initiated_by_admin_id=initiated_by_admin_id,
+        )
+
+        # 3. If this isn't an online payment, we're done.
+        if not rzp_payment_id:
+            return local
+
+        # 4. Dispatch to Razorpay (outside any DB txn — gateway latency).
+        from app.services.razorpay import refunds as rzp_refunds_api
+
+        amt = Decimal(str(amount))
+        amount_paise = int((amt * 100).to_integral_value())
+        idem_key = f"refund:{local['refund_uuid']}"
+
+        try:
+            rzp_resp = await rzp_refunds_api.create_refund(
+                payment_id=rzp_payment_id,
+                amount_paise=amount_paise,
+                speed=speed,
+                notes={
+                    "internal_refund_id": str(local["id"]),
+                    "internal_refund_uuid": str(local["refund_uuid"]),
+                    "reason": reason or "",
+                },
+                idempotency_key=idem_key,
+                merchant_id=str(merchant_id),
+            )
+        except Exception as exc:
+            logger.exception("refund.gateway_call_failed",
+                             refund_id=local["id"], payment_id=str(payment_id))
+            failed = await self.transition(
+                int(local["id"]),
+                merchant_id=merchant_id,
+                new_status="failed",
+                failure_reason=f"gateway_error: {str(exc)[:200]}",
+                actor_user_id=initiated_by_user_id,
+                actor_admin_id=initiated_by_admin_id,
+            )
+            return failed
+
+        # 5. Mirror the gateway response into rzp_refunds so the eventual
+        #    webhook UPSERT is a true no-op.
+        await self._mirror_rzp_refund(
+            rzp_resp=rzp_resp,
+            internal_refund_id=local["id"],
+            internal_refund_uuid=local["refund_uuid"],
+            merchant_id=str(merchant_id),
+            initiated_by=initiated_by_admin_id or initiated_by_user_id,
+        )
+
+        # 6. Transition the local row based on gateway state.
+        gw_status = (rzp_resp.get("status") or "pending").lower()
+        gw_refund_id = rzp_resp.get("id")
+        if gw_status == "processed":
+            new_status = "succeeded"
+            failure_reason = None
+        elif gw_status == "failed":
+            new_status = "failed"
+            failure_reason = (
+                rzp_resp.get("notes", {}).get("failure_reason")
+                if isinstance(rzp_resp.get("notes"), dict) else None
+            ) or "razorpay_refund_failed"
+        else:  # pending and anything we don't recognise
+            new_status = "processing"
+            failure_reason = None
+
+        return await self.transition(
+            int(local["id"]),
+            merchant_id=merchant_id,
+            new_status=new_status,
+            gateway_refund_id=gw_refund_id,
+            failure_reason=failure_reason,
+            notes={"razorpay_status": gw_status, "speed_processed": rzp_resp.get("speed_processed")},
+            actor_user_id=initiated_by_user_id,
+            actor_admin_id=initiated_by_admin_id,
+        )
+
+    async def _mirror_rzp_refund(
+        self,
+        *,
+        rzp_resp: dict,
+        internal_refund_id: int,
+        internal_refund_uuid: str,
+        merchant_id: str,
+        initiated_by: Optional[str | UUID] = None,
+    ) -> None:
+        """UPSERT into rzp_refunds so webhook idempotency holds."""
+        from app.core.database import get_service_connection
+
+        refund_id = rzp_resp.get("id")
+        if not refund_id:
+            return
+        try:
+            async with get_service_connection() as c:
+                await c.execute(
+                    """
+                    INSERT INTO rzp_refunds (
+                        refund_id, razorpay_payment_id, internal_refund_id,
+                        merchant_id, amount_paise, currency,
+                        speed_requested, speed_processed,
+                        status, reason, initiated_by, batch_id, acquirer_data,
+                        notes, raw_payload, processed_at
+                    ) VALUES (
+                        $1, $2, $3::uuid,
+                        $4::uuid, $5, $6,
+                        $7, $8,
+                        $9::rzp_refund_state, $10, $11::uuid, $12, $13::jsonb,
+                        $14::jsonb, $15::jsonb,
+                        CASE WHEN $16::bigint IS NULL THEN NULL
+                             ELSE to_timestamp($16::bigint) END
+                    )
+                    ON CONFLICT (refund_id) DO UPDATE SET
+                        status              = EXCLUDED.status,
+                        speed_processed     = COALESCE(EXCLUDED.speed_processed, rzp_refunds.speed_processed),
+                        internal_refund_id  = COALESCE(rzp_refunds.internal_refund_id, EXCLUDED.internal_refund_id),
+                        acquirer_data       = COALESCE(EXCLUDED.acquirer_data, rzp_refunds.acquirer_data),
+                        processed_at        = COALESCE(EXCLUDED.processed_at, rzp_refunds.processed_at),
+                        raw_payload         = EXCLUDED.raw_payload,
+                        updated_at          = NOW()
+                    """,
+                    refund_id,
+                    rzp_resp.get("payment_id"),
+                    internal_refund_uuid,
+                    merchant_id,
+                    int(rzp_resp.get("amount") or 0),
+                    rzp_resp.get("currency") or "INR",
+                    rzp_resp.get("speed_requested"),
+                    rzp_resp.get("speed_processed"),
+                    (rzp_resp.get("status") or "pending").lower(),
+                    rzp_resp.get("notes", {}).get("reason") if isinstance(rzp_resp.get("notes"), dict) else None,
+                    str(initiated_by) if initiated_by else None,
+                    rzp_resp.get("batch_id"),
+                    json.dumps(rzp_resp.get("acquirer_data") or {}) if rzp_resp.get("acquirer_data") else None,
+                    json.dumps(rzp_resp.get("notes") or {}),
+                    json.dumps(rzp_resp),
+                    rzp_resp.get("processed_at") or rzp_resp.get("created_at"),
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("rzp_refund_mirror_failed", refund_id=refund_id)
+
+    # ────────────────────────────────────────────────────────────────
+    # Webhook hook — called by webhook_dispatcher on refund.processed
+    # ────────────────────────────────────────────────────────────────
+    async def transition_by_gateway_id(
+        self,
+        *,
+        merchant_id: str,
+        gateway_refund_id: str,
+        new_status: str,
+        failure_reason: Optional[str] = None,
+    ) -> Optional[dict]:
+        """
+        Find the local refund row whose gateway_refund_id matches and
+        transition it. Used by the Razorpay webhook to fire the ledger DEBIT
+        when the refund truly settles. Returns None if no local row exists
+        (refund was issued out-of-band on the Razorpay dashboard).
+        """
+        async with get_connection() as c:
+            row = await c.fetchrow(
+                "SELECT id, status FROM refunds "
+                "WHERE merchant_id = $1::uuid AND gateway_refund_id = $2 LIMIT 1",
+                str(merchant_id), gateway_refund_id,
+            )
+        if row is None:
+            return None
+        if row["status"] not in _ALLOWED_TRANSITIONS:
+            return None
+        if new_status not in _ALLOWED_TRANSITIONS.get(row["status"], set()):
+            # Already terminal — nothing to do (idempotent).
+            return None
+        return await self.transition(
+            int(row["id"]),
+            merchant_id=merchant_id,
+            new_status=new_status,
+            failure_reason=failure_reason,
+        )
 
     # ────────────────────────────────────────────────────────────────
     # CSV

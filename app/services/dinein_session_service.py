@@ -1257,7 +1257,36 @@ class DineInSessionService:
 
             order_ids = [str(o["id"]) for o in orders]
             grouped_items = []
+            order_items_by_order: dict[str, list[dict]] = {}
             if order_ids:
+                # Per-order items (frontend expects each order to render its items).
+                per_order_rows = await conn.fetch(
+                    """
+                    SELECT
+                        oi.order_id,
+                        oi.item_id,
+                        oi.item_name,
+                        oi.quantity,
+                        oi.unit_price,
+                        oi.total_price,
+                        oi.notes
+                    FROM order_items oi
+                    WHERE oi.order_id = ANY($1::uuid[])
+                    ORDER BY oi.order_id, oi.item_name
+                    """,
+                    order_ids,
+                )
+                for r in per_order_rows:
+                    oid = str(r["order_id"])
+                    order_items_by_order.setdefault(oid, []).append({
+                        "item_id": str(r["item_id"]) if r["item_id"] else None,
+                        "item_name": r["item_name"],
+                        "quantity": int(r["quantity"] or 0),
+                        "unit_price": float(r["unit_price"] or 0),
+                        "total_price": float(r["total_price"] or 0),
+                        "notes": r["notes"],
+                    })
+
                 grouped_rows = await conn.fetch(
                     """
                     SELECT
@@ -1354,6 +1383,7 @@ class DineInSessionService:
                     "discount": float(o["discount_amount"] or 0),
                     "total": float(o["total_amount"] or 0),
                     "created_at": o["created_at"].isoformat() if o["created_at"] else None,
+                    "items": order_items_by_order.get(str(o["id"]), []),
                 }
                 for o in orders
             ],
@@ -1513,7 +1543,7 @@ class DineInSessionService:
 
         async with get_transaction() as conn:
             session = await conn.fetchrow(
-                "SELECT id, status, restaurant_id FROM dine_in_sessions WHERE id = $1 FOR UPDATE",
+                "SELECT id, status, restaurant_id, branch_id FROM dine_in_sessions WHERE id = $1 FOR UPDATE",
                 session_id,
             )
             if not session:
@@ -1568,6 +1598,75 @@ class DineInSessionService:
                 created_by,
             )
 
+            # ── Mirror dine-in payment into the canonical `payments` table ──
+            # The wallet/statement/recon engines all read from `payments`, so
+            # without this row the receipt is invisible to those screens.
+            # `payments.order_id` is NOT NULL — attach to the most recent
+            # session order so the row is properly tenant-scoped.
+            wallet_payment_id: Optional[str] = None
+            try:
+                target_order = await conn.fetchrow(
+                    """
+                    SELECT o.id, o.user_id, o.branch_id, o.restaurant_id
+                      FROM session_orders so
+                      JOIN orders o ON o.id = so.order_id
+                     WHERE so.session_id = $1
+                     ORDER BY o.created_at DESC
+                     LIMIT 1
+                    """,
+                    session_id,
+                )
+                if target_order:
+                    _PM_ALIASES = {
+                        "cash": "cash", "counter": "cash", "cod": "cash",
+                        "upi": "upi", "qr_pay": "upi", "qr": "upi", "qr_code": "upi",
+                        "card": "card", "swipe": "card",
+                        "credit": "card", "debit": "card",
+                        "wallet": "wallet",
+                        "online": "online", "razorpay": "online",
+                        "gateway": "online", "netbanking": "online",
+                    }
+                    pm_norm = _PM_ALIASES.get(
+                        str(payment_method or "").strip().lower(),
+                        "cash",
+                    )
+                    wallet_payment_id = str(uuid.uuid4())
+                    paid_at = datetime.now(timezone.utc)
+                    await conn.execute(
+                        """
+                        INSERT INTO payments (
+                            id, order_id, restaurant_id, user_id, branch_id,
+                            method, status, amount, currency, paid_at
+                        ) VALUES (
+                            $1, $2, $3, $4, $5,
+                            $6::payment_method, 'completed'::payment_status,
+                            $7, 'INR', $8
+                        )
+                        """,
+                        wallet_payment_id,
+                        str(target_order["id"]),
+                        str(target_order["restaurant_id"]) if target_order["restaurant_id"] else (
+                            str(session["restaurant_id"]) if session.get("restaurant_id") else None
+                        ),
+                        str(target_order["user_id"]),
+                        str(target_order["branch_id"]) if target_order["branch_id"] else (
+                            str(session["branch_id"]) if session.get("branch_id") else None
+                        ),
+                        pm_norm,
+                        float(amt),
+                        paid_at,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "dinein_payment_wallet_insert_failed",
+                    extra={
+                        "session_id": session_id,
+                        "table_session_payment_id": str(payment_id),
+                        "error": str(exc),
+                    },
+                )
+                wallet_payment_id = None
+
             # Update the cached totals on dine_in_sessions atomically
             new_paid = paid_total + amt
             new_remaining = remaining - amt
@@ -1584,6 +1683,38 @@ class DineInSessionService:
                 float(new_remaining),
                 session_id,
             )
+
+            # Mirror dine-in payment into the immutable merchant ledger so the
+            # wallet/statement screens reflect table receipts the same way POS
+            # checkouts do. Best-effort: never raises (logs internally).
+            try:
+                from app.services.merchant_ledger_integration import (
+                    post_payment_received,
+                )
+                await post_payment_received(
+                    merchant_id=str(session["restaurant_id"]) if session.get("restaurant_id") else None,
+                    payment_id=str(wallet_payment_id or payment_id),
+                    amount=amt,
+                    method=payment_method,
+                    branch_id=str(session["branch_id"]) if session.get("branch_id") else None,
+                    actor_id=created_by,
+                    extra_metadata={
+                        "source": "dine_in",
+                        "session_id": session_id,
+                        "transaction_ref": transaction_ref,
+                        "paid_by": paid_by,
+                    },
+                    conn=conn,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "dinein_payment_ledger_post_failed",
+                    extra={
+                        "session_id": session_id,
+                        "payment_id": str(payment_id),
+                        "error": str(exc),
+                    },
+                )
 
         # Evict cached bill so the next poll reads fresh data
         await self._invalidate_bill_cache(session_id)

@@ -75,13 +75,33 @@ class TableSessionService:
                     if not table["is_active"]:
                         raise ValidationError("Table is not active")
 
-                    # Check no active session exists
+                    # Check no active session exists (ignore stale/expired rows)
                     existing = await conn.fetchrow(
-                        "SELECT id FROM table_sessions WHERE table_id = $1 AND is_active = true",
+                        """
+                        SELECT id FROM table_sessions
+                         WHERE table_id = $1
+                           AND is_active = true
+                           AND (expires_at IS NULL OR expires_at > now())
+                        """,
                         table_id,
                     )
                     if existing:
                         raise ConflictError(f"Table {table['table_number']} already has an active session")
+
+                    # Auto-close any stale (expired) rows so we can re-use the table
+                    await conn.execute(
+                        """
+                        UPDATE table_sessions
+                           SET is_active = false,
+                               status = 'expired',
+                               ended_at = COALESCE(ended_at, now())
+                         WHERE table_id = $1
+                           AND is_active = true
+                           AND expires_at IS NOT NULL
+                           AND expires_at < now()
+                        """,
+                        table_id,
+                    )
 
                     # Create session
                     session_id = str(uuid.uuid4())
@@ -228,13 +248,35 @@ class TableSessionService:
         - If an active session exists for the table, join it.
         - Otherwise, start a new session and join it.
         """
+        # Auto-deactivate any expired stale rows for this table so we don't
+        # repeatedly hit "Session has expired" / ConflictError loops.
+        try:
+            async with get_connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE table_sessions
+                       SET is_active = false,
+                           status = 'expired',
+                           ended_at = COALESCE(ended_at, now())
+                     WHERE table_id = $1
+                       AND is_active = true
+                       AND expires_at IS NOT NULL
+                       AND expires_at < now()
+                    """,
+                    table_id,
+                )
+        except Exception:
+            pass
+
         async def _join_latest_active() -> dict:
             async with get_connection() as conn:
                 row = await conn.fetchrow(
                     """
                     SELECT session_token
                     FROM table_sessions
-                    WHERE table_id = $1 AND is_active = true
+                    WHERE table_id = $1
+                      AND is_active = true
+                      AND (expires_at IS NULL OR expires_at > now())
                     ORDER BY started_at DESC
                     LIMIT 1
                     """,

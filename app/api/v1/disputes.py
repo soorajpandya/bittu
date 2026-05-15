@@ -152,3 +152,54 @@ async def add_dispute_note(
         dispute_id, merchant_id=_mid(user), note=body.note,
         actor_user_id=user.user_id,
     )
+
+
+# ── Razorpay deep wiring (Phase 5) ────────────────────────────────────────
+
+
+class _ContestBody(BaseModel):
+    evidence: dict
+    action: str = "draft"  # draft|submit
+
+
+@router.post("/{dispute_id}/accept")
+async def accept_dispute(
+    dispute_id: int,
+    user: UserContext = Depends(require_permission("razorpay.disputes.write")),
+):
+    """Admit liability on a Razorpay dispute (transitions local row to 'lost')."""
+    return await dispute_service.accept_via_gateway(
+        dispute_id,
+        merchant_id=_mid(user),
+        actor_user_id=user.user_id,
+    )
+
+
+@router.post("/{dispute_id}/contest")
+async def contest_dispute(
+    dispute_id: int,
+    body: _ContestBody,
+    user: UserContext = Depends(require_permission("razorpay.disputes.write")),
+):
+    """
+    Submit/draft evidence for a Razorpay dispute. action='submit' finalises
+    and sends to the network (transitions local row to 'evidence_submitted').
+    """
+    return await dispute_service.contest_via_gateway(
+        dispute_id,
+        merchant_id=_mid(user),
+        evidence=body.evidence,
+        action=body.action,
+        actor_user_id=user.user_id,
+    )
+
+
+@router.post("/{dispute_id}/sync")
+async def sync_dispute(
+    dispute_id: int,
+    user: UserContext = Depends(require_permission("razorpay.disputes.read")),
+):
+    """Re-fetch a dispute from Razorpay and reconcile the local row."""
+    return await dispute_service.sync_from_gateway(
+        dispute_id, merchant_id=_mid(user),
+    )

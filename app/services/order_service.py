@@ -622,6 +622,41 @@ class OrderService:
             # If UniqueViolationError is raised here, the entire transaction
             # (including the order INSERT) is rolled back by asyncpg automatically.
 
+        # ── Razorpay payment-intent (online methods only) ──
+        # Gateway calls MUST run OUTSIDE the serializable transaction.
+        # Best-effort: a gateway failure is logged but does NOT roll back the
+        # order — POS can retry via GET /payments/{order}/intent.
+        if (
+            payment_method
+            and payment_id
+            and payment_status_value == "pending"
+            and pm_norm == "online"
+        ):
+            try:
+                from app.services.razorpay.payment_intent import (
+                    create_intent_for_order,
+                )
+                intent = await create_intent_for_order(
+                    merchant_id=user.restaurant_id,
+                    branch_id=tenant.get("branch_id"),
+                    internal_order_id=order_id,
+                    payment_id=payment_id,
+                    amount=Decimal(str(total_amount)),
+                    receipt=order_number,
+                    customer_name=customer_name,
+                    customer_phone=customer_phone,
+                    create_qr=True,
+                )
+                response["razorpay"] = intent.to_client_dict()
+            except Exception as exc:
+                logger.warning(
+                    "checkout_rzp_intent_failed",
+                    order_id=order_id,
+                    payment_id=payment_id,
+                    error=str(exc),
+                )
+                response["razorpay"] = {"error": "intent_creation_failed"}
+
         return response
 
     # ── CREATE ORDER (legacy — kept for backward compatibility) ──

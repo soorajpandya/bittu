@@ -30,56 +30,59 @@ _DENIAL_WARN_THRESHOLD = 5      # warn if same user denied >5 times in 5min
 
 class RBACService:
     def __init__(self) -> None:
-        # Fallback permissions: key -> meta dict.  Used when DB is unavailable.
+        # Fallback permissions: key -> meta dict.  Used when DB is unavailable
+        # OR when the owner has no branch_users row yet (fresh signup, etc).
+        # The owner role is intentionally granted module-level wildcards for
+        # every resource exposed by the API. Keep this list aligned with every
+        # `require_permission(...)` call site under app/api/.
         self._fallback_permissions: dict[str, dict[str, dict]] = {
             "owner": {
-                "order.*": {}, "orders.*": {}, "billing.*": {}, "payment.*": {}, "payments.*": {},
-                "table.*": {}, "tables.*": {}, "inventory.*": {}, "voice.use": {}, "kitchen.*": {},
-                "kitchen_station.*": {},
+                # Orders / billing / payments
+                "order.*": {}, "orders.*": {},
+                "billing.*": {}, "payment.*": {}, "payments.*": {},
+                # Tables / dine-in
+                "table.*": {}, "tables.*": {}, "dinein.*": {},
+                # Inventory / kitchen
+                "inventory.*": {}, "kitchen.*": {}, "kitchen_station.*": {},
+                # Voice
+                "voice.*": {},
                 # Staff & branch management
-                "staff.branches.read": {}, "staff.branches.create": {}, "staff.branches.update": {},
-                "staff.read": {}, "staff.create": {}, "staff.update": {}, "staff.delete": {},
-                "staff.branch_users.read": {}, "staff.branch_users.create": {},
-                "staff.branch_users.update": {}, "staff.branch_users.delete": {},
-                "staff.invites.create": {}, "staff.invites.read": {}, "staff.invites.revoke": {},
-                # Accounting
-                "accounting.read": {}, "accounting.write": {},
+                "staff.*": {},
+                # Accounting (read, write, report, close_period, reopen_period, rules.*)
+                "accounting.*": {},
                 # ERP
-                "erp.read": {}, "erp.write": {}, "erp.shifts.read": {},
-                "erp.shifts.manage": {}, "erp.seed": {},
+                "erp.*": {},
                 # Subscriptions & Billing
-                "subscription.read": {}, "subscription.write": {}, "subscription.admin": {},
-                "billing.read": {},
+                "subscription.*": {},
                 # Cash Transactions
-                "cash_transaction.read": {}, "cash_transaction.create": {}, "cash_transaction.delete": {},
+                "cash_transaction.*": {},
                 # Menu
-                "menu.read": {}, "menu.write": {}, "menu.delete": {},
-                # Analytics
-                "analytics.read": {},
+                "menu.*": {},
+                # Analytics & Reports
+                "analytics.*": {}, "reports.*": {},
                 # Waitlist
-                "waitlist.read": {}, "waitlist.manage": {}, "waitlist.admin": {},
-                # Dinein
-                "dinein.manage": {},
-                # Customers
-                "customer.read": {}, "customer.write": {}, "customer.delete": {},
-                # Promotions
-                "promotion.read": {}, "promotion.write": {}, "promotion.delete": {},
-                # Due Payments
-                "due_payment.read": {}, "due_payment.write": {}, "due_payment.delete": {},
-                # Feedback
-                "feedback.read": {}, "feedback.write": {}, "feedback.delete": {},
+                "waitlist.*": {},
+                # Customers / Promotions / Due Payments / Feedback
+                "customer.*": {}, "promotion.*": {},
+                "due_payment.*": {}, "feedback.*": {},
                 # Settings
-                "settings.read": {}, "settings.admin": {},
-                # Purchase Orders
-                "purchase_order.read": {}, "purchase_order.write": {}, "purchase_order.delete": {},
+                "settings.*": {},
+                # Purchase Orders / Vendors / Expenses / Invoices
+                "purchase_order.*": {}, "expense.*": {}, "invoice.*": {},
                 # Audit
-                "audit.read": {},
+                "audit.*": {},
                 # Delivery (pincodes)
-                "delivery.read": {}, "delivery.write": {}, "delivery.delete": {},
+                "delivery.*": {},
                 # Favourites
-                "favourites.manage": {},
-                # Statements & Settlements
-                "statements.*": {},
+                "favourites.*": {},
+                # Wallet / Ledger / Statements / Settlements / Reconciliation
+                "merchant_ledger.*": {}, "bank_recon.*": {}, "recon.*": {},
+                "statements.*": {}, "statement.*": {},
+                "settlement.*": {}, "subledger.*": {},
+                # Payouts / Refunds / Disputes / Escrow
+                "payout.*": {}, "refunds.*": {}, "disputes.*": {}, "escrow.*": {},
+                # Tax & Finance dashboards
+                "tax.*": {}, "finance.*": {},
             },
             "manager": {
                 "order.create": {}, "order.edit": {}, "order.cancel": {}, "order.read": {},
@@ -123,6 +126,19 @@ class RBACService:
                 "delivery.read": {}, "delivery.write": {},
                 # Favourites
                 "favourites.manage": {},
+                # Bank reconciliation / merchant wallet (read-only)
+                "bank_recon.read": {},
+                # Wallet / Ledger / Statements / Settlements (read-only)
+                "merchant_ledger.read": {}, "statements.read": {},
+                "statement.read": {}, "settlement.read": {},
+                "recon.read": {}, "subledger.read": {},
+                # Reports & Finance dashboards (read-only)
+                "reports.read": {}, "finance.dashboard": {},
+                "finance.report": {}, "finance.pnl": {}, "finance.gst": {},
+                # Invoices & Expenses (read-only)
+                "invoice.read": {}, "expense.read": {},
+                # Refunds / Disputes (read-only)
+                "refunds.read": {}, "disputes.read": {},
             },
             "cashier": {
                 "order.read": {}, "order.edit": {}, "orders.read": {}, "orders.update": {},

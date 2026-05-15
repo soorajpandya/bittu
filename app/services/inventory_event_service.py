@@ -313,7 +313,13 @@ class InventoryEventService:
                     """
                     SELECT COALESCE(SUM(quantity_in),0)  AS in_qty,
                            COALESCE(SUM(quantity_out),0) AS out_qty,
-                           MAX(event_id)                 AS last_event
+                           (
+                               SELECT event_id FROM inventory_ledger
+                                WHERE ingredient_id = $1
+                                  AND ($2::uuid IS NULL OR branch_id = $2::uuid)
+                                ORDER BY occurred_at DESC
+                                LIMIT 1
+                           )                              AS last_event
                       FROM inventory_ledger
                      WHERE ingredient_id = $1
                        AND ($2::uuid IS NULL OR branch_id = $2::uuid)

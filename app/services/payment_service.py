@@ -438,25 +438,41 @@ class PaymentService:
         ).hexdigest()
         return hmac.compare_digest(expected, signature)
 
-    async def _create_razorpay_order(self, amount: Decimal, order_id: str) -> str:
-        """Create a Razorpay order. Returns razorpay_order_id."""
-        import razorpay
-        s = _settings()
-        client = razorpay.Client(auth=(s.RAZORPAY_KEY_ID, s.RAZORPAY_KEY_SECRET))
-        rz_order = client.order.create({
-            "amount": int(amount * 100),  # Razorpay expects paise
-            "currency": "INR",
-            "receipt": order_id,
-            "notes": {"order_id": order_id},
-        })
+    async def _create_razorpay_order(
+        self,
+        amount: Decimal,
+        order_id: str,
+        *,
+        merchant_id: Optional[str] = None,
+    ) -> str:
+        """Create a Razorpay order via the async client. Returns razorpay_order_id."""
+        from app.services.razorpay import orders as rzp_orders_api
+        rz_order = await rzp_orders_api.create_order(
+            amount_paise=int(Decimal(amount) * 100),
+            currency="INR",
+            receipt=order_id[:40],
+            notes={"order_id": order_id},
+            idempotency_key=f"rzp_order_legacy:{order_id}",
+            merchant_id=merchant_id,
+        )
         return rz_order["id"]
 
-    async def _create_razorpay_refund(self, payment_id: str, amount_paise: int):
-        """Create a Razorpay refund."""
-        import razorpay
-        s = _settings()
-        client = razorpay.Client(auth=(s.RAZORPAY_KEY_ID, s.RAZORPAY_KEY_SECRET))
-        client.payment.refund(payment_id, {"amount": amount_paise})
+    async def _create_razorpay_refund(
+        self,
+        payment_id: str,
+        amount_paise: int,
+        *,
+        merchant_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> dict:
+        """Create a Razorpay refund via the async client."""
+        from app.services.razorpay import refunds as rzp_refunds_api
+        return await rzp_refunds_api.create_refund(
+            payment_id=payment_id,
+            amount_paise=int(amount_paise),
+            idempotency_key=idempotency_key or f"rzp_refund_legacy:{payment_id}:{amount_paise}",
+            merchant_id=merchant_id,
+        )
 
     async def _handle_payment_captured(self, payload: dict):
         """Handle Razorpay payment.captured webhook."""

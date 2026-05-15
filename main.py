@@ -81,6 +81,66 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("inventory_snapshot_scheduler_start_failed", error=str(exc))
 
+    # Razorpay QR cleanup scheduler (Phase 2 deep integration)
+    rzp_qr_cleanup_task = None
+    try:
+        from app.services.razorpay.qr_cleanup_scheduler import (
+            start_rzp_qr_cleanup_scheduler,
+        )
+        rzp_qr_cleanup_task = start_rzp_qr_cleanup_scheduler()
+    except Exception as exc:
+        logger.error("rzp_qr_cleanup_scheduler_start_failed", error=str(exc))
+
+    # Razorpay dispute polling scheduler (Phase 5 deep integration)
+    rzp_dispute_polling_task = None
+    try:
+        from app.services.razorpay.dispute_polling_scheduler import (
+            start_rzp_dispute_polling_scheduler,
+        )
+        rzp_dispute_polling_task = start_rzp_dispute_polling_scheduler()
+    except Exception as exc:
+        logger.error("rzp_dispute_polling_scheduler_start_failed", error=str(exc))
+
+    # Razorpay settlement polling scheduler (Phase 6 deep integration)
+    rzp_settlement_polling_task = None
+    try:
+        from app.services.razorpay.settlement_polling_scheduler import (
+            start_rzp_settlement_polling_scheduler,
+        )
+        rzp_settlement_polling_task = start_rzp_settlement_polling_scheduler()
+    except Exception as exc:
+        logger.error("rzp_settlement_polling_scheduler_start_failed", error=str(exc))
+
+    # Razorpay route polling scheduler (Phase 7 deep integration)
+    rzp_route_polling_task = None
+    try:
+        from app.services.razorpay.route_polling_scheduler import (
+            start_rzp_route_polling_scheduler,
+        )
+        rzp_route_polling_task = start_rzp_route_polling_scheduler()
+    except Exception as exc:
+        logger.error("rzp_route_polling_scheduler_start_failed", error=str(exc))
+
+    # Razorpay smart collect polling scheduler (Phase 8 deep integration)
+    rzp_smart_collect_polling_task = None
+    try:
+        from app.services.razorpay.smart_collect_polling_scheduler import (
+            start_rzp_smart_collect_polling_scheduler,
+        )
+        rzp_smart_collect_polling_task = start_rzp_smart_collect_polling_scheduler()
+    except Exception as exc:
+        logger.error("rzp_smart_collect_polling_scheduler_start_failed", error=str(exc))
+
+    # Razorpay invoice polling scheduler (Phase 9 deep integration)
+    rzp_invoice_polling_task = None
+    try:
+        from app.services.razorpay.invoice_polling_scheduler import (
+            start_rzp_invoice_polling_scheduler,
+        )
+        rzp_invoice_polling_task = start_rzp_invoice_polling_scheduler()
+    except Exception as exc:
+        logger.error("rzp_invoice_polling_scheduler_start_failed", error=str(exc))
+
     logger.info("startup_complete", db=db_ok, redis=redis_ok)
     yield
 
@@ -89,6 +149,48 @@ async def lifespan(app: FastAPI):
         snapshot_task.cancel()
         try:
             await snapshot_task
+        except asyncio.CancelledError:
+            pass
+
+    if rzp_qr_cleanup_task is not None:
+        rzp_qr_cleanup_task.cancel()
+        try:
+            await rzp_qr_cleanup_task
+        except asyncio.CancelledError:
+            pass
+
+    if rzp_dispute_polling_task is not None:
+        rzp_dispute_polling_task.cancel()
+        try:
+            await rzp_dispute_polling_task
+        except asyncio.CancelledError:
+            pass
+
+    if rzp_settlement_polling_task is not None:
+        rzp_settlement_polling_task.cancel()
+        try:
+            await rzp_settlement_polling_task
+        except asyncio.CancelledError:
+            pass
+
+    if rzp_route_polling_task is not None:
+        rzp_route_polling_task.cancel()
+        try:
+            await rzp_route_polling_task
+        except asyncio.CancelledError:
+            pass
+
+    if rzp_smart_collect_polling_task is not None:
+        rzp_smart_collect_polling_task.cancel()
+        try:
+            await rzp_smart_collect_polling_task
+        except asyncio.CancelledError:
+            pass
+
+    if rzp_invoice_polling_task is not None:
+        rzp_invoice_polling_task.cancel()
+        try:
+            await rzp_invoice_polling_task
         except asyncio.CancelledError:
             pass
 
@@ -101,6 +203,11 @@ async def lifespan(app: FastAPI):
 
     try:
         await close_redis()
+    except Exception:
+        pass
+    try:
+        from app.services.razorpay.client import shutdown_razorpay_client
+        await shutdown_razorpay_client()
     except Exception:
         pass
     try:
@@ -181,6 +288,21 @@ def create_app() -> FastAPI:
     @app.exception_handler(_RVE)
     async def validation_exception_handler(request: _Req, exc: _RVE) -> _JSONResp:
         request_id = getattr(request.state, "request_id", None)
+        try:
+            from app.core.logging import get_logger as _get_logger
+            _vlog = _get_logger("app.validation")
+            _vlog.warning(
+                "request_validation_failed",
+                extra={
+                    "path": str(request.url.path),
+                    "method": request.method,
+                    "request_id": request_id,
+                    "errors": exc.errors(),
+                    "body_preview": (str(exc.body)[:500] if getattr(exc, "body", None) is not None else None),
+                },
+            )
+        except Exception:
+            pass
         return _JSONResp(
             status_code=422,
             content={

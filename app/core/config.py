@@ -54,9 +54,9 @@ class Settings(BaseSettings):
     REDIS_MAX_CONNECTIONS: int = 50
 
     # ── Razorpay ──
-    RAZORPAY_KEY_ID: str = ""
-    RAZORPAY_KEY_SECRET: str = ""
-    RAZORPAY_WEBHOOK_SECRET: str = ""
+    RAZORPAY_KEY_ID: str = "rzp_live_Spdl7aA7QhdjZY"
+    RAZORPAY_KEY_SECRET: str = "WV19GenTMKToufon62dIebdP"
+    RAZORPAY_WEBHOOK_SECRET: str = "q@h#$B#JeSwA*4r"
 
     # ── PhonePe ──
     PHONEPE_CLIENT_ID: str = ""

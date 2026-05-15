@@ -81,6 +81,9 @@ async def get_entry(
 
 
 # ── Consistency check ──────────────────────────────────────────────────
+# POST is the canonical verb (it recomputes/asserts state). GET is kept
+# as a safe alias because it has no side effects beyond reading.
+@router.post("/consistency-check")
 @router.get("/consistency-check")
 async def consistency_check(
     currency: str = Query("INR", min_length=3, max_length=3),

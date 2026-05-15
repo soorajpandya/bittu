@@ -104,6 +104,21 @@ router.include_router(health.router)
 router.include_router(items.router)
 # ── Payment gateways ──
 router.include_router(razorpay.router)
+# ── Razorpay payment intents (Phase 2 deep integration) ──
+from app.api.v1 import payment_intents as _payment_intents
+router.include_router(_payment_intents.router)
+# ── Razorpay settlements (Phase 6 deep integration) ──
+from app.api.v1 import rzp_settlements as _rzp_settlements
+router.include_router(_rzp_settlements.router)
+# ── Razorpay Route — linked accounts + transfers (Phase 7 deep integration) ──
+from app.api.v1 import rzp_route as _rzp_route
+router.include_router(_rzp_route.router)
+# ── Razorpay Smart Collect — virtual accounts + inbound credits (Phase 8) ──
+from app.api.v1 import rzp_smart_collect as _rzp_smart_collect
+router.include_router(_rzp_smart_collect.router)
+# ── Razorpay Invoices — hosted invoices (Phase 9) ──
+from app.api.v1 import rzp_invoices as _rzp_invoices
+router.include_router(_rzp_invoices.router)
 router.include_router(phonepe.router)
 router.include_router(payu.router)
 router.include_router(paytm.router)
@@ -223,6 +238,16 @@ router.include_router(_admin_merchant_kyc.router)
 # ── Fee Engine v2 (Phase 10) — admin only ──
 from app.api.v1 import admin_fee_plans as _admin_fee_plans
 router.include_router(_admin_fee_plans.router)
+# ── Super Admin (top-level platform operations) ──
+from app.api.v1 import super_admin as _super_admin
+router.include_router(_super_admin.router)
+# ── Cross-merchant pay-ins, settlements, webhook failures (Phase 11) ──
+from app.api.v1 import admin_payments       as _admin_payments
+from app.api.v1 import admin_settlements    as _admin_settlements
+from app.api.v1 import admin_webhook_events as _admin_webhook_events
+router.include_router(_admin_payments.router)
+router.include_router(_admin_settlements.router)
+router.include_router(_admin_webhook_events.router)
 # ── Financial Operating System ──
 router.include_router(finance.router)
 # ── Statement & Settlement ──

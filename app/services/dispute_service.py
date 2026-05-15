@@ -451,6 +451,294 @@ class DisputeService:
             )
         return [_row_to_event(r) for r in rows]
 
+    # ────────────────────────────────────────────────────────────────
+    # Razorpay deep wiring (Phase 5)
+    # ────────────────────────────────────────────────────────────────
+    _RZP_STATUS_MAP = {
+        "open":             "opened",
+        "under_review":     "under_review",
+        "action_required":  "under_review",
+        "won":              "won",
+        "lost":             "lost",
+        "closed":           "withdrawn",
+    }
+    _RZP_PHASE_TO_KIND = {
+        "chargeback":       "chargeback",
+        "fraud":            "fraud",
+        "retrieval":        "customer_complaint",
+        "pre_arbitration":  "chargeback",
+        "arbitration":      "chargeback",
+    }
+
+    async def _find_local_by_razorpay_id(
+        self, *, merchant_id: str | UUID, razorpay_dispute_id: str
+    ) -> Optional[dict]:
+        """Local row lookup via the rzp_disputes link table."""
+        async with get_connection() as c:
+            row = await c.fetchrow(
+                """
+                SELECT d.*
+                FROM rzp_disputes r
+                JOIN disputes d ON d.dispute_uuid = r.internal_dispute_id
+                WHERE r.dispute_id  = $1
+                  AND d.merchant_id = $2::uuid
+                LIMIT 1
+                """,
+                razorpay_dispute_id, str(merchant_id),
+            )
+        return _row_to_dispute(row) if row else None
+
+    async def _link_rzp_dispute(
+        self, *, razorpay_dispute_id: str, internal_dispute_uuid: str
+    ) -> None:
+        """Stamp `rzp_disputes.internal_dispute_id` so future webhooks find us fast."""
+        from app.core.database import get_service_connection
+        async with get_service_connection() as conn:
+            await conn.execute(
+                "UPDATE rzp_disputes SET internal_dispute_id = $2::uuid, updated_at = NOW() "
+                "WHERE dispute_id = $1",
+                razorpay_dispute_id, internal_dispute_uuid,
+            )
+
+    async def upsert_from_razorpay(
+        self,
+        *,
+        rzp_entity: dict,
+        merchant_id: str | UUID,
+        razorpay_status_override: Optional[str] = None,
+    ) -> Optional[dict]:
+        """
+        Reconcile a Razorpay dispute entity into the local `disputes` table.
+
+        - Locates an existing local row via rzp_disputes.internal_dispute_id.
+        - If absent, OPENS a new local row scoped to the matching internal payment
+          (resolved via rzp_payments_index) and links it back into rzp_disputes.
+        - Idempotent: never duplicates rows; transitions the local row only if
+          the gateway state is strictly "ahead" of the local FSM.
+
+        Returns the (possibly updated) local dispute dict, or None if the
+        merchant_id is the orphan placeholder (webhook arrived before checkout).
+        """
+        if str(merchant_id) == "00000000-0000-0000-0000-000000000000":
+            return None
+        rzp_dispute_id = rzp_entity.get("id")
+        if not rzp_dispute_id:
+            return None
+
+        # 1. Map gateway → local FSM/kind.
+        rzp_status = (razorpay_status_override or rzp_entity.get("status") or "open").lower()
+        local_target = self._RZP_STATUS_MAP.get(rzp_status, "opened")
+        phase = (rzp_entity.get("phase") or "chargeback").lower()
+        kind = self._RZP_PHASE_TO_KIND.get(phase, "chargeback")
+        amount = Decimal(str(rzp_entity.get("amount") or 0)) / Decimal(100)
+        currency = (rzp_entity.get("currency") or "INR").upper()
+        deadline = rzp_entity.get("respond_by") or rzp_entity.get("deadline_at")
+        from datetime import datetime, timezone
+        due_at = None
+        if isinstance(deadline, (int, float)) and deadline > 0:
+            due_at = datetime.fromtimestamp(int(deadline), tz=timezone.utc)
+
+        # 2. Resolve internal payment_id from razorpay_payment_id (best-effort).
+        internal_payment_uuid: Optional[str] = None
+        rzp_payment_id = rzp_entity.get("payment_id")
+        if rzp_payment_id:
+            async with get_connection() as c:
+                row = await c.fetchrow(
+                    "SELECT id::text AS id FROM payments "
+                    "WHERE razorpay_payment_id = $1 AND restaurant_id = $2::uuid LIMIT 1",
+                    rzp_payment_id, str(merchant_id),
+                )
+            if row:
+                internal_payment_uuid = row["id"]
+
+        # 3. Find or create the local dispute row.
+        existing = await self._find_local_by_razorpay_id(
+            merchant_id=merchant_id, razorpay_dispute_id=rzp_dispute_id,
+        )
+        if existing is None:
+            opened = await self.open_dispute(
+                merchant_id=merchant_id,
+                kind=kind,
+                amount=amount if amount > 0 else Decimal("0.01"),
+                payment_id=internal_payment_uuid,
+                currency=currency,
+                customer_reference=rzp_dispute_id,
+                bank_case_id=rzp_entity.get("gateway_dispute_id"),
+                evidence={"razorpay": rzp_entity.get("evidence") or {}},
+                notes={
+                    "razorpay_dispute_id": rzp_dispute_id,
+                    "razorpay_phase": phase,
+                    "razorpay_reason_code": rzp_entity.get("reason_code"),
+                    "razorpay_reason_description": rzp_entity.get("reason_description"),
+                },
+                due_at=due_at,
+                opened_by_admin_id=None,
+            )
+            await self._link_rzp_dispute(
+                razorpay_dispute_id=rzp_dispute_id,
+                internal_dispute_uuid=opened["dispute_uuid"],
+            )
+            existing = opened
+
+        # 4. Transition iff target is strictly newer than current.
+        cur = existing["status"]
+        if local_target == cur or cur in _TERMINAL:
+            return existing
+        if local_target not in _ALLOWED_TRANSITIONS.get(cur, set()):
+            # Either already ahead or invalid transition — leave as-is.
+            return existing
+
+        outcome = None
+        if local_target in ("lost", "won", "withdrawn"):
+            outcome = local_target
+
+        return await self.transition(
+            int(existing["id"]),
+            merchant_id=merchant_id,
+            new_status=local_target,
+            outcome=outcome,
+            actor_label="razorpay_webhook",
+        )
+
+    async def accept_via_gateway(
+        self,
+        dispute_id: int,
+        *,
+        merchant_id: str | UUID,
+        actor_user_id: Optional[str | UUID] = None,
+        actor_admin_id: Optional[str | UUID] = None,
+    ) -> dict:
+        """
+        Accept a Razorpay dispute (admit liability). Idempotent on
+        ``rzp_dispute_accept:{dispute_uuid}`` — replays return the same
+        gateway response.
+        """
+        local = await self.get(dispute_id, merchant_id=merchant_id)
+        rzp_dispute_id = (local.get("notes") or {}).get("razorpay_dispute_id")
+        if not rzp_dispute_id:
+            raise ValidationError("dispute is not linked to a razorpay dispute")
+        if local["status"] in _TERMINAL:
+            return local
+
+        from app.services.razorpay import disputes as rzp_disputes_api
+        try:
+            rzp_resp = await rzp_disputes_api.accept_dispute(
+                rzp_dispute_id,
+                idempotency_key=f"rzp_dispute_accept:{local['dispute_uuid']}",
+                merchant_id=str(merchant_id),
+            )
+        except Exception as exc:
+            logger.exception("rzp_dispute_accept_failed",
+                             dispute_id=dispute_id, rzp_dispute_id=rzp_dispute_id)
+            raise ConflictError(f"razorpay accept failed: {exc!s}")
+
+        # Razorpay returns the (now-lost) dispute entity. Drive the local FSM
+        # to 'lost' so the chargeback DEBIT fires via existing transition path.
+        return await self.transition(
+            dispute_id,
+            merchant_id=merchant_id,
+            new_status="lost",
+            outcome="lost",
+            resolution_notes="accepted via razorpay",
+            evidence_patch={"razorpay_accept_response": rzp_resp},
+            actor_user_id=actor_user_id,
+            actor_admin_id=actor_admin_id,
+            actor_label="razorpay_accept",
+        )
+
+    async def contest_via_gateway(
+        self,
+        dispute_id: int,
+        *,
+        merchant_id: str | UUID,
+        evidence: dict,
+        action: str = "draft",  # draft|submit
+        actor_user_id: Optional[str | UUID] = None,
+        actor_admin_id: Optional[str | UUID] = None,
+    ) -> dict:
+        """
+        Contest a Razorpay dispute. ``action='draft'`` saves evidence;
+        ``action='submit'`` finalises and sends to the network.
+        """
+        if action not in ("draft", "submit"):
+            raise ValidationError("action must be draft|submit")
+        if not evidence:
+            raise ValidationError("evidence is required")
+
+        local = await self.get(dispute_id, merchant_id=merchant_id)
+        rzp_dispute_id = (local.get("notes") or {}).get("razorpay_dispute_id")
+        if not rzp_dispute_id:
+            raise ValidationError("dispute is not linked to a razorpay dispute")
+        if local["status"] in _TERMINAL:
+            raise ConflictError(f"dispute is already {local['status']}")
+
+        from app.services.razorpay import disputes as rzp_disputes_api
+        try:
+            rzp_resp = await rzp_disputes_api.contest_dispute(
+                rzp_dispute_id,
+                evidence=evidence,
+                action=action,
+                idempotency_key=f"rzp_dispute_contest:{local['dispute_uuid']}:{action}",
+                merchant_id=str(merchant_id),
+            )
+        except Exception as exc:
+            logger.exception("rzp_dispute_contest_failed",
+                             dispute_id=dispute_id, rzp_dispute_id=rzp_dispute_id)
+            raise ConflictError(f"razorpay contest failed: {exc!s}")
+
+        # On submit, advance local FSM to 'evidence_submitted'.
+        if action == "submit" and local["status"] in ("opened", "under_review"):
+            return await self.transition(
+                dispute_id,
+                merchant_id=merchant_id,
+                new_status="evidence_submitted",
+                evidence_patch={"razorpay_contest_response": rzp_resp,
+                                "submitted_evidence": evidence},
+                actor_user_id=actor_user_id,
+                actor_admin_id=actor_admin_id,
+                actor_label="razorpay_contest_submit",
+            )
+
+        # Draft: just record the evidence + return the row.
+        async with get_transaction() as c:
+            await _append_event(
+                c,
+                dispute_id=dispute_id,
+                event_type="evidence_added",
+                payload={"action": action, "razorpay_response": rzp_resp,
+                         "evidence_keys": sorted(evidence.keys())},
+                actor_user_id=actor_user_id,
+                actor_admin_id=actor_admin_id,
+                actor_label="razorpay_contest_draft",
+            )
+            await c.execute(
+                "UPDATE disputes SET evidence = evidence || $2::jsonb WHERE id = $1",
+                dispute_id, json.dumps({"razorpay_contest_draft": rzp_resp,
+                                        "draft_evidence": evidence}),
+            )
+        return await self.get(dispute_id, merchant_id=merchant_id)
+
+    async def sync_from_gateway(
+        self,
+        dispute_id: int,
+        *,
+        merchant_id: str | UUID,
+    ) -> dict:
+        """Re-fetch a dispute from Razorpay and re-run upsert."""
+        local = await self.get(dispute_id, merchant_id=merchant_id)
+        rzp_dispute_id = (local.get("notes") or {}).get("razorpay_dispute_id")
+        if not rzp_dispute_id:
+            raise ValidationError("dispute is not linked to a razorpay dispute")
+
+        from app.services.razorpay import disputes as rzp_disputes_api
+        rzp_entity = await rzp_disputes_api.fetch_dispute(
+            rzp_dispute_id, merchant_id=str(merchant_id),
+        )
+        synced = await self.upsert_from_razorpay(
+            rzp_entity=rzp_entity, merchant_id=merchant_id,
+        )
+        return synced or local
+
     def to_csv(self, disputes: list[dict]) -> dict:
         buf = io.StringIO()
         w = csv.writer(buf)
