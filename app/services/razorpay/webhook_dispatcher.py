@@ -539,6 +539,70 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
         except Exception:  # noqa: BLE001
             logger.exception("rzp_webhook_event_emit_failed",
                              payment_id=payment_row["id"])
+
+        # ── Auto Route split (net-of-Bittu-fee) ──────────────────────────
+        # Money flows: Customer → Razorpay → Bittu master → (this transfer) →
+        # Merchant's linked account. If the merchant has not finished Route
+        # onboarding (no activated linked account), we silently skip and
+        # the funds stay on the Bittu master account until manual payout.
+        # This block is best-effort: it MUST NOT raise out of the webhook.
+        try:
+            from app.services.razorpay.route_service import rzp_route_service as _route
+            from app.services.fee_service import fee_service
+
+            linked = await _route.get_linked_account(merchant_id=merchant_id)
+            if not linked or linked.get("status") != "activated":
+                logger.info(
+                    "rzp_auto_split_skipped_no_linked_account",
+                    merchant_id=merchant_id,
+                    razorpay_payment_id=rzp_payment_id,
+                    linked_status=(linked or {}).get("status"),
+                )
+            else:
+                fee_payload = await fee_service.compute_fee(
+                    merchant_id,
+                    gross=amount_decimal,
+                    payment_method=(payment_row.get("method") or entity.get("method") or "online"),
+                    currency=(entity.get("currency") or "INR"),
+                    record=False,
+                )
+                total_deduction = Decimal(str(fee_payload.get("total_deduction") or 0))
+                net_rupees = (amount_decimal - total_deduction)
+                net_paise = int((net_rupees * Decimal("100")).to_integral_value())
+                if net_paise <= 0:
+                    logger.warning(
+                        "rzp_auto_split_skipped_non_positive_net",
+                        merchant_id=merchant_id,
+                        razorpay_payment_id=rzp_payment_id,
+                        gross=str(amount_decimal),
+                        total_deduction=str(total_deduction),
+                    )
+                else:
+                    await _route.create_transfer(
+                        merchant_id=merchant_id,
+                        razorpay_payment_id=rzp_payment_id,
+                        amount_paise=net_paise,
+                        currency=(entity.get("currency") or "INR"),
+                        notes={
+                            "source":        "auto_split_on_capture",
+                            "bittu_fee":     str(fee_payload.get("fee") or 0),
+                            "bittu_gst":     str(fee_payload.get("gst") or 0),
+                            "bittu_net":     str(net_rupees),
+                            "internal_order_id": str(internal_order_id or ""),
+                        },
+                    )
+                    logger.info(
+                        "rzp_auto_split_ok",
+                        merchant_id=merchant_id,
+                        razorpay_payment_id=rzp_payment_id,
+                        net_paise=net_paise,
+                    )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "rzp_auto_split_failed",
+                merchant_id=merchant_id,
+                razorpay_payment_id=rzp_payment_id,
+            )
     elif not merchant_id:
         logger.warning(
             "rzp_webhook_captured_orphan",

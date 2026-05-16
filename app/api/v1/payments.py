@@ -46,6 +46,10 @@ class InitiatePaymentIn(BaseModel):
     tip: float = 0
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
+    # Customer device GPS — used to enforce per-branch geofence
+    # (see app.core.geofence). Optional; when omitted the check is skipped.
+    customer_lat: Optional[float] = None
+    customer_lng: Optional[float] = None
 
 
 class VerifyPaymentIn(BaseModel):
@@ -181,6 +185,16 @@ async def initiate_payment(
             status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=f"unsupported payment_mode: {body.payment_mode!r}",
         )
+
+    # Geo-fence: enforce only when the merchant opted in on this branch.
+    # No-op when branch/lat/lng are unset.
+    from app.core.geofence import assert_within_geofence
+    await assert_within_geofence(
+        merchant_id=str(user.restaurant_id),
+        branch_id=str(user.branch_id) if user.branch_id else None,
+        customer_lat=body.customer_lat,
+        customer_lng=body.customer_lng,
+    )
 
     # ── Resolve order total + auto-detect rupees vs paise ──
     # Also pull customer + creator info so we can tag the Razorpay order/QR

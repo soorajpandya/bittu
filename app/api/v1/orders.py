@@ -98,6 +98,10 @@ class CheckoutIn(BaseModel):
     coupon_id: Optional[int] = None
     coupon_code: Optional[str] = None
     idempotency_key: Optional[str] = None  # body fallback; header takes precedence
+    # Customer device GPS — used to enforce per-branch geofence (see
+    # app.core.geofence). Optional; when omitted the check is skipped.
+    customer_lat: Optional[float] = None
+    customer_lng: Optional[float] = None
 
 
 class CreateOrderIn(BaseModel):
@@ -152,6 +156,16 @@ async def checkout_order(
 ):
     # Header takes precedence over body field
     idem_key = x_idempotency_key or body.idempotency_key
+
+    # Geo-fence: enforce only when the merchant opted in on this branch.
+    # No-op when branch/lat/lng are unset.
+    from app.core.geofence import assert_within_geofence
+    await assert_within_geofence(
+        merchant_id=str(user.restaurant_id),
+        branch_id=body.branch_id or (str(user.branch_id) if user.branch_id else None),
+        customer_lat=body.customer_lat,
+        customer_lng=body.customer_lng,
+    )
 
     result = await _svc.checkout(
         user=user,

@@ -54,14 +54,17 @@ class Settings(BaseSettings):
     REDIS_MAX_CONNECTIONS: int = 50
 
     # ── Razorpay ──
-    RAZORPAY_KEY_ID: str = "rzp_live_Spdl7aA7QhdjZY"
-    RAZORPAY_KEY_SECRET: str = "WV19GenTMKToufon62dIebdP"
-    RAZORPAY_WEBHOOK_SECRET: str = "q@h#$B#JeSwA*4r"
+    # No hardcoded defaults — credentials MUST come from environment (.env in
+    # local, systemd EnvironmentFile in prod). Hardcoding live keys here would
+    # leak them via the repo and prevent rotation.
+    RAZORPAY_KEY_ID: str
+    RAZORPAY_KEY_SECRET: str
+    RAZORPAY_WEBHOOK_SECRET: str
 
     # ── PhonePe ──
     PHONEPE_CLIENT_ID: str = ""
     PHONEPE_CLIENT_SECRET: str = ""
-    PHONEPE_CLIENT_VERSION: str = "1"
+    PHONEPE_CLIENT_VERSION: str = "1"   
     PHONEPE_MODE: str = "sandbox"  # sandbox | live
 
     # ── PayU ──

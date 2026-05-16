@@ -232,6 +232,9 @@ from app.api.v1 import fin_reports as _fin_reports
 router.include_router(_fin_reports.router)
 from app.api.v1 import admin_fin_reports as _admin_fin_reports
 router.include_router(_admin_fin_reports.router)
+# ── Per-Merchant Reports & Invoices (Bittu→Merchant SaaS PDF, customer tax invoice, txn ledger CSV) ──
+from app.api.v1 import merchant_reports as _merchant_reports
+router.include_router(_merchant_reports.router)
 # ── Merchant KYC & Onboarding (Phase 9) — admin only ──
 from app.api.v1 import admin_merchant_kyc as _admin_merchant_kyc
 router.include_router(_admin_merchant_kyc.router)
