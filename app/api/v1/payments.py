@@ -1,15 +1,16 @@
 """Payment endpoints."""
-from typing import Optional
-from fastapi import APIRouter, Depends, Query, Request
+from decimal import Decimal
+from typing import Any, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status as http_status
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.auth import UserContext, require_permission
 from app.services.payment_service import PaymentService
 from app.services.elevenlabs_service import ElevenLabsService
 from app.services.activity_log_service import log_activity
 
-from app.core.database import get_connection
+from app.core.database import get_connection, get_service_connection
 from app.core.logging import get_logger
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
@@ -18,11 +19,33 @@ _voice_svc = ElevenLabsService()
 logger = get_logger(__name__)
 
 
+# Canonical payment_method enum values (matches payment_method PG enum).
+_PM_ALIASES = {
+    "cash": "cash", "counter": "cash", "cod": "cash",
+    "upi": "upi", "qr_pay": "upi", "qr": "upi", "qr_code": "upi",
+    "card": "card", "swipe": "card", "credit": "card", "debit": "card",
+    "wallet": "wallet",
+    "online": "online", "razorpay": "online", "gateway": "online", "netbanking": "online",
+}
+
+
 class InitiatePaymentIn(BaseModel):
+    """
+    Frontend-compatible initiate payload.
+
+    Accepts both legacy (`payment_mode`, `amount` in rupees) and Phase-2
+    frontend (`payment_mode='online'`, `amount` in paise, plus customer hints).
+    Extra fields are ignored so the client schema can evolve independently.
+    """
+    model_config = {"extra": "ignore"}
+
     order_id: str
-    payment_mode: str  # cash | online
-    amount: float
+    payment_mode: str = Field(description="cash | upi | card | wallet | online (aliases accepted)")
+    amount: float = Field(description="Amount in rupees OR paise — server auto-detects against order total")
+    currency: str = "INR"
     tip: float = 0
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
 
 
 class VerifyPaymentIn(BaseModel):
@@ -138,20 +161,250 @@ async def initiate_payment(
     body: InitiatePaymentIn,
     user: UserContext = Depends(require_permission("payment.create")),
 ):
-    result = await _svc.initiate_payment(
-        user=user,
-        order_id=body.order_id,
-        payment_mode=body.payment_mode,
-        amount=body.amount,
-        tip=body.tip,
-    )
+    """
+    Initiate a payment for an order.
+
+    - For ``online`` (alias: razorpay/gateway/netbanking): returns the Razorpay
+      intent (razorpay_order_id + QR fields). Idempotent — replays the intent
+      that ``/orders/checkout`` already created instead of erroring on the
+      "pending payment exists" guard.
+    - For ``cash | upi | card | wallet``: marks the payment completed (or
+      pending for online) via the legacy ``PaymentService.initiate_payment``
+      pathway.
+
+    Accepts ``amount`` in either rupees or paise — auto-detected against the
+    order total. Frontend sending paise (Phase-2 contract) works as-is.
+    """
+    method = _PM_ALIASES.get(str(body.payment_mode).strip().lower())
+    if method is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=f"unsupported payment_mode: {body.payment_mode!r}",
+        )
+
+    # ── Resolve order total + auto-detect rupees vs paise ──
+    async with get_connection() as conn:
+        order_row = await conn.fetchrow(
+            """
+            SELECT id::text          AS id,
+                   restaurant_id::text AS merchant_id,
+                   branch_id::text   AS branch_id,
+                   total_amount,
+                   COALESCE(metadata->>'order_number', LEFT(id::text, 8)) AS order_number
+            FROM orders
+            WHERE id = $1::uuid AND restaurant_id = $2::uuid
+            """,
+            body.order_id, user.restaurant_id,
+        )
+    if order_row is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND, detail="order not found",
+        )
+    order_total = Decimal(str(order_row["total_amount"]))
+
+    # If client sent paise (int much larger than rupee total), divide by 100.
+    amt_dec = Decimal(str(body.amount))
+    if amt_dec > order_total * Decimal("5"):
+        amt_dec = (amt_dec / Decimal("100")).quantize(Decimal("0.01"))
+
+    if amt_dec <= 0 or amt_dec > order_total:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=f"amount {amt_dec} invalid for order total {order_total}",
+        )
+
+    # ────────────────────────────────────────────────────────────────────
+    # ONLINE — replay the intent created by /orders/checkout (idempotent).
+    # ────────────────────────────────────────────────────────────────────
+    if method == "online":
+        async with get_service_connection() as conn:
+            existing = await conn.fetchrow(
+                """
+                SELECT p.id::text                AS payment_id,
+                       p.status::text            AS payment_status,
+                       p.method::text            AS method,
+                       p.amount,
+                       p.currency,
+                       p.razorpay_order_id,
+                       p.razorpay_payment_id,
+                       o.razorpay_order_id       AS rzp_order_id,
+                       o.amount_paise,
+                       o.amount_paid_paise,
+                       o.amount_due_paise,
+                       o.status::text            AS rzp_order_status,
+                       q.qr_id,
+                       q.image_url               AS qr_image_url,
+                       q.image_content           AS qr_image_content,
+                       q.close_by                AS qr_close_by,
+                       q.status::text            AS qr_status
+                FROM payments p
+                LEFT JOIN rzp_orders o
+                       ON o.internal_order_id = p.order_id
+                      AND o.merchant_id       = p.restaurant_id
+                LEFT JOIN rzp_qr_order_links l
+                       ON l.rzp_order_uuid = o.id
+                      AND l.is_primary = TRUE
+                LEFT JOIN rzp_qr_codes q
+                       ON q.qr_id = l.qr_id
+                WHERE p.order_id     = $1::uuid
+                  AND p.restaurant_id = $2::uuid
+                  AND p.method        = 'online'::payment_method
+                ORDER BY p.created_at DESC
+                LIMIT 1
+                """,
+                body.order_id, user.restaurant_id,
+            )
+
+        # Create intent if missing OR replay existing (create_intent_for_order
+        # is itself idempotent and returns the existing intent on replay).
+        from app.services.razorpay.payment_intent import create_intent_for_order
+        from app.core.tenant import tenant_insert_fields
+        import uuid as _uuid
+
+        payment_id: Optional[str]
+        payment_status_value: str
+
+        if existing is None:
+            # No payment row yet — checkout didn't run or chose a different
+            # method. Insert a pending payment row, then create the intent.
+            tenant = tenant_insert_fields(user)
+            payment_id = str(_uuid.uuid4())
+            payment_status_value = "pending"
+            async with get_connection() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO payments (
+                        id, order_id, restaurant_id, user_id, branch_id,
+                        method, status, amount, currency
+                    ) VALUES (
+                        $1::uuid, $2::uuid, $3::uuid, $4, $5,
+                        'online'::payment_method, 'pending'::payment_status, $6, $7
+                    )
+                    """,
+                    payment_id, body.order_id, user.restaurant_id,
+                    tenant["user_id"], tenant.get("branch_id"),
+                    float(amt_dec), body.currency,
+                )
+        else:
+            payment_id = existing["payment_id"]
+            payment_status_value = existing["payment_status"]
+            # Terminal — return final state, frontend should stop polling.
+            if payment_status_value in ("completed", "failed", "refunded"):
+                return {
+                    "payment_id": payment_id,
+                    "order_id": body.order_id,
+                    "method": "online",
+                    "status": payment_status_value,
+                    "amount": float(existing["amount"] or amt_dec),
+                    "amount_paise": int((existing["amount_paise"] or 0)),
+                    "currency": existing["currency"] or body.currency,
+                    "razorpay_order_id": existing["rzp_order_id"] or existing["razorpay_order_id"],
+                    "razorpay_payment_id": existing["razorpay_payment_id"],
+                    "qr_id": existing["qr_id"],
+                    "qr_image_url": existing["qr_image_url"],
+                    "qr_image_content": existing["qr_image_content"],
+                    "qr_close_by": existing["qr_close_by"].isoformat() if existing["qr_close_by"] else None,
+                    "qr_status": existing["qr_status"],
+                    "idempotent": True,
+                }
+
+            # If we already have a full intent + QR cached, short-circuit
+            # without re-calling Razorpay.
+            if existing["rzp_order_id"] and existing["qr_image_url"]:
+                return {
+                    "payment_id": payment_id,
+                    "order_id": body.order_id,
+                    "method": "online",
+                    "status": payment_status_value,
+                    "amount": float(existing["amount"] or amt_dec),
+                    "amount_paise": int(existing["amount_paise"]),
+                    "currency": existing["currency"] or body.currency,
+                    "razorpay_order_id": existing["rzp_order_id"],
+                    "razorpay_payment_id": existing["razorpay_payment_id"],
+                    "qr_id": existing["qr_id"],
+                    "qr_image_url": existing["qr_image_url"],
+                    "qr_image_content": existing["qr_image_content"],
+                    "qr_close_by": existing["qr_close_by"].isoformat() if existing["qr_close_by"] else None,
+                    "qr_status": existing["qr_status"],
+                    "idempotent": True,
+                }
+
+        # Create-or-replay the Razorpay intent (function is idempotent on
+        # (merchant_id, internal_order_id)).
+        try:
+            intent = await create_intent_for_order(
+                merchant_id=user.restaurant_id,
+                branch_id=order_row["branch_id"],
+                internal_order_id=body.order_id,
+                payment_id=payment_id,
+                amount=amt_dec,
+                currency=body.currency,
+                receipt=order_row["order_number"],
+                customer_name=body.customer_name,
+                customer_phone=body.customer_phone,
+                create_qr=True,
+            )
+        except Exception as exc:
+            logger.error(
+                "payments_initiate_intent_failed",
+                order_id=body.order_id, error=str(exc),
+            )
+            raise HTTPException(
+                status_code=http_status.HTTP_502_BAD_GATEWAY,
+                detail="razorpay intent creation failed",
+            )
+
+        await log_activity(
+            user_id=user.user_id, branch_id=user.branch_id,
+            action="payment.initiated", entity_type="payment", entity_id=payment_id,
+            metadata={
+                "order_id": body.order_id, "payment_mode": "online",
+                "amount": float(amt_dec), "replayed": existing is not None,
+            },
+        )
+
+        client = intent.to_client_dict()
+        return {
+            "payment_id": payment_id,
+            "order_id": body.order_id,
+            "method": "online",
+            "status": payment_status_value,
+            "amount": float(amt_dec),
+            "amount_paise": client["amount"],
+            "currency": client["currency"],
+            "razorpay_order_id": client["razorpay_order_id"],
+            "qr_id": client["qr_id"],
+            "qr_image_url": client["qr_image_url"],
+            "qr_image_content": client["qr_image_content"],
+            "qr_close_by": client["qr_close_by"],
+            "idempotent": existing is not None,
+        }
+
+    # ────────────────────────────────────────────────────────────────────
+    # CASH / UPI / CARD / WALLET — legacy completion path.
+    # ────────────────────────────────────────────────────────────────────
+    try:
+        result = await _svc.initiate_payment(
+            user=user,
+            order_id=body.order_id,
+            method=method,
+            amount=float(amt_dec),
+        )
+    except Exception as exc:
+        # Surface the underlying error rather than a bare 500.
+        logger.error(
+            "payments_initiate_failed",
+            order_id=body.order_id, method=method, error=str(exc),
+        )
+        raise
+
     await log_activity(
         user_id=user.user_id,
         branch_id=user.branch_id,
         action="payment.initiated",
         entity_type="payment",
         entity_id=result.get("payment_id") if isinstance(result, dict) else None,
-        metadata={"order_id": body.order_id, "payment_mode": body.payment_mode, "amount": body.amount},
+        metadata={"order_id": body.order_id, "payment_mode": method, "amount": float(amt_dec)},
     )
     return result
 
