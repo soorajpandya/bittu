@@ -88,6 +88,9 @@ async def create_intent_for_order(
     receipt: Optional[str] = None,
     customer_name: Optional[str] = None,
     customer_phone: Optional[str] = None,
+    customer_id: Optional[str] = None,
+    created_by_user_id: Optional[str] = None,
+    owner_user_id: Optional[str] = None,
     create_qr: bool = True,
     qr_ttl_seconds: int = DEFAULT_QR_TTL_SECONDS,
     notes: Optional[Mapping[str, Any]] = None,
@@ -95,6 +98,11 @@ async def create_intent_for_order(
     """
     Idempotent: returns the existing intent if an `rzp_orders` row already
     exists for `(merchant_id, internal_order_id)`.
+
+    Identity context (who generated the QR / who is paying) is embedded into
+    both the Razorpay order `notes` and the QR `notes` so it shows up in the
+    Razorpay dashboard, webhooks, and our `rzp_orders.notes` / `rzp_qr_codes.notes`
+    JSONB columns.
     """
     amount_paise = int((Decimal(amount) * 100).to_integral_value())
     if amount_paise <= 0:
@@ -114,6 +122,11 @@ async def create_intent_for_order(
         return existing
 
     # ── 1. create Razorpay order (idempotent via X-Razorpay-Idempotency) ──
+    # Razorpay limits each `notes` value to a string; cap field lengths so we
+    # never get rejected at the gateway.
+    def _s(v: Any, cap: int = 200) -> str:
+        return str(v)[:cap]
+
     note_payload: dict[str, Any] = {
         "internal_order_id": internal_order_id,
         "payment_id": payment_id,
@@ -121,8 +134,18 @@ async def create_intent_for_order(
     }
     if branch_id:
         note_payload["branch_id"] = branch_id
+    if owner_user_id:
+        note_payload["owner_user_id"] = _s(owner_user_id)
+    if created_by_user_id:
+        note_payload["created_by_user_id"] = _s(created_by_user_id)
+    if customer_id:
+        note_payload["customer_id"] = _s(customer_id)
+    if customer_name:
+        note_payload["customer_name"] = _s(customer_name, 100)
+    if customer_phone:
+        note_payload["customer_phone"] = _s(customer_phone, 20)
     if notes:
-        note_payload.update({k: str(v) for k, v in notes.items()})
+        note_payload.update({k: _s(v) for k, v in notes.items()})
 
     order_idem = f"rzp_order:{merchant_id}:{internal_order_id}"
     try:
@@ -171,7 +194,32 @@ async def create_intent_for_order(
         close_by_dt = datetime.now(timezone.utc) + timedelta(seconds=int(qr_ttl_seconds))
         close_by_epoch = int(close_by_dt.timestamp())
         qr_idem = f"rzp_qr:{merchant_id}:{internal_order_id}"
-        qr_name = f"Order {internal_order_id[:8]}"
+        # QR `name` is the human label shown in the Razorpay dashboard list.
+        # Prefer customer name so the owner can scan the list and immediately
+        # see WHO each QR was generated for. Razorpay caps `name` at 30 chars.
+        if customer_name:
+            qr_name = f"{customer_name} #{internal_order_id[:6]}"
+        else:
+            qr_name = f"Order {internal_order_id[:8]}"
+
+        # QR-level notes mirror the order notes + add gateway-specific keys.
+        qr_notes: dict[str, Any] = {
+            "internal_order_id": internal_order_id,
+            "razorpay_order_id": razorpay_order_id,
+            "merchant_id": merchant_id,
+        }
+        if branch_id:
+            qr_notes["branch_id"] = branch_id
+        if owner_user_id:
+            qr_notes["owner_user_id"] = _s(owner_user_id)
+        if created_by_user_id:
+            qr_notes["created_by_user_id"] = _s(created_by_user_id)
+        if customer_id:
+            qr_notes["customer_id"] = _s(customer_id)
+        if customer_name:
+            qr_notes["customer_name"] = _s(customer_name, 100)
+        if customer_phone:
+            qr_notes["customer_phone"] = _s(customer_phone, 20)
 
         try:
             qr_resp = await rzp_qr_api.create_qr(
@@ -182,11 +230,7 @@ async def create_intent_for_order(
                 usage=DEFAULT_QR_USAGE,
                 qr_type=DEFAULT_QR_TYPE,
                 close_by=close_by_epoch,
-                notes={
-                    "internal_order_id": internal_order_id,
-                    "razorpay_order_id": razorpay_order_id,
-                    "merchant_id": merchant_id,
-                },
+                notes=qr_notes,
                 idempotency_key=qr_idem,
                 merchant_id=merchant_id,
             )

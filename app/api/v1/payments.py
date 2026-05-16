@@ -183,16 +183,25 @@ async def initiate_payment(
         )
 
     # ── Resolve order total + auto-detect rupees vs paise ──
+    # Also pull customer + creator info so we can tag the Razorpay order/QR
+    # `notes` (visible in dashboard + webhooks) with WHO is paying and which
+    # staff member generated it. Body-supplied customer_name/phone override
+    # the DB row when present (walk-in customers).
     async with get_connection() as conn:
         order_row = await conn.fetchrow(
             """
-            SELECT id::text          AS id,
-                   restaurant_id::text AS merchant_id,
-                   branch_id::text   AS branch_id,
-                   total_amount,
-                   COALESCE(metadata->>'order_number', LEFT(id::text, 8)) AS order_number
-            FROM orders
-            WHERE id = $1::uuid AND restaurant_id = $2::uuid
+            SELECT o.id::text            AS id,
+                   o.restaurant_id::text AS merchant_id,
+                   o.branch_id::text     AS branch_id,
+                   o.user_id             AS created_by_user_id,
+                   o.customer_id         AS customer_id,
+                   c.name                AS customer_name,
+                   c.phone_number        AS customer_phone,
+                   o.total_amount,
+                   COALESCE(o.metadata->>'order_number', LEFT(o.id::text, 8)) AS order_number
+            FROM orders o
+            LEFT JOIN customers c ON c.id = o.customer_id
+            WHERE o.id = $1::uuid AND o.restaurant_id = $2::uuid
             """,
             body.order_id, user.restaurant_id,
         )
@@ -331,6 +340,12 @@ async def initiate_payment(
 
         # Create-or-replay the Razorpay intent (function is idempotent on
         # (merchant_id, internal_order_id)).
+        # Customer & creator info gets stitched into the rzp_order + qr `notes`
+        # so the Razorpay dashboard / webhooks show exactly which staff member
+        # generated the QR and which customer it was generated for.
+        eff_customer_name = body.customer_name or order_row["customer_name"]
+        eff_customer_phone = body.customer_phone or order_row["customer_phone"]
+        eff_customer_id = order_row["customer_id"]
         try:
             intent = await create_intent_for_order(
                 merchant_id=user.restaurant_id,
@@ -340,8 +355,11 @@ async def initiate_payment(
                 amount=amt_dec,
                 currency=body.currency,
                 receipt=order_row["order_number"],
-                customer_name=body.customer_name,
-                customer_phone=body.customer_phone,
+                customer_name=eff_customer_name,
+                customer_phone=eff_customer_phone,
+                customer_id=str(eff_customer_id) if eff_customer_id is not None else None,
+                created_by_user_id=order_row["created_by_user_id"],
+                owner_user_id=getattr(user, "owner_id", None) or user.user_id,
                 create_qr=True,
             )
         except Exception as exc:
