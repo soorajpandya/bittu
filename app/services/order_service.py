@@ -645,6 +645,9 @@ class OrderService:
                     receipt=order_number,
                     customer_name=customer_name,
                     customer_phone=customer_phone,
+                    customer_id=str(customer_id) if customer_id is not None else None,
+                    created_by_user_id=user.user_id,
+                    owner_user_id=user.owner_id if user.is_branch_user else user.user_id,
                     create_qr=True,
                 )
                 response["razorpay"] = intent.to_client_dict()

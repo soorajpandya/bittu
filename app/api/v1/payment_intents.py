@@ -236,6 +236,20 @@ async def refresh_intent(
         )
 
     from app.services.razorpay.payment_intent import create_intent_for_order
+    # Enrich notes with customer + creator + owner for dashboard/webhook visibility.
+    async with get_service_connection() as conn:
+        enrich = await conn.fetchrow(
+            """
+            SELECT o.user_id              AS created_by_user_id,
+                   o.customer_id          AS customer_id,
+                   c.name                 AS customer_name,
+                   c.phone_number         AS customer_phone
+              FROM orders o
+              LEFT JOIN customers c ON c.id = o.customer_id
+             WHERE o.id = $1::uuid
+            """,
+            order_id,
+        )
     try:
         await create_intent_for_order(
             merchant_id=user.restaurant_id,
@@ -244,6 +258,11 @@ async def refresh_intent(
             payment_id=order["payment_id"],
             amount=Decimal(str(order["total_amount"])),
             receipt=order["order_number"],
+            customer_name=enrich["customer_name"] if enrich else None,
+            customer_phone=enrich["customer_phone"] if enrich else None,
+            customer_id=str(enrich["customer_id"]) if enrich and enrich["customer_id"] is not None else None,
+            created_by_user_id=enrich["created_by_user_id"] if enrich else None,
+            owner_user_id=getattr(user, "owner_id", None) or user.user_id,
             create_qr=True,
         )
     except Exception as exc:
