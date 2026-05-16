@@ -57,7 +57,7 @@ from typing import Any, Awaitable, Callable, Optional
 import asyncpg
 from fastapi import HTTPException, Request
 
-from app.core.database import get_connection
+from app.core.database import get_connection, get_service_connection
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -88,7 +88,9 @@ class WebhookResult:
         if self.duplicate:
             return
         latency = round((time.perf_counter() - self.started_at) * 1000, 2)
-        async with get_connection() as conn:
+        # Webhook callbacks have NO tenant context — use service connection so
+        # the UPDATE isn't silently no-op'd by RLS, leaving rows stuck at 'received'.
+        async with get_service_connection() as conn:
             await conn.execute(
                 """
                 UPDATE payment_webhook_events
@@ -196,7 +198,7 @@ async def verify_and_register_webhook(
     row_id = uuid.uuid4()
 
     try:
-        async with get_connection() as conn:
+        async with get_service_connection() as conn:
             await conn.execute(
                 """
                 INSERT INTO payment_webhook_events
