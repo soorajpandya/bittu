@@ -49,6 +49,30 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _coerce_idempotency_payload(value) -> dict:
+    """
+    Decode a `checkout_idempotency.response_payload` cell into a dict.
+
+    asyncpg has no JSONB codec registered on this project, so JSONB columns
+    come back as raw strings. `dict(some_string)` then raises
+    `ValueError: dictionary update sequence element #0 has length 1; 2 is required`
+    (it tries to interpret the string as an iterable of 2-tuples).
+
+    Accepts:
+      - `dict`   : returned as a shallow copy.
+      - `str|bytes|bytearray`: parsed as JSON.
+      - anything else: best-effort `dict(value)` to preserve any pre-existing
+        behaviour for codecs that DO already decode.
+    """
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode("utf-8")
+    if isinstance(value, str):
+        return json.loads(value)
+    return dict(value)
+
+
 class OrderService:
 
     # ── Item lookup helper ──
@@ -137,7 +161,7 @@ class OrderService:
                     owner_id,
                 )
             if existing:
-                payload = dict(existing["response_payload"])
+                payload = _coerce_idempotency_payload(existing["response_payload"])
                 payload["idempotent"] = True
                 latency_ms = round((time.perf_counter() - t0) * 1000, 2)
                 logger.info(
@@ -223,7 +247,7 @@ class OrderService:
                         owner_id,
                     )
                 if existing:
-                    payload = dict(existing["response_payload"])
+                    payload = _coerce_idempotency_payload(existing["response_payload"])
                     payload["idempotent"] = True
                     latency_ms = round((time.perf_counter() - t0) * 1000, 2)
                     logger.info(
