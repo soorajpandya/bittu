@@ -25,6 +25,8 @@ PAYMENT_INITIATED = "payment.initiated"
 PAYMENT_COMPLETED = "payment.completed"
 PAYMENT_FAILED = "payment.failed"
 PAYMENT_REFUNDED = "payment.refunded"
+PAYMENT_CANCELLED = "payment.cancelled"   # merchant explicitly cancelled a pending intent
+PAYMENT_EXPIRED   = "payment.expired"     # QR closed/timed-out with no capture
 
 # Kitchen events
 KITCHEN_ORDER_CREATED = "kitchen.order_created"

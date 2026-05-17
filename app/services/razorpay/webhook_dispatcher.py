@@ -48,6 +48,7 @@ from app.core.events import (
     PAYMENT_COMPLETED,
     PAYMENT_FAILED,
     PAYMENT_REFUNDED,
+    PAYMENT_EXPIRED,
     emit_and_publish,
 )
 from app.core.logging import get_logger
@@ -737,8 +738,67 @@ async def _handle_qr_created(envelope: dict, signature: Optional[str]) -> dict:
 
 
 async def _handle_qr_closed(envelope: dict, signature: Optional[str]) -> dict:
-    await _upsert_rzp_qr(_entity(envelope, "qr_code"), envelope)
-    return {}
+    qr_entity = _entity(envelope, "qr_code")
+    await _upsert_rzp_qr(qr_entity, envelope)
+
+    # If this QR never collected a payment, flip the linked internal payment
+    # from 'initiated' → 'expired' so abandoned QRs stop polluting "pending
+    # payments" dashboards and never count as revenue.
+    qr_id = qr_entity.get("id")
+    received = int(qr_entity.get("payments_amount_received") or 0)
+    if not qr_id or received > 0:
+        return {}
+
+    ctx = await _resolve_order_context_by_qr(qr_id)
+    if not ctx or not ctx.get("internal_order_id"):
+        return {}
+
+    internal_order_id = ctx["internal_order_id"]
+    merchant_id = ctx.get("merchant_id")
+    branch_id = ctx.get("branch_id")
+
+    async with get_service_connection() as conn:
+        # Guarded transition: only flip rows still 'initiated' / 'pending'.
+        # Never touch authorized / completed / refunded / failed / cancelled.
+        row = await conn.fetchrow(
+            """
+            UPDATE payments
+               SET status = 'expired',
+                   updated_at = NOW()
+             WHERE order_id = $1::uuid
+               AND status IN ('initiated','pending')
+            RETURNING id::text AS payment_id, amount, currency
+            """,
+            internal_order_id,
+        )
+
+    if row is None:
+        return {}
+
+    try:
+        await emit_and_publish(DomainEvent(
+            event_type=PAYMENT_EXPIRED,
+            payload={
+                "order_id": internal_order_id,
+                "payment_id": row["payment_id"],
+                "qr_id": qr_id,
+                "amount": float(row["amount"] or 0),
+                "currency": row["currency"] or "INR",
+                "reason": qr_entity.get("close_reason") or "qr_closed",
+            },
+            restaurant_id=merchant_id,
+            branch_id=branch_id,
+        ))
+    except Exception:
+        logger.exception("rzp_qr_closed_emit_failed", qr_id=qr_id)
+
+    logger.info(
+        "rzp_payment_expired_on_qr_close",
+        qr_id=qr_id,
+        order_id=internal_order_id,
+        payment_id=row["payment_id"],
+    )
+    return {"payment_id": row["payment_id"], "status": "expired"}
 
 
 async def _handle_qr_credited(envelope: dict, signature: Optional[str]) -> dict:

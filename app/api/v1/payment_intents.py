@@ -412,3 +412,194 @@ async def capture_intent(
         )
 
     return await get_intent(order_id=order_id, user=user)
+
+
+# ── manual cancel (Phase 5) ──────────────────────────────────────────────
+
+
+class CancelIn(BaseModel):
+    reason: Optional[str] = None
+
+
+@router.post(
+    "/{order_id}/cancel",
+    response_model=IntentOut,
+    summary="Cancel a pending Razorpay payment intent / close its QR",
+)
+async def cancel_intent(
+    body: Optional[CancelIn] = None,
+    order_id: str = Path(..., description="Internal order UUID"),
+    user: UserContext = Depends(require_permission("razorpay.orders.write")),
+):
+    """
+    Operator-driven cancellation of an *unpaid* payment intent.
+
+    Steps (all idempotent, safe to replay):
+
+      1. Resolve the latest rzp_payment / rzp_qr for the order, scoped to
+         the caller's merchant.
+      2. Reject (409) if the payment is already authorized / captured /
+         refunded — those need the refund flow, not cancel.
+      3. Best-effort: call Razorpay `qr_codes/{id}/close` on the linked
+         QR if it is still active. Swallow 4xx (already closed) and 5xx
+         (Razorpay outage — webhook will reconcile later).
+      4. Guarded UPDATE: flip `payments.status` from
+         {initiated, pending, failed} → `cancelled`. Never touches a
+         row already authorized/captured/refunded.
+      5. Flip `orders.status` → `cancelled` only when the order is still
+         `pending_payment` (uses the existing order-status flow).
+      6. Emit `PAYMENT_CANCELLED` + `ORDER_CANCELLED` so realtime + reports
+         drop the row from "pending" lists immediately.
+      7. Return the refreshed intent so the FE can re-render in one round
+         trip.
+    """
+    from app.core.events import (
+        DomainEvent,
+        PAYMENT_CANCELLED,
+        ORDER_CANCELLED,
+        emit_and_publish,
+    )
+
+    reason = (body.reason if body else None) or "merchant_cancelled"
+
+    async with get_service_connection() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT
+                o.internal_order_id::text   AS internal_order_id,
+                o.razorpay_order_id         AS razorpay_order_id,
+                o.merchant_id::text         AS merchant_id,
+                q.qr_id                     AS qr_id,
+                q.status::text              AS qr_status,
+                p.id::text                  AS payment_id,
+                p.status::text              AS payment_status,
+                p.amount                    AS amount,
+                p.currency                  AS currency,
+                p.branch_id::text           AS branch_id,
+                ord.status                  AS order_status
+            FROM rzp_orders o
+            LEFT JOIN rzp_qr_order_links l
+                   ON l.rzp_order_uuid = o.id AND l.is_primary = TRUE
+            LEFT JOIN rzp_qr_codes q
+                   ON q.qr_id = l.qr_id
+            LEFT JOIN payments p
+                   ON p.order_id = o.internal_order_id
+                  AND p.restaurant_id = o.merchant_id
+            LEFT JOIN orders ord
+                   ON ord.id = o.internal_order_id
+            WHERE o.merchant_id       = $1::uuid
+              AND o.internal_order_id = $2::uuid
+            ORDER BY p.created_at DESC NULLS LAST
+            LIMIT 1
+            """,
+            user.restaurant_id,
+            order_id,
+        )
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="payment intent not found for this merchant",
+        )
+
+    payment_status = (row["payment_status"] or "").lower()
+    if payment_status in ("authorized", "captured", "completed", "refunded"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"payment is '{payment_status}' — cancel is not allowed; "
+                f"use the refund flow instead"
+            ),
+        )
+
+    # ── (3) Best-effort: close the live QR on Razorpay ──
+    qr_id = row["qr_id"]
+    qr_status = (row["qr_status"] or "").lower()
+    if qr_id and qr_status == "active":
+        try:
+            from app.services.razorpay import qr_codes as rzp_qr_api
+            await rzp_qr_api.close_qr(qr_id, merchant_id=str(user.restaurant_id))
+            logger.info("rzp_qr_closed_on_cancel", qr_id=qr_id, order_id=order_id)
+        except Exception as exc:
+            # Already closed (4xx) or transient (5xx) — webhook will reconcile.
+            logger.warning(
+                "rzp_qr_close_best_effort_failed",
+                qr_id=qr_id, order_id=order_id, error=str(exc),
+            )
+
+    # ── (4) Flip internal payment → cancelled, guarded ──
+    updated_payment_id: Optional[str] = None
+    async with get_service_connection() as conn:
+        updated = await conn.fetchrow(
+            """
+            UPDATE payments
+               SET status = 'cancelled',
+                   updated_at = NOW()
+             WHERE order_id = $1::uuid
+               AND status IN ('initiated','pending','failed')
+            RETURNING id::text AS payment_id
+            """,
+            order_id,
+        )
+    if updated:
+        updated_payment_id = updated["payment_id"]
+
+    # ── (5) Flip order → cancelled only if still pending_payment ──
+    order_flipped = False
+    async with get_service_connection() as conn:
+        ord_row = await conn.fetchrow(
+            """
+            UPDATE orders
+               SET status = 'cancelled',
+                   updated_at = NOW()
+             WHERE id = $1::uuid
+               AND restaurant_id = $2::uuid
+               AND status IN ('pending_payment','pending','Pending','PendingPayment')
+            RETURNING id
+            """,
+            order_id,
+            user.restaurant_id,
+        )
+        order_flipped = ord_row is not None
+
+    # ── (6) Emit realtime events (best-effort) ──
+    try:
+        await emit_and_publish(DomainEvent(
+            event_type=PAYMENT_CANCELLED,
+            payload={
+                "order_id":   order_id,
+                "payment_id": updated_payment_id or row["payment_id"],
+                "qr_id":      qr_id,
+                "amount":     float(row["amount"] or 0),
+                "currency":   row["currency"] or "INR",
+                "reason":     reason,
+            },
+            restaurant_id=row["merchant_id"],
+            branch_id=row["branch_id"],
+            user_id=getattr(user, "user_id", None),
+        ))
+        if order_flipped:
+            await emit_and_publish(DomainEvent(
+                event_type=ORDER_CANCELLED,
+                payload={
+                    "order_id": order_id,
+                    "reason":   reason,
+                    "source":   "payment_intent_cancel",
+                },
+                restaurant_id=row["merchant_id"],
+                branch_id=row["branch_id"],
+                user_id=getattr(user, "user_id", None),
+            ))
+    except Exception:
+        logger.exception("rzp_cancel_emit_failed", order_id=order_id)
+
+    logger.info(
+        "rzp_payment_intent_cancelled",
+        order_id=order_id,
+        payment_id=updated_payment_id,
+        qr_id=qr_id,
+        order_flipped=order_flipped,
+        reason=reason,
+    )
+
+    return await get_intent(order_id=order_id, user=user)
