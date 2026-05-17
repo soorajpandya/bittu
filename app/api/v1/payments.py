@@ -271,7 +271,7 @@ async def initiate_payment(
                        ON q.qr_id = l.qr_id
                 WHERE p.order_id     = $1::uuid
                   AND p.restaurant_id = $2::uuid
-                  AND p.method        = 'online'::payment_method
+                  AND p.method        = 'online'
                 ORDER BY p.created_at DESC
                 LIMIT 1
                 """,
