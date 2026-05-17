@@ -253,6 +253,15 @@ async def list_orders(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     include_items: bool = Query(True, description="Embed order items inline (set false to reduce payload)"),
+    include_non_revenue: bool = Query(
+        False,
+        description=(
+            "Include cancelled / failed / expired / refunded / unpaid orders. "
+            "Default false hides them from operator-facing lists so revenue "
+            "totals and order-count match the Dashboard. Set true for refund / "
+            "admin views that need to see the full order log."
+        ),
+    ),
     user: UserContext = Depends(require_permission("order.read")),
 ):
     offset = (page - 1) * page_size
@@ -266,6 +275,7 @@ async def list_orders(
         limit=page_size,
         offset=offset,
         include_items=include_items,
+        include_non_revenue=include_non_revenue,
     )
 
 

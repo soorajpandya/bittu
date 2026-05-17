@@ -554,7 +554,7 @@ async def cancel_intent(
                    updated_at = NOW()
              WHERE id = $1::uuid
                AND restaurant_id = $2::uuid
-               AND status IN ('pending_payment','pending','Pending','PendingPayment')
+               AND status IN ('pending_payment','awaiting_payment','pending','Pending','PendingPayment')
             RETURNING id
             """,
             order_id,

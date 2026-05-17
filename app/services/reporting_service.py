@@ -90,6 +90,11 @@ class ReportingService:
             m_scope, m_pf, m_pt, m_pc = "", "$1", "$2", "$3"
 
         async with get_connection() as c:
+            # Non-revenue order statuses (cancelled QRs, failed/expired/refunded,
+            # unpaid pending_payment) must NOT inflate gross_sales, orders_count
+            # or AOV. Mirrors the frontend filter shipped in c1dc17d.
+            from app.core.order_status import NON_REVENUE_ORDER_STATUSES
+            _nr = ",".join(f"'{s}'" for s in sorted(NON_REVENUE_ORDER_STATUSES))
             orders = await c.fetchrow(
                 f"""
                 SELECT
@@ -101,6 +106,7 @@ class ReportingService:
                 FROM orders
                 WHERE created_at >= {o_pf}::date
                   AND created_at <  ({o_pt}::date + INTERVAL '1 day')
+                  AND LOWER(status) NOT IN ({_nr})
                   {o_scope}
                 """,
                 *o_params,

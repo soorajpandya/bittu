@@ -16,8 +16,15 @@ from app.core.database import get_connection, get_transaction
 from app.core.redis import cache_get, cache_set
 from app.core.tenant import tenant_where_clause
 from app.core.logging import get_logger
+from app.core.order_status import NON_REVENUE_ORDER_STATUSES
 
 logger = get_logger(__name__)
+
+# Pre-rendered SQL fragment for the non-revenue order filter.
+# Used inside FILTER(WHERE ...) clauses below to keep total_orders honest
+# (cancelled / failed / expired / refunded / unpaid orders excluded).
+_NR_LIST = ",".join(f"'{s}'" for s in sorted(NON_REVENUE_ORDER_STATUSES))
+_REVENUE_FILTER_SQL = f"LOWER(status) NOT IN ({_NR_LIST})"
 
 
 class AnalyticsService:
@@ -30,9 +37,9 @@ class AnalyticsService:
         """Aggregate and upsert daily analytics for a branch + date."""
         async with get_transaction() as conn:
             stats = await conn.fetchrow(
-                """
+                f"""
                 SELECT
-                    COUNT(*)                                     AS total_orders,
+                    COUNT(*) FILTER (WHERE {_REVENUE_FILTER_SQL})  AS total_orders,
                     COUNT(*) FILTER (WHERE status = 'completed') AS completed_orders,
                     COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled_orders,
                     COALESCE(SUM(total)  FILTER (WHERE status = 'completed'), 0) AS total_revenue,

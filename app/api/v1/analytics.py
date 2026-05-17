@@ -7,11 +7,18 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, get_current_user, require_permission
 from app.core.database import get_connection
 from app.core.logging import get_logger
+from app.core.order_status import NON_REVENUE_ORDER_STATUSES
 from app.services.analytics_service import AnalyticsService
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 _svc = AnalyticsService()
 logger = get_logger(__name__)
+
+# Inline SQL fragment that excludes non-revenue orders from COUNT(*) — keeps
+# total_orders honest so the Dashboard never shows "1 order" for a day that
+# only contains cancelled QR / failed-intent rows. Mirrors FE filter.
+_NR_LIST_SQL = ",".join(f"'{s}'" for s in sorted(NON_REVENUE_ORDER_STATUSES))
+_REVENUE_ORDERS_FILTER = f"LOWER(status) NOT IN ({_NR_LIST_SQL})"
 
 _EMPTY_COUNTS = {
     "total_orders": 0, "completed_orders": 0, "cancelled_orders": 0,
@@ -54,11 +61,11 @@ async def dashboard_counts(
 
             today = date.today()
             counts = await conn.fetchrow(
-                """
+                f"""
                 SELECT
-                    COUNT(*)                                      AS total_orders,
-                    COUNT(*) FILTER (WHERE status = 'completed')  AS completed_orders,
-                    COUNT(*) FILTER (WHERE status = 'cancelled')  AS cancelled_orders,
+                    COUNT(*) FILTER (WHERE {_REVENUE_ORDERS_FILTER})  AS total_orders,
+                    COUNT(*) FILTER (WHERE status = 'completed')      AS completed_orders,
+                    COUNT(*) FILTER (WHERE status = 'cancelled')      AS cancelled_orders,
                     COALESCE(SUM(total) FILTER (WHERE status = 'completed'), 0) AS total_revenue,
                     COUNT(*) FILTER (WHERE status IN ('pending', 'confirmed', 'preparing')) AS pending_orders
                 FROM orders
@@ -101,11 +108,11 @@ async def daily_analytics(
 
             # Fallback: compute from orders table
             counts = await conn.fetchrow(
-                """
+                f"""
                 SELECT
-                    COUNT(*)                                      AS total_orders,
-                    COUNT(*) FILTER (WHERE status = 'completed')  AS completed_orders,
-                    COUNT(*) FILTER (WHERE status = 'cancelled')  AS cancelled_orders,
+                    COUNT(*) FILTER (WHERE {_REVENUE_ORDERS_FILTER})  AS total_orders,
+                    COUNT(*) FILTER (WHERE status = 'completed')      AS completed_orders,
+                    COUNT(*) FILTER (WHERE status = 'cancelled')      AS cancelled_orders,
                     COALESCE(SUM(total) FILTER (WHERE status = 'completed'), 0) AS total_revenue,
                     COALESCE(SUM(tax)   FILTER (WHERE status = 'completed'), 0) AS total_tax,
                     COALESCE(SUM(discount) FILTER (WHERE status = 'completed'), 0) AS total_discount

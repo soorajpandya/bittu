@@ -71,6 +71,12 @@ async def lifespan(app: FastAPI):
     )
     register_inventory_accounting_handlers()
 
+    # Auto-cancel orders when their payment intent dies (cancel / expire).
+    # Keeps orders.status in sync with payments.status so revenue / order-count
+    # / AOV aggregations stay honest.
+    from app.services.order_status_handlers import register_order_status_handlers
+    register_order_status_handlers()
+
     # Inventory snapshot scheduler (Section 9)
     snapshot_task = None
     try:

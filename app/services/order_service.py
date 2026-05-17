@@ -872,6 +872,7 @@ class OrderService:
         limit: int = 20,
         offset: int = 0,
         include_items: bool = True,
+        include_non_revenue: bool = False,
     ) -> dict:
         """
         Fetch orders with tenant isolation, newest-first, with inline items.
@@ -880,6 +881,15 @@ class OrderService:
         ---------------------------
         from_date  inclusive : created_at >= 00:00 IST on from_date  (UTC instant)
         to_date    inclusive : created_at <  00:00 IST on (to_date+1) (UTC instant)
+
+        Non-revenue filter
+        ------------------
+        When `include_non_revenue` is False (default), orders whose `status`
+        — OR whose latest `payments.status` — falls into the
+        NON_REVENUE_ORDER_STATUSES / NON_REVENUE_PAYMENT_STATUSES set are
+        hidden. This matches the FE filter so cancelled QRs / abandoned
+        intents don't appear on the operator Orders list. Refund/cancel
+        admin views should pass `include_non_revenue=True`.
 
         Response shape
         --------------
@@ -925,6 +935,26 @@ class OrderService:
             params.append(to_ts)
             # Inclusive upper bound: created_at < IST midnight of (to_date + 1 day) (UTC)
             conditions.append(f"o.created_at < ${len(params)}")
+
+        # Hide non-revenue orders (cancelled QRs, failed/expired intents,
+        # refunded, unpaid pending_payment). Mirrors the FE filter shipped
+        # in release c1dc17d. Refund admin views opt-in with
+        # include_non_revenue=True.
+        if not include_non_revenue:
+            from app.core.order_status import (
+                NON_REVENUE_ORDER_STATUSES,
+                NON_REVENUE_PAYMENT_STATUSES,
+            )
+            order_list = ",".join(f"'{s}'" for s in sorted(NON_REVENUE_ORDER_STATUSES))
+            pay_list = ",".join(f"'{s}'" for s in sorted(NON_REVENUE_PAYMENT_STATUSES))
+            conditions.append(
+                f"LOWER(o.status) NOT IN ({order_list}) "
+                f"AND NOT EXISTS ("
+                f"  SELECT 1 FROM payments p_nr "
+                f"   WHERE p_nr.order_id = o.id "
+                f"     AND LOWER(p_nr.status) IN ({pay_list})"
+                f")"
+            )
 
         where = " AND ".join(conditions)
 
