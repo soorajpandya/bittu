@@ -281,7 +281,7 @@ async def qr_png(restaurant_id: UUID, request: Request):
     except ImportError:  # pragma: no cover
         raise HTTPException(500, "qrcode library not installed on server")
 
-    target = f"{_public_base(request)}/api/v1/waitlist/qr/{restaurant_id}"
+    target = f"{_public_base(request)}/q/{restaurant_id}"
     img = qrcode.make(target, box_size=10, border=2)
     buf = io.BytesIO()
     img.save(buf, format="PNG")

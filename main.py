@@ -332,6 +332,16 @@ def create_app() -> FastAPI:
     # -- Routes --
     app.include_router(api_router)
 
+    # -- Short, branded customer-facing URL for QR waitlist landing --
+    # Printed QR codes encode https://<host>/q/<restaurant_id> which is
+    # short, clean, and keeps the API surface out of the customer's URL bar.
+    from app.api.v1.waitlist import qr_landing_page as _qr_landing
+    from uuid import UUID as _UUID
+
+    @app.get("/q/{restaurant_id}", include_in_schema=False)
+    async def _qr_short(restaurant_id: _UUID):
+        return await _qr_landing(restaurant_id)
+
     # -- Pin OpenAPI version to 3.0.3 --
     # FastAPI emits 3.1.0 by default, which the bundled Swagger UI 4.15.5
     # cannot render ("does not specify a valid version field"). Re-stamp
