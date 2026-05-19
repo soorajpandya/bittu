@@ -306,6 +306,83 @@ async def qr_landing_page(restaurant_id: UUID):
     return HTMLResponse(content=html)
 
 
+# ── Web Push (VAPID) — customer browser notifications ────────
+
+class PushKeysModel(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscribeRequest(BaseModel):
+    endpoint: str = Field(..., min_length=10)
+    keys: PushKeysModel
+
+
+@router.get("/push/vapid-key")
+async def push_vapid_key():
+    """Public: returns the server's VAPID public key (URL-safe base64)."""
+    from app.services.push_service import get_vapid_keys
+    keys = await get_vapid_keys()
+    return {"publicKey": keys["public_key"]}
+
+
+@router.post("/push/subscribe/{entry_id}")
+async def push_subscribe(entry_id: UUID, body: PushSubscribeRequest, request: Request):
+    """Public: register a Web Push subscription for a waitlist entry."""
+    async with get_connection() as conn:
+        row = await conn.fetchrow(
+            "SELECT restaurant_id FROM waitlist_entries WHERE id = $1", entry_id,
+        )
+    if not row:
+        raise HTTPException(404, "Entry not found")
+    from app.services.push_service import save_subscription
+    await save_subscription(
+        entry_id=str(entry_id),
+        restaurant_id=str(row["restaurant_id"]),
+        endpoint=body.endpoint,
+        p256dh=body.keys.p256dh,
+        auth=body.keys.auth,
+        user_agent=request.headers.get("user-agent"),
+    )
+    return {"ok": True}
+
+
+@router.get("/sw.js")
+async def push_service_worker():
+    """Public: service worker that displays push notifications on the QR page."""
+    return Response(content=_PUSH_SW_JS, media_type="application/javascript",
+                    headers={"Cache-Control": "public, max-age=3600",
+                             "Service-Worker-Allowed": "/"})
+
+
+_PUSH_SW_JS = """// Bittu waitlist push service worker
+self.addEventListener('install', function(e){ self.skipWaiting(); });
+self.addEventListener('activate', function(e){ e.waitUntil(self.clients.claim()); });
+self.addEventListener('push', function(event){
+  var data = {};
+  try { data = event.data ? event.data.json() : {}; } catch(e) { data = { body: event.data && event.data.text() }; }
+  var title = data.title || 'Bittu Waitlist';
+  var opts = {
+    body: data.body || '',
+    tag: data.tag || 'bittu-waitlist',
+    renotify: true,
+    requireInteraction: true,
+    icon: '/api/v1/waitlist/sw-icon.png',
+    badge: '/api/v1/waitlist/sw-icon.png',
+    data: data
+  };
+  event.waitUntil(self.registration.showNotification(title, opts));
+});
+self.addEventListener('notificationclick', function(event){
+  event.notification.close();
+  event.waitUntil(clients.matchAll({type:'window', includeUncontrolled:true}).then(function(list){
+    for (var i=0;i<list.length;i++){ var c=list[i]; if(c.url.indexOf('/api/v1/waitlist/qr/')>=0){ return c.focus(); } }
+    if (clients.openWindow) return clients.openWindow('/');
+  }));
+});
+"""
+
+
 _QR_LANDING_HTML = """<!doctype html>
 <html lang="en">
 <head>
@@ -409,6 +486,7 @@ _QR_LANDING_HTML = """<!doctype html>
       localStorage.setItem('wl_'+RID, data.id);
       showStatus(name, data);
       startPolling(data.id, name);
+      enablePush(data.id);
     } catch(e){
       showErr('Network error. Please try again.');
       btn.disabled=false; btn.textContent='Join Queue';
@@ -456,8 +534,45 @@ _QR_LANDING_HTML = """<!doctype html>
       if(d && (d.status==='waiting'||d.status==='notified')){
         showStatus(d.customer_name || 'there', d);
         startPolling(existing, d.customer_name || 'there');
+        enablePush(existing);
       } else if(d){ localStorage.removeItem('wl_'+RID); }
     }).catch(function(){});
+  }
+
+  // ---- Web Push subscription (browser background notifications) ----
+  function urlB64ToUint8Array(b64){
+    var pad = '='.repeat((4 - b64.length % 4) % 4);
+    var s = (b64 + pad).replace(/-/g,'+').replace(/_/g,'/');
+    var raw = atob(s); var out = new Uint8Array(raw.length);
+    for(var i=0;i<raw.length;i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  async function enablePush(entryId){
+    try {
+      if(!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return;
+      var perm = Notification.permission;
+      if(perm === 'denied') return;
+      if(perm === 'default'){
+        perm = await Notification.requestPermission();
+        if(perm !== 'granted') return;
+      }
+      var reg = await navigator.serviceWorker.register('/api/v1/waitlist/sw.js', {scope:'/api/v1/waitlist/'});
+      await navigator.serviceWorker.ready;
+      var keyResp = await fetch('/api/v1/waitlist/push/vapid-key');
+      if(!keyResp.ok) return;
+      var keyData = await keyResp.json();
+      var existing = await reg.pushManager.getSubscription();
+      var sub = existing || await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlB64ToUint8Array(keyData.publicKey)
+      });
+      var s = sub.toJSON();
+      await fetch('/api/v1/waitlist/push/subscribe/'+entryId, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({endpoint: s.endpoint, keys: s.keys})
+      });
+    } catch(e){ /* ignore — polling still works */ }
   }
 })();
 </script>

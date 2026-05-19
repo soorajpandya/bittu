@@ -65,6 +65,13 @@ async def lifespan(app: FastAPI):
     from app.services.erp_event_handlers import register_erp_handlers
     register_erp_handlers()
 
+    # Waitlist web-push handlers (customer browser notifications)
+    try:
+        from app.services.push_service import register_push_handlers
+        register_push_handlers()
+    except Exception as exc:
+        logger.error("push_handlers_register_failed", error=str(exc))
+
     # Register inventory → accounting bridge (Section 5)
     from app.services.inventory_accounting_handlers import (
         register_inventory_accounting_handlers,
