@@ -609,9 +609,15 @@ class DineInSessionService:
         try:
             async with DistributedLock(f"dinein_order:{sid}", timeout=15):
                 async with get_transaction() as conn:
-                    # ── Get cart ──
+                    # ── Get cart (JOIN items for per-line GST snapshot) ──
                     cart = await conn.fetch(
-                        "SELECT * FROM table_session_carts WHERE session_id = $1",
+                        """
+                        SELECT c.*,
+                               i.gst_rate, i.is_tax_inclusive, i.pricing_type
+                          FROM table_session_carts c
+                          LEFT JOIN items i ON i."Item_ID" = c.item_id
+                         WHERE c.session_id = $1
+                        """,
                         sid,
                     )
                     if not cart:
@@ -640,12 +646,27 @@ class DineInSessionService:
                             "total_price": float(ci["total_price"]),
                             "addons": ci.get("addons") or [],
                             "notes": ci.get("notes"),
+                            # Snapshot item GST flags for compute_cart_tax
+                            "_gst_src": {
+                                "gst_rate":         ci.get("gst_rate"),
+                                "is_tax_inclusive": ci.get("is_tax_inclusive"),
+                                "pricing_type":     ci.get("pricing_type"),
+                            },
+                            "_line_total": line_total,
                         })
 
-                    # Tax — single source of truth (tax_engine.compute_tax)
-                    from app.services.tax_engine import get_tax_config, compute_tax
+                    # Tax — item-level engine (handles MRP/inclusive items).
+                    from app.services.tax_engine import (
+                        get_tax_config, compute_cart_tax, _line_from_item_row,
+                    )
                     tax_cfg = await get_tax_config(conn, restaurant_id)
-                    breakdown = compute_tax(subtotal, config=tax_cfg)
+                    tax_lines = [
+                        _line_from_item_row(oi["_gst_src"], oi["_line_total"], store=tax_cfg)
+                        for oi in order_items_data
+                    ]
+                    breakdown = compute_cart_tax(tax_lines, config=tax_cfg)
+                    for oi, lr in zip(order_items_data, breakdown.lines):
+                        oi["_tax"] = lr
                     tax_amount = breakdown.total_tax
                     total_amount = breakdown.grand_total
 
@@ -717,11 +738,17 @@ class DineInSessionService:
                             order_id, sid,
                         )
                     else:
-                        # Append: update order totals (recompute via tax_engine
-                        # to keep CGST/SGST splits canonical).
-                        from app.services.tax_engine import get_tax_config, compute_tax
+                        # Append: recompute via item-level engine to keep
+                        # CGST/SGST splits canonical (handles MRP items).
+                        from app.services.tax_engine import (
+                            get_tax_config, compute_cart_tax, _line_from_item_row,
+                        )
                         append_cfg = await get_tax_config(conn, restaurant_id)
-                        append_break = compute_tax(subtotal, config=append_cfg)
+                        append_lines = [
+                            _line_from_item_row(oi["_gst_src"], oi["_line_total"], store=append_cfg)
+                            for oi in order_items_data
+                        ]
+                        append_break = compute_cart_tax(append_lines, config=append_cfg)
                         await conn.execute(
                             """
                             UPDATE orders
@@ -755,37 +782,68 @@ class DineInSessionService:
 
                     order_item_rows = []
                     for oi in order_items_data:
+                        line_tax = oi.get("_tax")
+                        gst_enabled    = bool(line_tax.gst_enabled)   if line_tax else False
+                        gst_inclusive  = bool(line_tax.gst_inclusive) if line_tax else False
+                        gst_rate_f     = float(line_tax.gst_rate)        if line_tax else 0.0
+                        taxable_f      = float(line_tax.taxable_amount)  if line_tax else float(oi["total_price"])
+                        cgst_f         = float(line_tax.cgst_amount)     if line_tax else 0.0
+                        sgst_f         = float(line_tax.sgst_amount)     if line_tax else 0.0
                         if has_order_items_session_id:
                             oi_row = await conn.fetchrow(
                                 """
                                 INSERT INTO order_items (
                                     order_id, item_id, variant_id, item_name,
-                                    quantity, unit_price, total_price, addons, notes, user_id, session_id
-                                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)
+                                    quantity, unit_price, total_price, addons, notes, user_id, session_id,
+                                    gst_enabled, gst_inclusive, gst_rate,
+                                    taxable_amount, cgst_amount, sgst_amount
+                                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11,
+                                          $12, $13, $14, $15, $16, $17)
                                 RETURNING id
                                 """,
                                 order_id, oi["item_id"], oi.get("variant_id"), oi["item_name"],
                                 oi["quantity"], oi["unit_price"], oi["total_price"],
                                 json.dumps(oi.get("addons") or []), oi.get("notes"), owner_id, sid,
+                                gst_enabled, gst_inclusive, gst_rate_f,
+                                taxable_f, cgst_f, sgst_f,
                             )
                         else:
                             oi_row = await conn.fetchrow(
                                 """
                                 INSERT INTO order_items (
                                     order_id, item_id, variant_id, item_name,
-                                    quantity, unit_price, total_price, addons, notes, user_id
-                                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+                                    quantity, unit_price, total_price, addons, notes, user_id,
+                                    gst_enabled, gst_inclusive, gst_rate,
+                                    taxable_amount, cgst_amount, sgst_amount
+                                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10,
+                                          $11, $12, $13, $14, $15, $16)
                                 RETURNING id
                                 """,
                                 order_id, oi["item_id"], oi.get("variant_id"), oi["item_name"],
                                 oi["quantity"], oi["unit_price"], oi["total_price"],
                                 json.dumps(oi.get("addons") or []), oi.get("notes"), owner_id,
+                                gst_enabled, gst_inclusive, gst_rate_f,
+                                taxable_f, cgst_f, sgst_f,
                             )
                         order_item_rows.append({
                             "order_item_id": oi_row["id"],
                             "item_name": oi["item_name"],
                             "quantity": oi["quantity"],
                         })
+
+                    # Strip internal-only keys from the response payload.
+                    for oi in order_items_data:
+                        line_tax = oi.pop("_tax", None)
+                        oi.pop("_gst_src", None)
+                        oi.pop("_line_total", None)
+                        if line_tax is not None:
+                            oi["gst_enabled"]    = line_tax.gst_enabled
+                            oi["gst_inclusive"]  = line_tax.gst_inclusive
+                            oi["gst_percentage"] = float(line_tax.gst_rate)
+                            oi["taxable_amount"] = float(line_tax.taxable_amount)
+                            oi["cgst_amount"]    = float(line_tax.cgst_amount)
+                            oi["sgst_amount"]    = float(line_tax.sgst_amount)
+                            oi["final_price"]    = float(line_tax.final_price)
 
                     # ── Kitchen order (one per place-order action) ──
                     kitchen_order_id = str(uuid.uuid4())
@@ -1020,17 +1078,41 @@ class DineInSessionService:
 
                         # Recalculate target order totals via tax_engine so the
                         # CGST/SGST split stays canonical after a merge.
+                        # Use the per-line GST snapshot persisted on order_items
+                        # (M066) so MRP/inclusive items keep their original tax
+                        # split instead of being re-taxed at the store rate.
                         totals = await conn.fetchrow(
                             """
-                            SELECT COALESCE(SUM(total_price), 0) AS subtotal
+                            SELECT COALESCE(SUM(total_price), 0)    AS subtotal,
+                                   COALESCE(SUM(cgst_amount), 0)    AS cgst,
+                                   COALESCE(SUM(sgst_amount), 0)    AS sgst,
+                                   COALESCE(SUM(taxable_amount), 0) AS taxable
                             FROM order_items WHERE order_id = $1
                             """,
                             target_order_id_str,
                         )
                         new_subtotal = Decimal(str(totals["subtotal"]))
-                        from app.services.tax_engine import get_tax_config, compute_tax
-                        merge_cfg = await get_tax_config(conn, source.get("restaurant_id"))
-                        merge_break = compute_tax(new_subtotal, config=merge_cfg)
+                        merged_cgst  = Decimal(str(totals["cgst"]))
+                        merged_sgst  = Decimal(str(totals["sgst"]))
+                        merged_tax   = merged_cgst + merged_sgst
+                        # Grand total: existing line totals already include
+                        # exclusive-line pre-tax + inclusive-line MRP; add the
+                        # exclusive tax (= total tax − inclusive tax that's
+                        # already embedded in subtotal). For simplicity and to
+                        # avoid drift we compute grand = subtotal + (cgst+sgst
+                        # of exclusive lines only). order_items doesn't track
+                        # that split directly; assume any line where
+                        # gst_inclusive = false contributes tax on top.
+                        excl_tax_row = await conn.fetchrow(
+                            """
+                            SELECT COALESCE(SUM(cgst_amount + sgst_amount), 0) AS excl_tax
+                            FROM order_items
+                            WHERE order_id = $1 AND gst_inclusive = false
+                            """,
+                            target_order_id_str,
+                        )
+                        excl_tax = Decimal(str(excl_tax_row["excl_tax"]))
+                        merged_grand = new_subtotal + excl_tax
 
                         await conn.execute(
                             """
@@ -1041,11 +1123,11 @@ class DineInSessionService:
                                    updated_at = now()
                             WHERE id = $6
                             """,
-                            float(merge_break.subtotal),
-                            float(merge_break.total_tax),
-                            float(merge_break.cgst_amount),
-                            float(merge_break.sgst_amount),
-                            float(merge_break.grand_total),
+                            float(new_subtotal),
+                            float(merged_tax),
+                            float(merged_cgst),
+                            float(merged_sgst),
+                            float(merged_grand),
                             target_order_id_str,
                         )
 

@@ -1095,7 +1095,14 @@ class TableSessionService:
 
         async with get_transaction() as conn:
             cart = await conn.fetch(
-                "SELECT * FROM table_session_carts WHERE session_id = $1 FOR UPDATE",
+                """
+                SELECT c.*,
+                       i.gst_rate, i.is_tax_inclusive, i.pricing_type
+                  FROM table_session_carts c
+                  LEFT JOIN items i ON i."Item_ID" = c.item_id
+                 WHERE c.session_id = $1
+                 FOR UPDATE OF c
+                """,
                 session_id,
             )
             if not cart:
@@ -1124,12 +1131,26 @@ class TableSessionService:
                     "total_price": float(ci["total_price"]),
                     "addons": ci.get("addons") or [],
                     "notes": ci.get("notes"),
+                    "_gst_src": {
+                        "gst_rate":         ci.get("gst_rate"),
+                        "is_tax_inclusive": ci.get("is_tax_inclusive"),
+                        "pricing_type":     ci.get("pricing_type"),
+                    },
+                    "_line_total": line_total,
                 })
 
-            # Tax — single source of truth (tax_engine.compute_tax)
-            from app.services.tax_engine import get_tax_config, compute_tax
+            # Tax — item-level engine (handles MRP/inclusive items).
+            from app.services.tax_engine import (
+                get_tax_config, compute_cart_tax, _line_from_item_row,
+            )
             tax_cfg = await get_tax_config(conn, restaurant_id)
-            breakdown = compute_tax(subtotal, config=tax_cfg)
+            tax_lines = [
+                _line_from_item_row(oi["_gst_src"], oi["_line_total"], store=tax_cfg)
+                for oi in order_items_data
+            ]
+            breakdown = compute_cart_tax(tax_lines, config=tax_cfg)
+            for oi, lr in zip(order_items_data, breakdown.lines):
+                oi["_tax"] = lr
             tax_amount = breakdown.total_tax
             total_amount = breakdown.grand_total
 
@@ -1171,17 +1192,27 @@ class TableSessionService:
             # INSERT order_items — RETURNING id for kitchen linkage
             order_item_rows = []
             for oi in order_items_data:
+                line_tax = oi.get("_tax")
                 oi_row = await conn.fetchrow(
                     """
                     INSERT INTO order_items (
                         order_id, item_id, variant_id, item_name,
-                        quantity, unit_price, total_price, addons, notes, user_id
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+                        quantity, unit_price, total_price, addons, notes, user_id,
+                        gst_enabled, gst_inclusive, gst_rate,
+                        taxable_amount, cgst_amount, sgst_amount
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10,
+                              $11, $12, $13, $14, $15, $16)
                     RETURNING id
                     """,
                     order_id, oi["item_id"], oi.get("variant_id"), oi["item_name"],
                     oi["quantity"], oi["unit_price"], oi["total_price"],
                     json.dumps(oi.get("addons") or []), oi.get("notes"), owner_id,
+                    bool(line_tax.gst_enabled)   if line_tax else False,
+                    bool(line_tax.gst_inclusive) if line_tax else False,
+                    float(line_tax.gst_rate)        if line_tax else 0.0,
+                    float(line_tax.taxable_amount)  if line_tax else float(oi["total_price"]),
+                    float(line_tax.cgst_amount)     if line_tax else 0.0,
+                    float(line_tax.sgst_amount)     if line_tax else 0.0,
                 )
                 order_item_rows.append({
                     "order_item_id": oi_row["id"],
@@ -1313,7 +1344,14 @@ class TableSessionService:
 
         async with get_transaction() as conn:
             cart = await conn.fetch(
-                "SELECT * FROM table_session_carts WHERE session_id = $1 FOR UPDATE",
+                """
+                SELECT c.*,
+                       i.gst_rate, i.is_tax_inclusive, i.pricing_type
+                  FROM table_session_carts c
+                  LEFT JOIN items i ON i."Item_ID" = c.item_id
+                 WHERE c.session_id = $1
+                 FOR UPDATE OF c
+                """,
                 sid,
             )
             if not cart:
@@ -1340,11 +1378,25 @@ class TableSessionService:
                     "total_price": float(ci["total_price"]),
                     "addons": ci.get("addons") or [],
                     "notes": ci.get("notes"),
+                    "_gst_src": {
+                        "gst_rate":         ci.get("gst_rate"),
+                        "is_tax_inclusive": ci.get("is_tax_inclusive"),
+                        "pricing_type":     ci.get("pricing_type"),
+                    },
+                    "_line_total": line_total,
                 })
 
-            from app.services.tax_engine import get_tax_config, compute_tax
+            from app.services.tax_engine import (
+                get_tax_config, compute_cart_tax, _line_from_item_row,
+            )
             tax_cfg = await get_tax_config(conn, restaurant_id)
-            breakdown = compute_tax(subtotal, config=tax_cfg)
+            tax_lines = [
+                _line_from_item_row(oi["_gst_src"], oi["_line_total"], store=tax_cfg)
+                for oi in order_items_data
+            ]
+            breakdown = compute_cart_tax(tax_lines, config=tax_cfg)
+            for oi, lr in zip(order_items_data, breakdown.lines):
+                oi["_tax"] = lr
             tax_amount = breakdown.total_tax
             total_amount = breakdown.grand_total
 
@@ -1394,17 +1446,27 @@ class TableSessionService:
 
             order_item_rows = []
             for oi in order_items_data:
+                line_tax = oi.get("_tax")
                 oi_row = await conn.fetchrow(
                     """
                     INSERT INTO order_items (
                         order_id, item_id, variant_id, item_name,
-                        quantity, unit_price, total_price, addons, notes, user_id
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+                        quantity, unit_price, total_price, addons, notes, user_id,
+                        gst_enabled, gst_inclusive, gst_rate,
+                        taxable_amount, cgst_amount, sgst_amount
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10,
+                              $11, $12, $13, $14, $15, $16)
                     RETURNING id
                     """,
                     order_id, oi["item_id"], oi.get("variant_id"), oi["item_name"],
                     oi["quantity"], oi["unit_price"], oi["total_price"],
                     json.dumps(oi.get("addons") or []), oi.get("notes"), owner_id,
+                    bool(line_tax.gst_enabled)   if line_tax else False,
+                    bool(line_tax.gst_inclusive) if line_tax else False,
+                    float(line_tax.gst_rate)        if line_tax else 0.0,
+                    float(line_tax.taxable_amount)  if line_tax else float(oi["total_price"]),
+                    float(line_tax.cgst_amount)     if line_tax else 0.0,
+                    float(line_tax.sgst_amount)     if line_tax else 0.0,
                 )
                 order_item_rows.append({
                     "order_item_id": oi_row["id"],

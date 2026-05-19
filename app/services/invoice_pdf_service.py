@@ -121,7 +121,9 @@ async def render_customer_invoice(
 
         items = await conn.fetch(
             """
-            SELECT item_name, quantity, unit_price, total_price
+            SELECT item_name, quantity, unit_price, total_price,
+                   gst_enabled, gst_inclusive, gst_rate,
+                   taxable_amount, cgst_amount, sgst_amount
             FROM order_items
             WHERE order_id = $1::uuid
             ORDER BY id
@@ -130,11 +132,25 @@ async def render_customer_invoice(
         )
 
     rows_html_parts: list[str] = []
+    inclusive_subtotal = Decimal("0")
+    exclusive_subtotal = Decimal("0")
+    nongst_subtotal    = Decimal("0")
     for i, it in enumerate(items, start=1):
+        line_total = Decimal(str(it["total_price"] or 0))
+        gst_on   = bool(it["gst_enabled"])
+        incl     = bool(it["gst_inclusive"])
+        tag = ""
+        if gst_on and incl:
+            tag = " <span class='muted'>(Incl. GST)</span>"
+            inclusive_subtotal += line_total
+        elif gst_on:
+            exclusive_subtotal += line_total
+        else:
+            nongst_subtotal += line_total
         rows_html_parts.append(
             "<tr>"
             f"<td class='num'>{i}</td>"
-            f"<td>{_esc(it['item_name'])}</td>"
+            f"<td>{_esc(it['item_name'])}{tag}</td>"
             f"<td class='num'>{int(it['quantity'] or 0)}</td>"
             f"<td class='num'>{_money(it['unit_price'])}</td>"
             f"<td class='num'>{_money(it['total_price'])}</td>"
@@ -195,6 +211,31 @@ async def render_customer_invoice(
             f"<tr><td class='label'>Discount</td>"
             f"<td class='value'>- {_money(order['discount_amount'])}</td></tr>"
         )
+
+    # Per-item GST mix breakdown (M066). Only render rows where the
+    # bucket actually has items so the totals block stays compact for
+    # the common single-mode case.
+    split_parts: list[str] = []
+    if inclusive_subtotal > 0:
+        split_parts.append(
+            f"<tr><td class='label muted'>&nbsp;&nbsp;Items with GST included in price</td>"
+            f"<td class='value muted'>{_money(inclusive_subtotal)}</td></tr>"
+        )
+    if exclusive_subtotal > 0:
+        split_parts.append(
+            f"<tr><td class='label muted'>&nbsp;&nbsp;Items taxed on top</td>"
+            f"<td class='value muted'>{_money(exclusive_subtotal)}</td></tr>"
+        )
+    if nongst_subtotal > 0:
+        split_parts.append(
+            f"<tr><td class='label muted'>&nbsp;&nbsp;Non-GST items</td>"
+            f"<td class='value muted'>{_money(nongst_subtotal)}</td></tr>"
+        )
+    # Only show split when more than one bucket is in play \u2014 single-mode
+    # carts already look clean with just Subtotal + tax rows.
+    subtotal_split_html = "".join(split_parts) if sum(
+        1 for v in (inclusive_subtotal, exclusive_subtotal, nongst_subtotal) if v > 0
+    ) > 1 else ""
 
     html_doc = f"""
 <!DOCTYPE html>
@@ -261,6 +302,7 @@ async def render_customer_invoice(
 
   <table class='totals' style='margin-top: 10pt;'>
     <tr><td class='label'>Subtotal</td><td class='value'>{_money(order['subtotal'])}</td></tr>
+    {subtotal_split_html}
     {discount_html}
     {tax_rows_html}
     {round_off_html}

@@ -24,9 +24,9 @@ and safe to call inside any transaction.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from app.core.logging import get_logger
 
@@ -232,6 +232,265 @@ def compute_tax(
         grand_total=grand,
         round_off=_q(round_off),
         tax_inclusive=config.tax_inclusive,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────
+# Item-level (cart-aware) tax engine
+# ─────────────────────────────────────────────────────────────────
+#
+# Real restaurants sell a mix of:
+#   * EXCLUSIVE items  — restaurant-made food; GST is added on top
+#                        of the selling price.        tax = price * rate
+#   * INCLUSIVE items  — packaged MRP goods (Coke, Thums Up, water,
+#                        chips). The printed MRP already includes GST,
+#                        so we MUST NOT charge it again — instead we
+#                        reverse-derive the taxable portion for the
+#                        government's books.          taxable = price / (1 + rate)
+#                                                     gst     = price - taxable
+#   * NON-GST items    — items the merchant has explicitly flagged as
+#                        gst_enabled = false.         tax = 0
+#
+# ``compute_cart_tax`` processes a list of ``ItemTaxLine`` and produces
+# a ``CartTaxBreakdown`` whose totals match ``TaxBreakdown`` plus a
+# ``lines`` list for invoice / receipt rendering.
+#
+# Discount policy: discount is applied AFTER per-line tax is locked in,
+# as a flat reduction against the grand total. Per-line tax stays
+# consistent with what was printed — this also keeps inclusive (MRP)
+# prices intact and prevents "GST jumps" on partial refunds.
+
+@dataclass(frozen=True)
+class ItemTaxLine:
+    """One cart/order line as fed into ``compute_cart_tax``.
+
+    ``line_total`` is the customer-facing line subtotal:
+      * exclusive items: pre-tax (tax will be added on top)
+      * inclusive items: MRP × qty (already includes tax)
+    """
+    line_total: Decimal
+    gst_enabled: bool = True
+    gst_inclusive: bool = False
+    gst_rate: Decimal = Decimal("0")     # total %; split 50/50 into CGST/SGST
+
+
+@dataclass
+class LineTaxResult:
+    """Per-line breakdown — what the receipt prints next to each item."""
+    line_total: Decimal          # input price (unchanged)
+    gst_enabled: bool
+    gst_inclusive: bool
+    gst_rate: Decimal
+    taxable_amount: Decimal
+    cgst_amount: Decimal
+    sgst_amount: Decimal
+    total_tax: Decimal
+    final_price: Decimal         # what the customer pays for this line
+
+    def to_response(self) -> dict:
+        return {
+            "line_total":      float(self.line_total),
+            "gst_enabled":     self.gst_enabled,
+            "gst_inclusive":   self.gst_inclusive,
+            "gst_percentage":  float(self.gst_rate),
+            "taxable_amount":  float(self.taxable_amount),
+            "cgst_amount":     float(self.cgst_amount),
+            "sgst_amount":     float(self.sgst_amount),
+            "total_tax":       float(self.total_tax),
+            "final_price":     float(self.final_price),
+        }
+
+
+@dataclass
+class CartTaxBreakdown:
+    """Aggregate result of ``compute_cart_tax`` — every number the
+    bill, invoice and printed receipt need, plus the per-line list."""
+    subtotal: Decimal                 # sum of raw line_total
+    inclusive_subtotal: Decimal       # MRP items (already include GST)
+    exclusive_subtotal: Decimal       # pre-tax of GST-on-top items
+    nongst_subtotal: Decimal          # gst_enabled=false items
+    discount_amount: Decimal
+    taxable_amount: Decimal           # exclusive_taxable + inclusive_taxable
+    cgst_amount: Decimal
+    sgst_amount: Decimal
+    total_tax: Decimal
+    grand_total: Decimal
+    round_off: Decimal
+    gst_enabled: bool
+    gst_number: Optional[str]
+    gst_type: str
+    lines: list[LineTaxResult] = field(default_factory=list)
+
+    def to_response(self) -> dict:
+        return {
+            "subtotal":           float(self.subtotal),
+            "inclusive_subtotal": float(self.inclusive_subtotal),
+            "exclusive_subtotal": float(self.exclusive_subtotal),
+            "nongst_subtotal":    float(self.nongst_subtotal),
+            "discount_amount":    float(self.discount_amount),
+            "taxable_amount":     float(self.taxable_amount),
+            "gst_enabled":        self.gst_enabled,
+            "gst_number":         self.gst_number,
+            "gst_type":           self.gst_type,
+            "cgst_amount":        float(self.cgst_amount),
+            "sgst_amount":        float(self.sgst_amount),
+            "total_tax":          float(self.total_tax),
+            "grand_total":        float(self.grand_total),
+            "round_off":          float(self.round_off),
+            "lines":              [l.to_response() for l in self.lines],
+        }
+
+
+def _line_from_item_row(row: Any, line_total: Any, *, store: TaxConfig) -> ItemTaxLine:
+    """Build an ``ItemTaxLine`` from an ``items`` row + computed line_total.
+
+    Falls back to the store-level GST config when the item row is missing
+    fields (e.g. legacy items added before M058).
+    """
+    def _get(key, default=None):
+        if row is None:
+            return default
+        if isinstance(row, dict):
+            return row.get(key, default)
+        try:
+            return row[key] if key in row else default
+        except (KeyError, TypeError):
+            return default
+
+    # Per-item override of "is this item GST'd at all?"
+    # M058 doesn't have a per-item enable flag, so we infer:
+    #   gst_rate > 0  AND  store.gst_enabled  ⇒  enabled.
+    rate = _to_decimal(_get("gst_rate"), default=store.gst_percentage)
+    enabled = store.gst_enabled and rate > 0
+    inclusive = bool(_get("is_tax_inclusive", store.tax_inclusive))
+
+    return ItemTaxLine(
+        line_total=_to_decimal(line_total),
+        gst_enabled=enabled,
+        gst_inclusive=inclusive,
+        gst_rate=rate,
+    )
+
+
+def compute_cart_tax(
+    lines: Iterable[ItemTaxLine],
+    *,
+    discount: Any = 0,
+    config: TaxConfig,
+    round_to_rupee: bool = False,
+) -> CartTaxBreakdown:
+    """Compute item-level GST for a mixed cart.
+
+    Each ``ItemTaxLine`` is taxed independently using its own
+    inclusive/exclusive flag and rate. Discount is applied as a flat
+    deduction on the grand total *after* tax — see module comment.
+    """
+    line_results: list[LineTaxResult] = []
+    inclusive_sub = _ZERO
+    exclusive_sub = _ZERO
+    nongst_sub    = _ZERO
+    cgst_total    = _ZERO
+    sgst_total    = _ZERO
+    exclusive_tax = _ZERO    # tax added on top — excluded from inclusive_sub
+    taxable_total = _ZERO
+
+    store_enabled = bool(config.gst_enabled)
+
+    for line in lines:
+        amt = max(_to_decimal(line.line_total), _ZERO)
+        rate = max(_to_decimal(line.gst_rate), _ZERO)
+        if rate > _MAX_RATE:
+            rate = _MAX_RATE
+
+        enabled = bool(line.gst_enabled) and store_enabled and rate > 0
+
+        if not enabled:
+            nongst_sub += amt
+            res = LineTaxResult(
+                line_total=_q(amt), gst_enabled=False, gst_inclusive=False,
+                gst_rate=_ZERO, taxable_amount=_q(amt),
+                cgst_amount=_ZERO, sgst_amount=_ZERO, total_tax=_ZERO,
+                final_price=_q(amt),
+            )
+        elif line.gst_inclusive:
+            # GST already baked into amt — reverse-derive.
+            divisor = (Decimal("100") + rate) / Decimal("100")
+            taxable = amt / divisor if divisor != 0 else amt
+            tax = amt - taxable
+            cgst = _q(tax / 2)
+            sgst = _q(tax - cgst)        # absorb rounding remainder
+            taxable_q = _q(taxable)
+
+            inclusive_sub += amt
+            taxable_total += taxable_q
+            cgst_total += cgst
+            sgst_total += sgst
+            # NOTE: do NOT add to exclusive_tax — inclusive tax is already
+            # embedded inside amt (and therefore inside inclusive_sub).
+            res = LineTaxResult(
+                line_total=_q(amt), gst_enabled=True, gst_inclusive=True,
+                gst_rate=_q(rate), taxable_amount=taxable_q,
+                cgst_amount=cgst, sgst_amount=sgst, total_tax=_q(cgst + sgst),
+                final_price=_q(amt),         # MRP is what the customer pays
+            )
+        else:
+            # GST on top.
+            tax = amt * rate / Decimal("100")
+            cgst = _q(tax / 2)
+            sgst = _q(tax - cgst)
+            taxable_q = _q(amt)
+            final = _q(amt + cgst + sgst)
+
+            exclusive_sub += amt
+            taxable_total += taxable_q
+            cgst_total += cgst
+            sgst_total += sgst
+            exclusive_tax += (cgst + sgst)
+            res = LineTaxResult(
+                line_total=taxable_q, gst_enabled=True, gst_inclusive=False,
+                gst_rate=_q(rate), taxable_amount=taxable_q,
+                cgst_amount=cgst, sgst_amount=sgst, total_tax=_q(cgst + sgst),
+                final_price=final,
+            )
+
+        line_results.append(res)
+
+    total_tax = cgst_total + sgst_total
+    subtotal  = inclusive_sub + exclusive_sub + nongst_sub
+    # Pre-discount grand total:
+    #   * inclusive_sub already includes its own GST (MRP)
+    #   * exclusive_sub is pre-tax, so we add exclusive_tax on top
+    #   * nongst_sub is what the customer pays as-is
+    pre_discount_grand = inclusive_sub + exclusive_sub + exclusive_tax + nongst_sub
+
+    disc = max(_to_decimal(discount), _ZERO)
+    if disc > pre_discount_grand:
+        disc = pre_discount_grand
+
+    grand = _q(pre_discount_grand - disc)
+
+    round_off = _ZERO
+    if round_to_rupee:
+        rounded = grand.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        round_off = rounded - grand
+        grand = rounded
+
+    return CartTaxBreakdown(
+        subtotal=_q(subtotal),
+        inclusive_subtotal=_q(inclusive_sub),
+        exclusive_subtotal=_q(exclusive_sub),
+        nongst_subtotal=_q(nongst_sub),
+        discount_amount=_q(disc),
+        taxable_amount=_q(taxable_total),
+        cgst_amount=_q(cgst_total),
+        sgst_amount=_q(sgst_total),
+        total_tax=_q(total_tax),
+        grand_total=grand,
+        round_off=_q(round_off),
+        gst_enabled=store_enabled and (cgst_total + sgst_total) > 0,
+        gst_number=config.gst_number if store_enabled else None,
+        gst_type=config.gst_type,
+        lines=line_results,
     )
 
 

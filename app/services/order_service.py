@@ -31,7 +31,10 @@ from typing import Optional
 
 import asyncpg
 
-from app.services.tax_engine import compute_tax, get_tax_config
+from app.services.tax_engine import (
+    compute_tax, compute_cart_tax, get_tax_config,
+    _line_from_item_row,
+)
 
 # ── Background-task registry ──────────────────────────────────────────────
 # Holds strong references to fire-and-forget tasks so the event loop's GC
@@ -113,15 +116,22 @@ class OrderService:
         accepted server-side (cross-tenant pricing fraud — audit finding A3.2).
         """
         row = None
+        # GST columns (M058) pulled so compute_cart_tax can tax each line
+        # using the item's own inclusive/exclusive flag — packaged MRP
+        # goods (Coke, Thums Up) must NOT be re-taxed on top of MRP.
         if item_id:
             row = await conn.fetchrow(
-                """SELECT "Item_ID", "Item_Name", price, "Available_Status"
+                """SELECT "Item_ID", "Item_Name", price, "Available_Status",
+                          gst_rate, is_tax_inclusive, pricing_type,
+                          price_before_tax, final_price
                    FROM items WHERE "Item_ID" = $1 AND user_id = $2""",
                 item_id, user_id,
             )
         if not row and item_name:
             row = await conn.fetchrow(
-                """SELECT "Item_ID", "Item_Name", price, "Available_Status"
+                """SELECT "Item_ID", "Item_Name", price, "Available_Status",
+                          gst_rate, is_tax_inclusive, pricing_type,
+                          price_before_tax, final_price
                    FROM items WHERE "Item_Name" = $1 AND user_id = $2""",
                 item_name, user_id,
             )
@@ -392,7 +402,9 @@ class OrderService:
                 if variant_id_input:
                     row = await conn.fetchrow(
                         """
-                        SELECT iv.id, iv.name, iv.price, i."Item_ID", i."Item_Name", i."Available_Status"
+                        SELECT iv.id, iv.name, iv.price,
+                               i."Item_ID", i."Item_Name", i."Available_Status",
+                               i.gst_rate, i.is_tax_inclusive, i.pricing_type
                         FROM item_variants iv
                         JOIN items i ON i."Item_ID" = iv.item_id
                         WHERE iv.id = $1 AND iv.is_active = true
@@ -409,7 +421,9 @@ class OrderService:
                 elif variant_name:
                     row = await conn.fetchrow(
                         """
-                        SELECT iv.id, iv.name, iv.price, i."Item_ID", i."Item_Name", i."Available_Status"
+                        SELECT iv.id, iv.name, iv.price,
+                               i."Item_ID", i."Item_Name", i."Available_Status",
+                               i.gst_rate, i.is_tax_inclusive, i.pricing_type
                         FROM item_variants iv
                         JOIN items i ON i."Item_ID" = iv.item_id
                         WHERE iv.name = $1 AND i."Item_Name" = $2 AND iv.is_active = true
@@ -459,6 +473,11 @@ class OrderService:
                     "total_price": float(line_total),
                     "addons": addons or [],
                     "notes": item_notes,
+                    # Snapshot of the item's GST flags — used below to build
+                    # ItemTaxLine for compute_cart_tax and persisted onto
+                    # order_items so reprints stay byte-stable.
+                    "_gst_src": dict(row) if row is not None else None,
+                    "_line_total": line_total,
                 })
 
             # Apply coupon
@@ -468,11 +487,22 @@ class OrderService:
                     conn, coupon_id, subtotal, customer_id, tenant["user_id"]
                 )
 
-            # Tax — single source of truth (tax_engine.compute_tax)
+            # Tax — item-level engine handles mixed inclusive (MRP packaged
+            # goods) + exclusive (restaurant food) + non-GST in one cart.
             tax_cfg = await get_tax_config(conn, user.restaurant_id)
-            breakdown = compute_tax(subtotal, discount=discount_amount, config=tax_cfg)
+            tax_lines = [
+                _line_from_item_row(oi["_gst_src"], oi["_line_total"], store=tax_cfg)
+                for oi in order_items_data
+            ]
+            breakdown = compute_cart_tax(
+                tax_lines, discount=discount_amount, config=tax_cfg,
+            )
             tax_amount = breakdown.total_tax
             total_amount = breakdown.grand_total
+            # Attach the per-line tax result alongside each order_items_data
+            # row — needed for the INSERT below and for the API response.
+            for oi, line_res in zip(order_items_data, breakdown.lines):
+                oi["_tax"] = line_res
 
             # Build metadata
             metadata: dict = {}
@@ -525,15 +555,19 @@ class OrderService:
                 json.dumps(metadata),
             )
 
-            # Insert order items
+            # Insert order items (with per-line GST snapshot from M066)
             for oi in order_items_data:
                 item_id_val = oi["item_id"]
+                line_tax = oi.get("_tax")
                 await conn.execute(
                     """
                     INSERT INTO order_items (
                         order_id, item_id, variant_id, item_name,
-                        quantity, unit_price, total_price, addons, notes, user_id
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+                        quantity, unit_price, total_price, addons, notes, user_id,
+                        gst_enabled, gst_inclusive, gst_rate,
+                        taxable_amount, cgst_amount, sgst_amount
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10,
+                              $11, $12, $13, $14, $15, $16)
                     """,
                     order_id,
                     item_id_val,
@@ -545,7 +579,29 @@ class OrderService:
                     json.dumps(oi["addons"]),
                     oi["notes"],
                     tenant["user_id"],
+                    bool(line_tax.gst_enabled)   if line_tax else False,
+                    bool(line_tax.gst_inclusive) if line_tax else False,
+                    float(line_tax.gst_rate)        if line_tax else 0.0,
+                    float(line_tax.taxable_amount)  if line_tax else float(oi["total_price"]),
+                    float(line_tax.cgst_amount)     if line_tax else 0.0,
+                    float(line_tax.sgst_amount)     if line_tax else 0.0,
                 )
+
+            # Strip internal-only keys and append the per-line GST breakdown
+            # (spec §6: each item response carries gst_*, taxable_amount,
+            # cgst_amount, sgst_amount, final_price).
+            for oi in order_items_data:
+                line_tax = oi.pop("_tax", None)
+                oi.pop("_gst_src", None)
+                oi.pop("_line_total", None)
+                if line_tax is not None:
+                    oi["gst_enabled"]    = line_tax.gst_enabled
+                    oi["gst_inclusive"]  = line_tax.gst_inclusive
+                    oi["gst_percentage"] = float(line_tax.gst_rate)
+                    oi["taxable_amount"] = float(line_tax.taxable_amount)
+                    oi["cgst_amount"]    = float(line_tax.cgst_amount)
+                    oi["sgst_amount"]    = float(line_tax.sgst_amount)
+                    oi["final_price"]    = float(line_tax.final_price)
 
             # Build the full response now (within transaction, so all data is consistent)
             now_utc = datetime.now(timezone.utc).isoformat()
