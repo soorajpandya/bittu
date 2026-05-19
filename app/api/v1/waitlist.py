@@ -15,12 +15,13 @@ PUT    /waitlist/settings       — update waitlist settings
 GET    /waitlist/display/{rid}  — public display screen data
 GET    /waitlist/status/{id}    — public entry status (QR customer)
 """
+from pathlib import Path
 from typing import Optional
 from uuid import UUID
 import io
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from app.core.auth import UserContext, require_permission
@@ -31,6 +32,15 @@ from app.services.waitlist_service import WaitlistService
 router = APIRouter(prefix="/waitlist", tags=["Dine-In"])
 _svc = WaitlistService()
 _CACHE_PREFIX = "waitlist"
+
+# Brand assets shipped in backend/files/ — served via /waitlist/assets/{name}
+_ASSETS_DIR = Path(__file__).resolve().parents[3] / "files"
+_ASSET_MAP = {
+    "logo.png":            ("bittu-logo.png",       "image/png"),
+    "ding.mp3":            ("ding.mp3",             "audio/mpeg"),
+    "gilroy-light.otf":    ("Gilroy-Light.otf",     "font/otf"),
+    "gilroy-extrabold.otf":("Gilroy-ExtraBold.otf", "font/otf"),
+}
 
 
 # ── Request / Response models ─────────────────────────────────
@@ -355,6 +365,24 @@ async def push_service_worker():
                              "Service-Worker-Allowed": "/"})
 
 
+@router.get("/assets/{name}")
+async def waitlist_asset(name: str):
+    """Public: serve Bittu brand assets (logo, font, ding sound) for the QR page."""
+    entry = _ASSET_MAP.get(name.lower())
+    if not entry:
+        raise HTTPException(404, "Asset not found")
+    filename, media_type = entry
+    path = _ASSETS_DIR / filename
+    if not path.exists():
+        raise HTTPException(404, "Asset missing on server")
+    return FileResponse(
+        path,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=604800, immutable",
+                 "Access-Control-Allow-Origin": "*"},
+    )
+
+
 _PUSH_SW_JS = """// Bittu waitlist push service worker
 self.addEventListener('install', function(e){ self.skipWaiting(); });
 self.addEventListener('activate', function(e){ e.waitUntil(self.clients.claim()); });
@@ -367,8 +395,8 @@ self.addEventListener('push', function(event){
     tag: data.tag || 'bittu-waitlist',
     renotify: true,
     requireInteraction: true,
-    icon: '/api/v1/waitlist/sw-icon.png',
-    badge: '/api/v1/waitlist/sw-icon.png',
+    icon: '/api/v1/waitlist/assets/logo.png',
+    badge: '/api/v1/waitlist/assets/logo.png',
     data: data
   };
   event.waitUntil(self.registration.showNotification(title, opts));
@@ -388,81 +416,246 @@ _QR_LANDING_HTML = """<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#ED1C24" />
   <title>Join the Waitlist — __NAME__</title>
+  <link rel="icon" type="image/png" href="/api/v1/waitlist/assets/logo.png" />
+  <link rel="apple-touch-icon" href="/api/v1/waitlist/assets/logo.png" />
+  <link rel="preload" as="font" type="font/otf" href="/api/v1/waitlist/assets/gilroy-light.otf" crossorigin />
+  <link rel="preload" as="font" type="font/otf" href="/api/v1/waitlist/assets/gilroy-extrabold.otf" crossorigin />
+  <link rel="preload" as="audio" href="/api/v1/waitlist/assets/ding.mp3" />
   <style>
-    *{box-sizing:border-box}
-    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-         background:#f4f5f7;color:#1f2933;min-height:100vh;display:flex;align-items:center;
-         justify-content:center;padding:20px}
-    .card{background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,.08);
-          padding:28px;max-width:420px;width:100%}
-    h1{margin:0 0 4px;font-size:22px}
-    .sub{color:#52606d;margin:0 0 24px;font-size:14px}
-    label{display:block;font-size:13px;margin:14px 0 6px;color:#3e4c59;font-weight:600}
-    input{width:100%;padding:12px 14px;border:1px solid #cbd2d9;border-radius:10px;
-          font-size:16px;background:#fff}
-    input:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.15)}
-    .party{display:flex;align-items:center;gap:14px}
-    .party button{width:42px;height:42px;border-radius:50%;border:1px solid #cbd2d9;
-                  background:#fff;font-size:22px;cursor:pointer}
-    .party button:disabled{opacity:.4;cursor:not-allowed}
-    .party span{font-size:22px;font-weight:600;min-width:30px;text-align:center}
-    .submit{margin-top:24px;width:100%;padding:14px;background:#2563eb;color:#fff;
-            border:0;border-radius:10px;font-size:16px;font-weight:600;cursor:pointer}
-    .submit:disabled{opacity:.6;cursor:wait}
-    .error{color:#b91c1c;background:#fee2e2;padding:10px 12px;border-radius:8px;
-           font-size:14px;margin-top:14px}
+    @font-face{font-family:'Gilroy';src:url('/api/v1/waitlist/assets/gilroy-light.otf') format('opentype');
+               font-weight:300 500;font-style:normal;font-display:swap}
+    @font-face{font-family:'Gilroy';src:url('/api/v1/waitlist/assets/gilroy-extrabold.otf') format('opentype');
+               font-weight:700 900;font-style:normal;font-display:swap}
+    :root{
+      --bittu-red:#ED1C24; --bittu-red-2:#FF5A4E; --bittu-ink:#2A2D34; --bittu-ink-2:#5A6072;
+      --bittu-mist:#F5F6F8; --bittu-line:#E6E8EE; --bittu-white:#FFFFFF;
+      --bittu-shadow:0 30px 60px -20px rgba(35,40,55,.18),0 8px 18px -8px rgba(35,40,55,.08);
+      --bittu-radius:20px;
+    }
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+    html,body{margin:0;padding:0;font-family:'Gilroy','Inter',-apple-system,BlinkMacSystemFont,
+              "Segoe UI",Roboto,sans-serif;color:var(--bittu-ink);
+              background:
+                radial-gradient(1200px 600px at 100% -10%,rgba(237,28,36,.10),transparent 60%),
+                radial-gradient(900px 500px at -10% 110%,rgba(255,90,78,.08),transparent 55%),
+                linear-gradient(180deg,#FAFAFC 0%,#F2F3F7 100%);
+              min-height:100vh;-webkit-font-smoothing:antialiased;
+              text-rendering:optimizeLegibility}
+    .shell{min-height:100vh;display:flex;flex-direction:column}
+    .topbar{display:flex;align-items:center;justify-content:space-between;
+            padding:18px 22px;max-width:480px;margin:0 auto;width:100%}
+    .topbar img{height:30px;display:block}
+    .topbar .secure{font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+                    color:var(--bittu-ink-2);font-weight:600;display:flex;align-items:center;gap:6px}
+    .topbar .secure::before{content:'';width:8px;height:8px;border-radius:50%;
+                            background:#22C55E;box-shadow:0 0 0 4px rgba(34,197,94,.18)}
+    .main{flex:1;display:flex;align-items:center;justify-content:center;
+          padding:8px 18px 36px}
+    .card{background:var(--bittu-white);border-radius:var(--bittu-radius);
+          box-shadow:var(--bittu-shadow);padding:30px 26px;max-width:440px;width:100%;
+          position:relative;overflow:hidden;border:1px solid rgba(230,232,238,.6)}
+    .card::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;
+                  background:linear-gradient(90deg,var(--bittu-red),var(--bittu-red-2));}
+    .eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;
+             color:var(--bittu-red);font-weight:800;margin:6px 0 8px}
+    h1{margin:0 0 6px;font-size:28px;font-weight:800;letter-spacing:-.02em;line-height:1.15}
+    .sub{color:var(--bittu-ink-2);margin:0 0 26px;font-size:15px;font-weight:500}
+    .sub b{color:var(--bittu-ink);font-weight:700}
+    label{display:block;font-size:12px;margin:18px 0 8px;color:var(--bittu-ink);
+          font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+    .field{position:relative}
+    input{width:100%;padding:15px 16px;border:1.5px solid var(--bittu-line);
+          border-radius:14px;font-size:16px;font-weight:500;background:var(--bittu-mist);
+          color:var(--bittu-ink);font-family:inherit;transition:all .18s ease}
+    input::placeholder{color:#A5ABBA;font-weight:400}
+    input:focus{outline:none;border-color:var(--bittu-red);background:#fff;
+                box-shadow:0 0 0 4px rgba(237,28,36,.10)}
+    .party{display:flex;align-items:center;justify-content:space-between;gap:14px;
+           background:var(--bittu-mist);border:1.5px solid var(--bittu-line);
+           border-radius:14px;padding:10px 14px}
+    .party button{width:44px;height:44px;border-radius:50%;border:0;background:#fff;
+                  font-size:22px;font-weight:700;color:var(--bittu-red);cursor:pointer;
+                  box-shadow:0 2px 6px rgba(35,40,55,.08);transition:transform .12s ease,opacity .12s}
+    .party button:active{transform:scale(.92)}
+    .party button:disabled{opacity:.35;cursor:not-allowed}
+    .party .ps{display:flex;flex-direction:column;align-items:center;line-height:1}
+    .party .ps b{font-size:28px;font-weight:800;color:var(--bittu-ink);letter-spacing:-.02em}
+    .party .ps span{font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+                    color:var(--bittu-ink-2);margin-top:4px;font-weight:600}
+    .submit{margin-top:28px;width:100%;padding:16px;color:#fff;border:0;
+            border-radius:14px;font-size:16px;font-weight:800;letter-spacing:.02em;
+            cursor:pointer;font-family:inherit;
+            background:linear-gradient(135deg,var(--bittu-red) 0%,var(--bittu-red-2) 100%);
+            box-shadow:0 10px 24px -8px rgba(237,28,36,.55);transition:transform .12s,box-shadow .2s}
+    .submit:active{transform:translateY(1px)}
+    .submit:disabled{opacity:.7;cursor:wait}
+    .error{color:#B91C1C;background:#FEF2F2;border:1px solid #FECACA;
+           padding:12px 14px;border-radius:12px;font-size:14px;margin-top:14px;font-weight:600}
+    /* status view */
     .status{text-align:center}
-    .status .pos{font-size:64px;font-weight:700;color:#2563eb;line-height:1;margin:8px 0}
-    .status .eta{color:#52606d;font-size:14px}
-    .badge{display:inline-block;padding:4px 10px;border-radius:20px;font-size:12px;
-           font-weight:600;text-transform:uppercase;letter-spacing:.5px}
-    .badge.waiting{background:#e0e7ff;color:#3730a3}
-    .badge.notified{background:#dcfce7;color:#15803d}
-    .ready{margin-top:18px;padding:16px;background:#dcfce7;border-radius:10px;
-           color:#14532d;font-weight:600;text-align:center}
-    .hint{color:#9aa5b1;font-size:12px;text-align:center;margin-top:18px}
+    .status .greet{font-size:14px;color:var(--bittu-ink-2);font-weight:600;margin:0}
+    .status h1{margin:6px 0 4px}
+    .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;
+          border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.12em;
+          text-transform:uppercase;margin:8px 0 24px}
+    .pill::before{content:'';width:7px;height:7px;border-radius:50%}
+    .pill.waiting{background:#FFF4E5;color:#B45309}
+    .pill.waiting::before{background:#F59E0B;animation:pulse 2s infinite}
+    .pill.notified{background:#DCFCE7;color:#15803D}
+    .pill.notified::before{background:#22C55E}
+    .pill.seated{background:#E0E7FF;color:#3730A3}
+    .pill.seated::before{background:#6366F1}
+    .pill.skipped,.pill.cancelled{background:#FEE2E2;color:#991B1B}
+    .pill.skipped::before,.pill.cancelled::before{background:#EF4444}
+    @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,.6)}50%{box-shadow:0 0 0 6px rgba(245,158,11,0)}}
+    .pos-wrap{background:linear-gradient(135deg,#FFF5F4 0%,#FFEEEC 100%);
+              border-radius:18px;padding:26px 18px;margin:8px 0 14px;
+              border:1px solid rgba(237,28,36,.12)}
+    .pos-label{font-size:11px;letter-spacing:.18em;text-transform:uppercase;
+               color:var(--bittu-ink-2);font-weight:700;margin-bottom:4px}
+    .pos{font-size:84px;font-weight:900;line-height:1;letter-spacing:-.04em;
+         background:linear-gradient(135deg,var(--bittu-red),var(--bittu-red-2));
+         -webkit-background-clip:text;background-clip:text;color:transparent;margin:2px 0 6px}
+    .eta{color:var(--bittu-ink-2);font-size:14px;font-weight:600;margin-top:4px}
+    .eta b{color:var(--bittu-ink);font-weight:800}
+    .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px}
+    .meta-grid .cell{background:var(--bittu-mist);border-radius:12px;padding:12px 14px;text-align:left}
+    .meta-grid .cell .k{font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+                        color:var(--bittu-ink-2);font-weight:700;margin-bottom:4px}
+    .meta-grid .cell .v{font-size:16px;font-weight:800;color:var(--bittu-ink);letter-spacing:-.01em}
+    .ready{margin-top:22px;padding:20px 18px;border-radius:16px;
+           background:linear-gradient(135deg,#16A34A 0%,#22C55E 100%);
+           color:#fff;font-weight:700;text-align:center;font-size:15px;
+           box-shadow:0 16px 30px -10px rgba(34,197,94,.5);line-height:1.4;
+           animation:rdy .4s ease-out}
+    .ready.danger{background:linear-gradient(135deg,#DC2626,#EF4444);
+                  box-shadow:0 16px 30px -10px rgba(239,68,68,.4)}
+    .ready.info{background:linear-gradient(135deg,#4F46E5,#6366F1);
+                box-shadow:0 16px 30px -10px rgba(99,102,241,.4)}
+    .ready .big{font-size:22px;font-weight:900;letter-spacing:-.01em;display:block;margin-bottom:4px}
+    @keyframes rdy{from{transform:scale(.95);opacity:0}to{transform:scale(1);opacity:1}}
+    .hint{color:#9AA1B0;font-size:12px;text-align:center;margin-top:22px;font-weight:500;
+          display:flex;align-items:center;justify-content:center;gap:6px}
+    .hint .dot{width:6px;height:6px;border-radius:50%;background:#22C55E;
+               box-shadow:0 0 0 4px rgba(34,197,94,.2);animation:pulse2 1.6s infinite}
+    @keyframes pulse2{0%,100%{opacity:.7}50%{opacity:1}}
+    .footer{padding:18px 22px 26px;text-align:center;color:#A5ABBA;
+            font-size:11px;letter-spacing:.08em;font-weight:600}
+    .footer b{color:var(--bittu-ink-2);font-weight:800}
+    /* table-ready celebration overlay */
+    .celebrate{position:fixed;inset:0;background:rgba(20,83,45,.92);
+               backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;
+               z-index:50;padding:28px;animation:fade .25s ease-out}
+    .celebrate.on{display:flex}
+    .celebrate .pop{background:#fff;border-radius:24px;padding:36px 28px;max-width:380px;
+                    width:100%;text-align:center;box-shadow:0 40px 80px rgba(0,0,0,.4);
+                    animation:pop .45s cubic-bezier(.34,1.56,.64,1)}
+    .celebrate .icon{width:80px;height:80px;border-radius:50%;margin:0 auto 18px;
+                     background:linear-gradient(135deg,#22C55E,#16A34A);
+                     display:flex;align-items:center;justify-content:center;
+                     color:#fff;font-size:42px;font-weight:900;
+                     box-shadow:0 10px 30px rgba(34,197,94,.5)}
+    .celebrate h2{font-size:26px;font-weight:900;margin:0 0 6px;letter-spacing:-.02em}
+    .celebrate p{margin:0 0 22px;color:var(--bittu-ink-2);font-size:15px;font-weight:500;line-height:1.5}
+    .celebrate p b{color:var(--bittu-ink);font-weight:800}
+    .celebrate .ok{padding:14px 32px;border-radius:12px;background:var(--bittu-ink);
+                   color:#fff;border:0;font-size:15px;font-weight:800;cursor:pointer;
+                   font-family:inherit;letter-spacing:.02em}
+    @keyframes fade{from{opacity:0}to{opacity:1}}
+    @keyframes pop{0%{transform:scale(.6);opacity:0}100%{transform:scale(1);opacity:1}}
   </style>
 </head>
 <body>
-  <div class="card">
-    <div id="form-view">
-      <h1>Join the Waitlist</h1>
-      <p class="sub">at __NAME__</p>
-      <form id="f">
-        <label for="n">Your name</label>
-        <input id="n" required maxlength="100" autocomplete="name" />
-        <label for="p">Phone number</label>
-        <input id="p" required minlength="6" maxlength="20" inputmode="tel" autocomplete="tel" />
-        <label>Party size</label>
-        <div class="party">
-          <button type="button" id="minus" aria-label="decrease">−</button>
-          <span id="ps">2</span>
-          <button type="button" id="plus" aria-label="increase">+</button>
+<div class="shell">
+  <header class="topbar">
+    <img src="/api/v1/waitlist/assets/logo.png" alt="Bittu" />
+    <div class="secure">Live · Secure</div>
+  </header>
+  <main class="main">
+    <div class="card">
+      <div id="form-view">
+        <div class="eyebrow">Reserve your spot</div>
+        <h1>Join the Waitlist</h1>
+        <p class="sub">at <b>__NAME__</b></p>
+        <form id="f" autocomplete="on">
+          <label for="n">Your name</label>
+          <div class="field"><input id="n" required maxlength="100" autocomplete="name" placeholder="Full name" /></div>
+          <label for="p">Phone number</label>
+          <div class="field"><input id="p" required minlength="6" maxlength="20" inputmode="tel" autocomplete="tel" placeholder="+91 98765 43210" /></div>
+          <label>Party size</label>
+          <div class="party">
+            <button type="button" id="minus" aria-label="decrease">−</button>
+            <div class="ps"><b id="ps">2</b><span>Guests</span></div>
+            <button type="button" id="plus" aria-label="increase">+</button>
+          </div>
+          <button class="submit" id="go" type="submit">Join Queue</button>
+          <div id="err" class="error" style="display:none"></div>
+        </form>
+      </div>
+      <div id="status-view" class="status" style="display:none">
+        <p class="greet" id="hi">Welcome!</p>
+        <h1>You're in the queue</h1>
+        <div><span class="pill waiting" id="st">Waiting</span></div>
+        <div class="pos-wrap">
+          <div class="pos-label">Your position</div>
+          <div class="pos" id="pos">—</div>
+          <div class="eta" id="eta">Calculating wait time…</div>
         </div>
-        <button class="submit" id="go" type="submit">Join Queue</button>
-        <div id="err" class="error" style="display:none"></div>
-      </form>
+        <div class="meta-grid">
+          <div class="cell"><div class="k">Party</div><div class="v" id="meta-party">—</div></div>
+          <div class="cell"><div class="k">At</div><div class="v" id="meta-name">__NAME__</div></div>
+        </div>
+        <div class="ready" id="ready" style="display:none"></div>
+        <p class="hint"><span class="dot"></span> Live updates · keep this page open</p>
+      </div>
     </div>
-    <div id="status-view" class="status" style="display:none">
-      <h1 id="hi">Hi!</h1>
-      <p class="sub">at __NAME__</p>
-      <div class="pos" id="pos">—</div>
-      <div><span class="badge waiting" id="st">waiting</span></div>
-      <div class="eta" id="eta"></div>
-      <div class="ready" id="ready" style="display:none"></div>
-      <p class="hint">This page updates automatically. Keep it open.</p>
-    </div>
+  </main>
+  <footer class="footer">Powered by <b>BITTU</b> · Smart Restaurant OS</footer>
+</div>
+
+<!-- Table-ready celebration overlay -->
+<div class="celebrate" id="celebrate">
+  <div class="pop">
+    <div class="icon">✓</div>
+    <h2 id="cele-title">Your table is ready!</h2>
+    <p id="cele-body">Please head to the host stand.</p>
+    <button class="ok" id="cele-ok">Got it</button>
   </div>
+</div>
+
+<audio id="ding" src="/api/v1/waitlist/assets/ding.mp3" preload="auto"></audio>
+
 <script>
 (function(){
   var RID = "__RID__";
+  var RNAME = "__NAME__";
   var party = 2;
+  var lastStatus = null;
+  var audioUnlocked = false;
   var psEl = document.getElementById('ps');
+  var dingEl = document.getElementById('ding');
+
+  // Unlock audio + vibration on first user gesture (browsers require it)
+  function unlockAudio(){
+    if(audioUnlocked) return;
+    audioUnlocked = true;
+    try { dingEl.volume = 0; dingEl.play().then(function(){ dingEl.pause(); dingEl.currentTime=0; dingEl.volume=1; }).catch(function(){}); } catch(e){}
+  }
+  document.addEventListener('touchstart', unlockAudio, {once:true, passive:true});
+  document.addEventListener('click',      unlockAudio, {once:true});
+
+  function playDing(){
+    try { dingEl.currentTime = 0; var p = dingEl.play(); if(p && p.catch) p.catch(function(){}); } catch(e){}
+    try { if(navigator.vibrate) navigator.vibrate([220,90,220,90,260]); } catch(e){}
+  }
+
   document.getElementById('minus').onclick = function(){ if(party>1){party--;psEl.textContent=party;} };
   document.getElementById('plus').onclick  = function(){ if(party<50){party++;psEl.textContent=party;} };
   var errEl = document.getElementById('err');
   function showErr(m){ errEl.textContent = m; errEl.style.display='block'; }
+
   document.getElementById('f').addEventListener('submit', async function(e){
     e.preventDefault();
     errEl.style.display='none';
@@ -471,6 +664,7 @@ _QR_LANDING_HTML = """<!doctype html>
     if(!name || phone.length<6) return;
     var btn = document.getElementById('go');
     btn.disabled = true; btn.textContent = 'Joining…';
+    unlockAudio();
     try {
       var r = await fetch('/api/v1/waitlist/public/'+RID, {
         method:'POST',
@@ -483,47 +677,74 @@ _QR_LANDING_HTML = """<!doctype html>
         btn.disabled=false; btn.textContent='Join Queue';
         return;
       }
+      data.customer_name = data.customer_name || name;
+      data.party_size = data.party_size || party;
       localStorage.setItem('wl_'+RID, data.id);
-      showStatus(name, data);
-      startPolling(data.id, name);
+      showStatus(data);
+      startPolling(data.id);
       enablePush(data.id);
     } catch(e){
       showErr('Network error. Please try again.');
       btn.disabled=false; btn.textContent='Join Queue';
     }
   });
-  function showStatus(name, e){
+
+  function showStatus(e){
     document.getElementById('form-view').style.display='none';
     document.getElementById('status-view').style.display='block';
-    document.getElementById('hi').textContent = 'Hi '+name+'!';
-    document.getElementById('pos').textContent = '#'+e.position;
+    var nm = e.customer_name || 'there';
+    document.getElementById('hi').textContent = 'Hi '+nm+',';
+    document.getElementById('pos').textContent = (e.position!=null) ? ('#'+e.position) : '—';
+    document.getElementById('meta-party').textContent = (e.party_size||party)+' guest'+((e.party_size||party)===1?'':'s');
+    document.getElementById('meta-name').textContent = RNAME;
     var st = document.getElementById('st');
-    st.textContent = e.status; st.className = 'badge '+e.status;
+    var statusLabel = (e.status||'waiting').charAt(0).toUpperCase()+(e.status||'waiting').slice(1);
+    st.textContent = statusLabel; st.className = 'pill '+(e.status||'waiting');
     var eta = document.getElementById('eta');
-    eta.textContent = e.estimated_wait_minutes ? ('~'+e.estimated_wait_minutes+' min wait') : '';
+    if(e.status === 'waiting'){
+      eta.innerHTML = e.estimated_wait_minutes ? ('Estimated wait <b>~'+e.estimated_wait_minutes+' min</b>') : 'Calculating wait time…';
+    } else { eta.textContent = ''; }
     var ready = document.getElementById('ready');
+    ready.className = 'ready';
     if(e.status === 'notified'){
       ready.style.display='block';
-      ready.textContent = 'Your table is ready'+(e.table_number? ' — Table '+e.table_number:'')+'. Please come in!';
+      var tbl = e.table_number ? (' — Table '+e.table_number) : '';
+      ready.innerHTML = '<span class="big">Your table is ready'+tbl+'</span>Please head to the host stand.';
+      if(lastStatus !== 'notified') triggerReady(e);
     } else if(e.status === 'seated'){
-      ready.style.display='block';
-      ready.textContent = 'Enjoy your meal!';
+      ready.style.display='block'; ready.className='ready info';
+      ready.innerHTML = '<span class="big">Enjoy your meal!</span>Thank you for choosing us.';
     } else if(e.status === 'skipped' || e.status === 'cancelled'){
-      ready.style.display='block';
-      ready.style.background='#fee2e2'; ready.style.color='#7f1d1d';
-      ready.textContent = 'Your entry was '+e.status+'.';
+      ready.style.display='block'; ready.className='ready danger';
+      ready.innerHTML = '<span class="big">Entry '+e.status+'</span>Please ask the host for help.';
     } else {
       ready.style.display='none';
     }
+    lastStatus = e.status;
   }
-  function startPolling(id, name){
+
+  function triggerReady(e){
+    playDing();
+    var c = document.getElementById('celebrate');
+    var tbl = e.table_number ? ('Table '+e.table_number+' is yours.') : 'Please head to the host stand.';
+    document.getElementById('cele-title').textContent = 'Your table is ready!';
+    document.getElementById('cele-body').innerHTML = tbl+' <b>'+RNAME+'</b> is waiting for you.';
+    c.classList.add('on');
+    document.getElementById('cele-ok').onclick = function(){ c.classList.remove('on'); };
+    // Replay sound twice more for emphasis
+    setTimeout(playDing, 1400);
+    setTimeout(playDing, 2800);
+  }
+
+  function startPolling(id){
     setInterval(async function(){
       try {
         var r = await fetch('/api/v1/waitlist/status/'+id);
-        if(r.ok){ showStatus(name, await r.json()); }
+        if(r.ok){ showStatus(await r.json()); }
       } catch(e){}
-    }, 15000);
+    }, 10000);
   }
+
   // Resume if customer already joined on this device
   var existing = localStorage.getItem('wl_'+RID);
   if(existing){
@@ -532,8 +753,10 @@ _QR_LANDING_HTML = """<!doctype html>
       localStorage.removeItem('wl_'+RID); return null;
     }).then(function(d){
       if(d && (d.status==='waiting'||d.status==='notified')){
-        showStatus(d.customer_name || 'there', d);
-        startPolling(existing, d.customer_name || 'there');
+        // Don't auto-fire ding on page reload if already notified
+        lastStatus = d.status;
+        showStatus(d);
+        startPolling(existing);
         enablePush(existing);
       } else if(d){ localStorage.removeItem('wl_'+RID); }
     }).catch(function(){});
@@ -561,8 +784,8 @@ _QR_LANDING_HTML = """<!doctype html>
       var keyResp = await fetch('/api/v1/waitlist/push/vapid-key');
       if(!keyResp.ok) return;
       var keyData = await keyResp.json();
-      var existing = await reg.pushManager.getSubscription();
-      var sub = existing || await reg.pushManager.subscribe({
+      var existingSub = await reg.pushManager.getSubscription();
+      var sub = existingSub || await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlB64ToUint8Array(keyData.publicKey)
       });
