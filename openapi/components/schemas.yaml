@@ -82,6 +82,35 @@ AddEntryRequest:
   - customer_name
   - party_size
   title: AddEntryRequest
+PublicAddEntryRequest:
+  properties:
+    customer_name:
+      type: string
+      maxLength: 100
+      minLength: 1
+      title: Customer Name
+    party_size:
+      type: integer
+      maximum: 50.0
+      minimum: 1.0
+      title: Party Size
+    phone:
+      type: string
+      maxLength: 20
+      minLength: 6
+      title: Phone
+    notes:
+      anyOf:
+      - type: string
+        maxLength: 500
+      - type: 'null'
+      title: Notes
+  type: object
+  required:
+  - customer_name
+  - party_size
+  - phone
+  title: PublicAddEntryRequest
 AddToCartIn:
   properties:
     session_id:

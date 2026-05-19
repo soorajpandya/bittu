@@ -56,6 +56,11 @@ async def _close_expired_batch(limit: int = DEFAULT_BATCH_LIMIT) -> int:
     if not rows:
         return 0
 
+    from app.services.razorpay.client import (
+        RazorpayBadRequestError,
+        RazorpayAPIError,
+    )
+
     closed = 0
     for r in rows:
         qr_id = r["qr_id"]
@@ -63,19 +68,24 @@ async def _close_expired_batch(limit: int = DEFAULT_BATCH_LIMIT) -> int:
         try:
             await rzp_qr_api.close_qr(qr_id, merchant_id=merchant_id)
             ok = True
-        except Exception as exc:  # noqa: BLE001
-            # Already-closed / not-found surfaces as a 4xx. Trust the row's
-            # TTL: if we're past close_by and Razorpay rejected the close,
-            # mark local state closed anyway so we stop retrying.
-            msg = str(exc).lower()
-            if "already" in msg or "closed" in msg or "not found" in msg:
-                ok = True
-            else:
-                ok = False
-                logger.warning(
-                    "rzp_qr_cleanup_close_failed",
-                    qr_id=qr_id, merchant_id=merchant_id, error=str(exc),
-                )
+        except RazorpayBadRequestError as exc:
+            # 4xx (non-429) means Razorpay refused the close — almost always
+            # because the QR is already closed/expired/not-found on their side.
+            # The row's close_by is in the past, so retrying will never help.
+            # Mark local state closed to stop the retry storm.
+            ok = True
+            logger.info(
+                "rzp_qr_cleanup_close_4xx_treating_as_closed",
+                qr_id=qr_id, merchant_id=merchant_id,
+                status=exc.status_code, error_code=exc.error_code,
+            )
+        except (RazorpayAPIError, Exception) as exc:  # noqa: BLE001
+            # 5xx / network / transient — leave row active, will retry next tick.
+            ok = False
+            logger.warning(
+                "rzp_qr_cleanup_close_transient_failure",
+                qr_id=qr_id, merchant_id=merchant_id, error=str(exc),
+            )
 
         if not ok:
             continue

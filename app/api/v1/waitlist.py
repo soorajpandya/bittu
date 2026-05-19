@@ -60,6 +60,13 @@ class NotifyNextRequest(BaseModel):
     table_id: Optional[UUID] = None
 
 
+class PublicAddEntryRequest(BaseModel):
+    customer_name: str = Field(..., min_length=1, max_length=100)
+    party_size: int = Field(..., ge=1, le=50)
+    phone: str = Field(..., min_length=6, max_length=20)
+    notes: Optional[str] = Field(None, max_length=500)
+
+
 # ── Authenticated endpoints ──────────────────────────────────
 
 @router.post("")
@@ -205,6 +212,24 @@ async def update_settings(
 
 
 # ── Public endpoints (no auth) ───────────────────────────────
+
+@router.post("/public/{restaurant_id}")
+async def add_to_waitlist_public(restaurant_id: UUID, body: PublicAddEntryRequest):
+    """
+    Public QR self-add. No auth — rate-limited per client IP by middleware.
+    Honors per-restaurant `qr_entry_enabled` setting.
+    """
+    result = await _svc.add_entry_public(
+        restaurant_id=restaurant_id,
+        customer_name=body.customer_name,
+        party_size=body.party_size,
+        phone=body.phone,
+        notes=body.notes,
+    )
+    # Staff queue cache is tenant-scoped and has a 10s TTL; no cross-tenant
+    # invalidation needed here — staff sees the new entry within one cycle.
+    return result
+
 
 @router.get("/display/{restaurant_id}")
 async def display_screen(restaurant_id: UUID):

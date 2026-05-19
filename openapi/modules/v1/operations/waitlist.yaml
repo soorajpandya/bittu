@@ -17,8 +17,8 @@ x-module-info:
   visibility: public
   tags:
   - Waitlist
-  operationCount: 14
-  pathCount: 12
+  operationCount: 15
+  pathCount: 13
 paths:
   /api/v1/waitlist:
     post:
@@ -368,6 +368,42 @@ paths:
                 $ref: ../../../components/schemas.yaml#/HTTPValidationError
       security:
       - HTTPBearer: []
+  /api/v1/waitlist/public/{restaurant_id}:
+    post:
+      tags:
+      - Waitlist
+      summary: Add To Waitlist (Public QR)
+      description: |
+        Public QR self-add. No auth — rate-limited per client IP by middleware.
+        Honors the per-restaurant `qr_entry_enabled` setting; returns 409 when
+        the toggle is off or the phone is already on the active queue.
+      operationId: add_to_waitlist_public_api_v1_waitlist_public__restaurant_id__post
+      parameters:
+      - name: restaurant_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Restaurant Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../../../components/schemas.yaml#/PublicAddEntryRequest
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: ../../../components/schemas.yaml#/HTTPValidationError
   /api/v1/waitlist/display/{restaurant_id}:
     get:
       tags:

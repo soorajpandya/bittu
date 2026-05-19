@@ -120,6 +120,77 @@ class WaitlistService:
             "entries": [self._format_entry(r) for r in rows],
         }
 
+    # ─── Add to waitlist (public — for QR customers, no auth) ─
+
+    async def add_entry_public(
+        self,
+        restaurant_id: UUID,
+        customer_name: str,
+        party_size: int,
+        phone: str,
+        notes: Optional[str] = None,
+    ) -> dict:
+        """
+        Public QR self-add. Resolves owner from restaurant_id, requires phone,
+        and honors the per-restaurant `qr_entry_enabled` toggle.
+        """
+        async with get_connection() as conn:
+            rest = await conn.fetchrow(
+                "SELECT owner_id FROM restaurants WHERE id = $1",
+                restaurant_id,
+            )
+            if not rest:
+                raise NotFoundError("Restaurant", str(restaurant_id))
+            owner_id = rest["owner_id"]
+
+            settings = await conn.fetchrow(
+                "SELECT qr_entry_enabled FROM waitlist_settings WHERE restaurant_id = $1",
+                restaurant_id,
+            )
+            # Default is true when no settings row exists (matches _default_settings)
+            if settings and settings["qr_entry_enabled"] is False:
+                raise ConflictError("QR self-service waitlist entry is disabled for this restaurant")
+
+            # Dedupe by phone across active statuses for this restaurant
+            dup = await conn.fetchrow(
+                """SELECT id FROM waitlist_entries
+                   WHERE restaurant_id = $1 AND phone = $2
+                   AND status IN ('waiting', 'notified')""",
+                restaurant_id, phone,
+            )
+            if dup:
+                raise ConflictError(f"Customer with phone {phone} is already on the waitlist")
+
+            max_pos = await conn.fetchval(
+                """SELECT COALESCE(MAX(position), 0) FROM waitlist_entries
+                   WHERE user_id = $1 AND status IN ('waiting', 'notified')
+                   AND restaurant_id = $2""",
+                owner_id, restaurant_id,
+            )
+            position = max_pos + 1
+
+            est_minutes = await self._estimate_wait(conn, owner_id, restaurant_id, position, party_size)
+
+            row = await conn.fetchrow(
+                """INSERT INTO waitlist_entries
+                   (restaurant_id, branch_id, user_id, customer_name, phone,
+                    party_size, source, status, position, estimated_wait_minutes, notes)
+                   VALUES ($1, NULL, $2, $3, $4, $5, 'qr', 'waiting', $6, $7, $8)
+                   RETURNING *""",
+                restaurant_id, owner_id, customer_name, phone, party_size,
+                position, est_minutes, notes,
+            )
+
+            await self._log_action(
+                conn, restaurant_id, row["id"], "added",
+                {"source": "qr", "party_size": party_size}, "customer",
+            )
+
+        logger.info("waitlist_entry_added_public",
+                    id=str(row["id"]), name=customer_name, position=position,
+                    restaurant_id=str(restaurant_id))
+        return self._format_entry(row)
+
     # ─── Get single entry (public — for QR customers) ─────────
 
     async def get_entry_status(self, entry_id: UUID) -> Optional[dict]:

@@ -21,6 +21,7 @@ Date/timezone contract:
       from_date inclusive  → created_at >= 00:00 IST on from_date  (UTC)
       to_date   inclusive  → created_at <  00:00 IST on (to_date+1) (UTC)
 """
+import asyncio
 import json
 import time
 import uuid
@@ -29,6 +30,38 @@ from decimal import Decimal
 from typing import Optional
 
 import asyncpg
+
+# ── Background-task registry ──────────────────────────────────────────────
+# Holds strong references to fire-and-forget tasks so the event loop's GC
+# doesn't cancel them mid-flight. Tasks remove themselves on completion.
+_background_tasks: set[asyncio.Task] = set()
+
+
+# Per-restaurant tax-rate cache. Tax % is owner-configured and rarely
+# changes, but checkout reads it on EVERY request. Short TTL keeps the
+# staleness window small if an owner does edit the rate.
+_TAX_PCT_CACHE: dict[str, tuple[Decimal, float]] = {}
+_TAX_PCT_TTL_SEC = 60.0
+
+
+def _fire_and_forget(coro, *, name: str | None = None) -> None:
+    """Schedule a coroutine to run independently of the current request.
+
+    Used for post-commit accounting/ledger writes that are best-effort and
+    must NOT block the HTTP response. Failures are swallowed by the coro
+    itself (all callers here use the *_integration wrappers, which log and
+    never re-raise).
+    """
+    try:
+        task = asyncio.create_task(coro, name=name)
+    except RuntimeError:
+        # No running loop (e.g. test synchronous teardown); run inline.
+        # This should never happen in a real request.
+        import asyncio as _aio
+        _aio.get_event_loop().run_until_complete(coro)
+        return
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 from app.core.auth import UserContext
 from app.core.database import get_connection, get_serializable_transaction, get_transaction
@@ -522,6 +555,7 @@ class OrderService:
             # methods (razorpay/online) stay pending until the gateway webhook fires.
             payment_id = None
             payment_status_value = None
+            post_commit_payment_meta: Optional[dict] = None
             if payment_method:
                 # Normalise to the payment_method enum (cash, upi, card, wallet, online).
                 _PM_ALIASES = {
@@ -562,37 +596,21 @@ class OrderService:
                             "UPDATE orders SET status = 'Confirmed', updated_at = now() WHERE id = $1",
                             order_id,
                         )
-                        # Mirror non-gateway receipts into the immutable
-                        # merchant ledger.  Online/gateway payments stay
-                        # 'pending' here and are intentionally NOT wired.
-                        # Best-effort: never raises.
-                        from app.services.merchant_ledger_integration import (
-                            post_payment_received,
-                        )
-                        await post_payment_received(
-                            merchant_id=user.restaurant_id,
-                            payment_id=payment_id,
-                            amount=total_amount,
-                            method=pm_norm,
-                            order_id=order_id,
-                            branch_id=tenant.get("branch_id"),
-                            actor_id=user.user_id,
-                            conn=conn,
-                        )
-                        # Phase 2: also place into escrow (T+N hold).
-                        from app.services.escrow_integration import (
-                            hold_payment_in_escrow,
-                        )
-                        await hold_payment_in_escrow(
-                            merchant_id=user.restaurant_id,
-                            payment_id=payment_id,
-                            amount=total_amount,
-                            method=pm_norm,
-                            order_id=order_id,
-                            branch_id=tenant.get("branch_id"),
-                            actor_id=user.user_id,
-                            conn=conn,
-                        )
+                        # Defer merchant-ledger + escrow posts until AFTER
+                        # this transaction commits. These are best-effort
+                        # (failures logged, never re-raised) and idempotent
+                        # on payment_id, so it is safe to run them outside
+                        # the request's hot path. Saves ~20 DB round-trips
+                        # of cross-region latency from the checkout response.
+                        post_commit_payment_meta = {
+                            "merchant_id": user.restaurant_id,
+                            "payment_id": payment_id,
+                            "amount": total_amount,
+                            "method": pm_norm,
+                            "order_id": order_id,
+                            "branch_id": tenant.get("branch_id"),
+                            "actor_id": user.user_id,
+                        }
                 except Exception as exc:
                     # Don't fail checkout if the payments insert blows up — log and continue.
                     logger.warning(
@@ -645,6 +663,28 @@ class OrderService:
                 )
             # If UniqueViolationError is raised here, the entire transaction
             # (including the order INSERT) is rolled back by asyncpg automatically.
+
+        # ── Post-commit, fire-and-forget: merchant ledger + escrow hold ──
+        # Runs OUTSIDE the request transaction (and outside the response
+        # path). These calls do ~20 DB round-trips combined; with cross-
+        # region DB latency that is multiple seconds per checkout. Both
+        # *_integration helpers are best-effort with deterministic
+        # idempotency keys on payment_id, so backgrounding them is safe:
+        #   * a duplicate run is a no-op at the DB level
+        #   * a failure is logged inside the helper, never raised
+        if post_commit_payment_meta is not None:
+            from app.services.merchant_ledger_integration import (
+                post_payment_received,
+            )
+            from app.services.escrow_integration import hold_payment_in_escrow
+            _fire_and_forget(
+                post_payment_received(**post_commit_payment_meta),
+                name=f"ledger.payment_received:{post_commit_payment_meta['payment_id']}",
+            )
+            _fire_and_forget(
+                hold_payment_in_escrow(**post_commit_payment_meta),
+                name=f"escrow.hold:{post_commit_payment_meta['payment_id']}",
+            )
 
         # ── Razorpay payment-intent (online methods only) ──
         # Gateway calls MUST run OUTSIDE the serializable transaction.
@@ -1157,10 +1197,20 @@ class OrderService:
     async def _get_tax_percentage(self, conn, restaurant_id: Optional[str]) -> Decimal:
         if not restaurant_id:
             return Decimal("0")
+        # In-process TTL cache: tax_percentage is owner-configured and rarely
+        # changes, but is fetched on EVERY checkout. Without this, every
+        # checkout pays one cross-region round-trip (~140 ms today). 60 s
+        # TTL keeps the lag tolerable if an owner edits the rate.
+        cached = _TAX_PCT_CACHE.get(restaurant_id)
+        now_ts = time.monotonic()
+        if cached and now_ts - cached[1] < _TAX_PCT_TTL_SEC:
+            return cached[0]
         row = await conn.fetchrow(
             "SELECT tax_percentage FROM restaurant_settings WHERE restaurant_id = $1",
             restaurant_id,
         )
-        return Decimal(str(row["tax_percentage"])) if row else Decimal("5.0")
+        val = Decimal(str(row["tax_percentage"])) if row else Decimal("5.0")
+        _TAX_PCT_CACHE[restaurant_id] = (val, now_ts)
+        return val
 
 
