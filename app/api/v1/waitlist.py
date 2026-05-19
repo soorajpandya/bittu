@@ -130,10 +130,12 @@ async def notify_next(
     body: NotifyNextRequest = NotifyNextRequest(),
     user: UserContext = Depends(require_permission("waitlist.manage")),
 ):
-    """Find best-fit customer for available table and notify them."""
+    """Find best-fit customer for available table and notify them.
+    Falls back to notifying the next waiter without a table assignment if
+    no tables are currently free (or none are configured)."""
     result = await _svc.notify_next(user, table_id=body.table_id)
     if not result:
-        raise HTTPException(404, "No matching customer or no available table")
+        raise HTTPException(404, "No customers waiting on the queue")
     await invalidate_prefix(_CACHE_PREFIX, user)
     return result
 

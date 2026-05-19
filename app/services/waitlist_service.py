@@ -258,7 +258,7 @@ class WaitlistService:
                 )
 
             if not tables:
-                return None
+                tables = []
 
             # Get waiting entries
             w_params = [user.user_id] if not user.is_branch_user else [user.owner_id]
@@ -270,6 +270,7 @@ class WaitlistService:
             )
 
             if not waiting:
+                # Empty queue — route surfaces a clear message
                 return None
 
             # Best-fit matching: for each table, find best-fit customer
@@ -304,8 +305,12 @@ class WaitlistService:
                     if matched:
                         break
 
-            if not matched or not matched_table:
-                return None
+            # Fallback: if no table matched (none free, none configured, or every
+            # party is too big for the free tables), still notify the FIRST waiter
+            # so the merchant's "Notify Next" button always advances the queue.
+            if not matched:
+                matched = waiting[0]
+                matched_table = None
 
             # Mark as notified
             expires_at = datetime.now(timezone.utc) + timedelta(minutes=expiry_minutes)
@@ -314,21 +319,22 @@ class WaitlistService:
                    SET status = 'notified', notified_at = now(), expires_at = $1,
                        assigned_table_id = $2
                    WHERE id = $3 RETURNING *""",
-                expires_at, matched_table["id"], matched["id"],
+                expires_at, matched_table["id"] if matched_table else None, matched["id"],
             )
 
             await self._log_action(conn, user.restaurant_id, matched["id"], "notified",
-                                   {"table": matched_table["table_number"],
+                                   {"table": matched_table["table_number"] if matched_table else None,
                                     "expires_at": expires_at.isoformat()},
                                    user.user_id)
 
         logger.info("waitlist_notified",
                      entry_id=str(matched["id"]),
-                     table=matched_table["table_number"],
+                     table=matched_table["table_number"] if matched_table else None,
                      party_size=matched["party_size"])
 
         result = self._format_entry(row)
-        result["assigned_table_number"] = matched_table["table_number"]
+        result["assigned_table_number"] = matched_table["table_number"] if matched_table else None
+        await _broadcast_waitlist("waitlist.updated", user.restaurant_id, result)
         return result
 
     # ─── Seat customer ─────────────────────────────────────────
