@@ -339,8 +339,19 @@ class WaitlistService:
 
     # ─── Seat customer ─────────────────────────────────────────
 
-    async def seat_customer(self, user: UserContext, entry_id: UUID) -> dict:
-        """Mark customer as seated and update table status."""
+    async def seat_customer(
+        self,
+        user: UserContext,
+        entry_id: UUID,
+        table_id: Optional[str] = None,
+        guest_count: Optional[int] = None,
+    ) -> dict:
+        """Mark customer as seated, flip table to running, and open a dine-in session.
+
+        ``table_id`` overrides any previously assigned table (e.g. when staff
+        seats directly without going through notify-next). If neither is set,
+        only the waitlist row is updated.
+        """
         clause, params = tenant_where_clause(user)
         params.append(entry_id)
 
@@ -354,32 +365,80 @@ class WaitlistService:
             if not entry:
                 raise NotFoundError("Waitlist entry", str(entry_id))
 
-            # Update entry
-            row = await conn.fetchrow(
-                """UPDATE waitlist_entries
-                   SET status = 'seated', seated_at = now()
-                   WHERE id = $1 RETURNING *""",
-                entry_id,
+            effective_table_id = table_id or (
+                str(entry["assigned_table_id"]) if entry["assigned_table_id"] else None
             )
 
-            # Mark table as occupied if assigned
-            if entry["assigned_table_id"]:
-                await conn.execute(
-                    """UPDATE restaurant_tables
-                       SET status = 'running', is_occupied = true, occupied_since = now()
-                       WHERE id = $1""",
-                    entry["assigned_table_id"],
-                )
+            row = await conn.fetchrow(
+                """UPDATE waitlist_entries
+                   SET status = 'seated', seated_at = now(),
+                       assigned_table_id = COALESCE($2::uuid, assigned_table_id)
+                   WHERE id = $1 RETURNING *""",
+                entry_id, effective_table_id,
+            )
 
             await self._log_action(conn, user.restaurant_id, entry_id, "seated",
-                                   {"table_id": str(entry["assigned_table_id"]) if entry["assigned_table_id"] else None},
+                                   {"table_id": effective_table_id},
                                    user.user_id)
 
             # Recalculate positions for remaining waiting entries
             await self._reposition(conn, entry["user_id"], entry["restaurant_id"])
 
-        logger.info("waitlist_seated", entry_id=str(entry_id))
-        return self._format_entry(row)
+        # Open a dine-in table session so the Table Orders screen lists it.
+        # Done outside the waitlist tx because start_session takes its own
+        # distributed lock + serializable transaction.
+        session_info = None
+        if effective_table_id:
+            try:
+                from app.services.table_service import TableSessionService
+                from app.core.exceptions import ConflictError
+                guests = guest_count or int(entry["party_size"] or 1)
+                try:
+                    session_info = await TableSessionService().start_session(
+                        user=user, table_id=effective_table_id, guest_count=guests,
+                    )
+                except ConflictError:
+                    # Table already has an active session (e.g. customer
+                    # scanned QR first). Just ensure it shows as occupied.
+                    await self._force_table_occupied(effective_table_id, user)
+                    session_info = {"already_active": True}
+            except Exception as exc:
+                # Fall back to a plain occupied flip so the table at least
+                # turns yellow on the floor map even if session creation fails.
+                logger.error("waitlist_seat_session_open_failed",
+                             entry_id=str(entry_id), table_id=effective_table_id,
+                             error=str(exc))
+                await self._force_table_occupied(effective_table_id, user)
+
+        logger.info("waitlist_seated", entry_id=str(entry_id),
+                    table_id=effective_table_id,
+                    session_opened=bool(session_info))
+        result = self._format_entry(row)
+        if session_info and isinstance(session_info, dict):
+            result["session_token"] = session_info.get("session_token")
+            result["session_id"] = session_info.get("session_id")
+        await _broadcast_waitlist("waitlist.updated", user.restaurant_id, result)
+        return result
+
+    async def _force_table_occupied(self, table_id: str, user: UserContext) -> None:
+        """Best-effort table status flip used when session creation is unavailable."""
+        try:
+            async with get_connection() as conn:
+                await conn.execute(
+                    """UPDATE restaurant_tables
+                       SET status = 'running', is_occupied = true,
+                           occupied_since = COALESCE(occupied_since, now())
+                       WHERE id = $1""",
+                    table_id,
+                )
+            try:
+                from app.core.redis import cache_delete
+                owner = user.owner_id if user.is_branch_user else user.user_id
+                await cache_delete(f"tables_list:{owner}")
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.error("force_table_occupied_failed", table_id=table_id, error=str(exc))
 
     # ─── Skip customer ─────────────────────────────────────────
 

@@ -161,13 +161,23 @@ async def expire_check(
     return {"expired": expired}
 
 
+class SeatRequest(BaseModel):
+    table_id: Optional[UUID] = None
+    guest_count: Optional[int] = Field(None, ge=1, le=50)
+
+
 @router.post("/{entry_id}/seat")
 async def seat_customer(
     entry_id: UUID,
+    body: Optional[SeatRequest] = None,
     user: UserContext = Depends(require_permission("waitlist.manage")),
 ):
-    """Seat a waitlisted customer."""
-    result = await _svc.seat_customer(user, entry_id)
+    """Seat a waitlisted customer. Optionally pass table_id to assign a table
+    on the fly (when caller skipped notify-next). Also opens a dine-in session
+    so the table appears as occupied on the Table Orders screen."""
+    table_id = str(body.table_id) if body and body.table_id else None
+    guest_count = body.guest_count if body and body.guest_count else None
+    result = await _svc.seat_customer(user, entry_id, table_id=table_id, guest_count=guest_count)
     await invalidate_prefix(_CACHE_PREFIX, user)
     return result
 
