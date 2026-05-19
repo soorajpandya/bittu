@@ -31,17 +31,12 @@ from typing import Optional
 
 import asyncpg
 
+from app.services.tax_engine import compute_tax, get_tax_config
+
 # ── Background-task registry ──────────────────────────────────────────────
 # Holds strong references to fire-and-forget tasks so the event loop's GC
 # doesn't cancel them mid-flight. Tasks remove themselves on completion.
 _background_tasks: set[asyncio.Task] = set()
-
-
-# Per-restaurant tax-rate cache. Tax % is owner-configured and rarely
-# changes, but checkout reads it on EVERY request. Short TTL keeps the
-# staleness window small if an owner does edit the rate.
-_TAX_PCT_CACHE: dict[str, tuple[Decimal, float]] = {}
-_TAX_PCT_TTL_SEC = 60.0
 
 
 def _fire_and_forget(coro, *, name: str | None = None) -> None:
@@ -473,10 +468,11 @@ class OrderService:
                     conn, coupon_id, subtotal, customer_id, tenant["user_id"]
                 )
 
-            # Tax
-            tax_pct = await self._get_tax_percentage(conn, user.restaurant_id)
-            tax_amount = (subtotal - discount_amount) * tax_pct / 100
-            total_amount = subtotal - discount_amount + tax_amount
+            # Tax — single source of truth (tax_engine.compute_tax)
+            tax_cfg = await get_tax_config(conn, user.restaurant_id)
+            breakdown = compute_tax(subtotal, discount=discount_amount, config=tax_cfg)
+            tax_amount = breakdown.total_tax
+            total_amount = breakdown.grand_total
 
             # Build metadata
             metadata: dict = {}
@@ -489,18 +485,20 @@ class OrderService:
             # Short human-readable order number (8-char prefix of UUID, uppercase)
             order_number = order_id[:8].upper()
             metadata["order_number"] = order_number
+            metadata["tax"] = breakdown.to_response()
 
             await conn.execute(
                 """
                 INSERT INTO orders (
                     id, user_id, branch_id, restaurant_id, customer_id,
-                    source, subtotal, tax_amount, discount_amount, total_amount,
+                    source, subtotal, tax_amount, cgst_amount, sgst_amount,
+                    gst_number, discount_amount, total_amount, round_off,
                     status, table_number, delivery_address, delivery_phone,
                     coupon_id, notes, items, metadata
                 ) VALUES (
                     $1, $2, $3, $4, $5, $6::order_source,
-                    $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-                    $17::jsonb, $18::jsonb
+                    $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+                    $21::jsonb, $22::jsonb
                 )
                 """,
                 order_id,
@@ -509,10 +507,14 @@ class OrderService:
                 user.restaurant_id,
                 customer_id,
                 source,
-                float(subtotal),
+                float(breakdown.subtotal),
                 float(tax_amount),
-                float(discount_amount),
+                float(breakdown.cgst_amount),
+                float(breakdown.sgst_amount),
+                breakdown.gst_number,
+                float(breakdown.discount_amount),
                 float(total_amount),
+                float(breakdown.round_off),
                 OrderStatus.PENDING.value,
                 table_number,
                 delivery_address,
@@ -1195,22 +1197,14 @@ class OrderService:
         return min(discount, subtotal)  # Never exceed subtotal
 
     async def _get_tax_percentage(self, conn, restaurant_id: Optional[str]) -> Decimal:
-        if not restaurant_id:
+        """Back-compat shim — returns the total GST % from the new engine.
+
+        New code should call ``tax_engine.get_tax_config`` + ``compute_tax``
+        directly so the CGST / SGST split is preserved on the order row.
+        """
+        cfg = await get_tax_config(conn, restaurant_id)
+        if not cfg.gst_enabled:
             return Decimal("0")
-        # In-process TTL cache: tax_percentage is owner-configured and rarely
-        # changes, but is fetched on EVERY checkout. Without this, every
-        # checkout pays one cross-region round-trip (~140 ms today). 60 s
-        # TTL keeps the lag tolerable if an owner edits the rate.
-        cached = _TAX_PCT_CACHE.get(restaurant_id)
-        now_ts = time.monotonic()
-        if cached and now_ts - cached[1] < _TAX_PCT_TTL_SEC:
-            return cached[0]
-        row = await conn.fetchrow(
-            "SELECT tax_percentage FROM restaurant_settings WHERE restaurant_id = $1",
-            restaurant_id,
-        )
-        val = Decimal(str(row["tax_percentage"])) if row else Decimal("5.0")
-        _TAX_PCT_CACHE[restaurant_id] = (val, now_ts)
-        return val
+        return cfg.cgst_percentage + cfg.sgst_percentage
 
 

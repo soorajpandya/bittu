@@ -642,14 +642,12 @@ class DineInSessionService:
                             "notes": ci.get("notes"),
                         })
 
-                    # Tax
-                    tax_row = await conn.fetchrow(
-                        "SELECT tax_percentage FROM restaurant_settings WHERE user_id = $1",
-                        owner_id,
-                    )
-                    tax_pct = Decimal(str(tax_row["tax_percentage"])) if tax_row and tax_row["tax_percentage"] else Decimal("0")
-                    tax_amount = subtotal * tax_pct / 100
-                    total_amount = subtotal + tax_amount
+                    # Tax — single source of truth (tax_engine.compute_tax)
+                    from app.services.tax_engine import get_tax_config, compute_tax
+                    tax_cfg = await get_tax_config(conn, restaurant_id)
+                    breakdown = compute_tax(subtotal, config=tax_cfg)
+                    tax_amount = breakdown.total_tax
+                    total_amount = breakdown.grand_total
 
                     # ── Reuse ACTIVE order or create new ──
                     active_order_id = session.get("active_order_id")
@@ -674,24 +672,30 @@ class DineInSessionService:
                             """
                             INSERT INTO orders (
                                 id, user_id, branch_id, restaurant_id, customer_id,
-                                source, subtotal, tax_amount, discount_amount, total_amount,
+                                source, subtotal, tax_amount, cgst_amount, sgst_amount,
+                                gst_number, discount_amount, total_amount, round_off,
                                 status, table_number, delivery_phone,
                                 notes, items, metadata
                             ) VALUES (
                                 $1, $2, $3, $4, NULL, 'qr_table'::order_source,
-                                $5, $6, 0, $7, 'Queued', $8, $9,
-                                $10, '[]'::jsonb, $11::jsonb
+                                $5, $6, $7, $8, $9, 0, $10, $11, 'Queued', $12, $13,
+                                $14, '[]'::jsonb, $15::jsonb
                             )
                             """,
                             order_id, owner_id,
                             str(session.get("branch_id")) if session.get("branch_id") else None,
-                            restaurant_id, float(subtotal), float(tax_amount), float(total_amount),
+                            restaurant_id,
+                            float(breakdown.subtotal), float(tax_amount),
+                            float(breakdown.cgst_amount), float(breakdown.sgst_amount),
+                            breakdown.gst_number,
+                            float(total_amount), float(breakdown.round_off),
                             table_number, customer_phone, notes,
                             json.dumps({
                                 "customer_name": customer_name,
                                 "device_id": device_id,
                                 "session_id": sid,
                                 "payment_method": payment_method,
+                                "tax": breakdown.to_response(),
                             }),
                         )
 
@@ -713,17 +717,27 @@ class DineInSessionService:
                             order_id, sid,
                         )
                     else:
-                        # Append: update order totals
+                        # Append: update order totals (recompute via tax_engine
+                        # to keep CGST/SGST splits canonical).
+                        from app.services.tax_engine import get_tax_config, compute_tax
+                        append_cfg = await get_tax_config(conn, restaurant_id)
+                        append_break = compute_tax(subtotal, config=append_cfg)
                         await conn.execute(
                             """
                             UPDATE orders
-                            SET subtotal = subtotal + $1,
-                                tax_amount = tax_amount + $2,
-                                total_amount = total_amount + $3,
-                                updated_at = now()
-                            WHERE id = $4
+                            SET subtotal     = subtotal     + $1,
+                                tax_amount   = tax_amount   + $2,
+                                cgst_amount  = cgst_amount  + $3,
+                                sgst_amount  = sgst_amount  + $4,
+                                total_amount = total_amount + $5,
+                                updated_at   = now()
+                            WHERE id = $6
                             """,
-                            float(subtotal), float(tax_amount), float(total_amount),
+                            float(append_break.subtotal),
+                            float(append_break.total_tax),
+                            float(append_break.cgst_amount),
+                            float(append_break.sgst_amount),
+                            float(append_break.grand_total),
                             order_id,
                         )
 
@@ -1004,7 +1018,8 @@ class DineInSessionService:
                             target_order_id_str, source_order_id_str,
                         )
 
-                        # Recalculate target order totals
+                        # Recalculate target order totals via tax_engine so the
+                        # CGST/SGST split stays canonical after a merge.
                         totals = await conn.fetchrow(
                             """
                             SELECT COALESCE(SUM(total_price), 0) AS subtotal
@@ -1013,22 +1028,24 @@ class DineInSessionService:
                             target_order_id_str,
                         )
                         new_subtotal = Decimal(str(totals["subtotal"]))
-                        tax_row = await conn.fetchrow(
-                            "SELECT tax_percentage FROM restaurant_settings WHERE user_id = $1",
-                            source["user_id"],
-                        )
-                        tax_pct = Decimal(str(tax_row["tax_percentage"])) if tax_row and tax_row["tax_percentage"] else Decimal("0")
-                        new_tax = new_subtotal * tax_pct / 100
-                        new_total = new_subtotal + new_tax
+                        from app.services.tax_engine import get_tax_config, compute_tax
+                        merge_cfg = await get_tax_config(conn, source.get("restaurant_id"))
+                        merge_break = compute_tax(new_subtotal, config=merge_cfg)
 
                         await conn.execute(
                             """
-                            UPDATE orders SET subtotal = $1, tax_amount = $2, total_amount = $3,
+                            UPDATE orders SET subtotal = $1, tax_amount = $2,
+                                   cgst_amount = $3, sgst_amount = $4,
+                                   total_amount = $5,
                                    metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{merged}', 'true'::jsonb),
                                    updated_at = now()
-                            WHERE id = $4
+                            WHERE id = $6
                             """,
-                            float(new_subtotal), float(new_tax), float(new_total),
+                            float(merge_break.subtotal),
+                            float(merge_break.total_tax),
+                            float(merge_break.cgst_amount),
+                            float(merge_break.sgst_amount),
+                            float(merge_break.grand_total),
                             target_order_id_str,
                         )
 

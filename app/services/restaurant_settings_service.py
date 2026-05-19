@@ -14,6 +14,9 @@ _ALLOWED_COLUMNS = {
     "auto_accept_orders", "enable_qr_ordering", "enable_delivery",
     "enable_dine_in", "enable_takeaway", "printer_config", "theme_config",
     "enable_led_display", "led_display_url", "enable_dual_screen", "dual_screen_url",
+    # M065 — GST configuration
+    "gst_enabled", "gst_type", "gst_number",
+    "gst_percentage", "cgst_percentage", "sgst_percentage", "tax_inclusive",
 }
 
 
@@ -62,6 +65,8 @@ class RestaurantSettingsService:
                     *vals,
                 )
             else:
+                # M065: include GST columns so first-time creates persist them.
+                gst_pct = data.get("gst_percentage", data.get("tax_percentage", 5))
                 row = await conn.fetchrow(
                     """
                     INSERT INTO restaurant_settings (
@@ -69,13 +74,16 @@ class RestaurantSettingsService:
                         receipt_header, receipt_footer, auto_accept_orders,
                         enable_qr_ordering, enable_delivery, enable_dine_in, enable_takeaway,
                         printer_config, theme_config,
-                        enable_led_display, led_display_url, enable_dual_screen, dual_screen_url
-                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+                        enable_led_display, led_display_url, enable_dual_screen, dual_screen_url,
+                        gst_enabled, gst_type, gst_number,
+                        gst_percentage, cgst_percentage, sgst_percentage, tax_inclusive
+                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
+                              $18,$19,$20,$21,$22,$23,$24)
                     RETURNING *
                     """,
                     uid,
                     user.restaurant_id,
-                    data.get("tax_percentage", 0),
+                    data.get("tax_percentage", gst_pct),
                     data.get("currency", "INR"),
                     data.get("receipt_header"),
                     data.get("receipt_footer"),
@@ -90,6 +98,13 @@ class RestaurantSettingsService:
                     data.get("led_display_url"),
                     data.get("enable_dual_screen", False),
                     data.get("dual_screen_url"),
+                    data.get("gst_enabled", True),
+                    data.get("gst_type", "GST"),
+                    data.get("gst_number"),
+                    gst_pct,
+                    data.get("cgst_percentage", float(gst_pct) / 2 if gst_pct else 2.5),
+                    data.get("sgst_percentage", float(gst_pct) / 2 if gst_pct else 2.5),
+                    data.get("tax_inclusive", False),
                 )
         logger.info("restaurant_settings_saved", user_id=uid)
         return dict(row)

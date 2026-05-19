@@ -1126,14 +1126,12 @@ class TableSessionService:
                     "notes": ci.get("notes"),
                 })
 
-            # Tax
-            tax_row = await conn.fetchrow(
-                "SELECT tax_percentage FROM restaurant_settings WHERE user_id = $1",
-                owner_id,
-            )
-            tax_pct = Decimal(str(tax_row["tax_percentage"])) if tax_row and tax_row["tax_percentage"] else Decimal("0")
-            tax_amount = subtotal * tax_pct / 100
-            total_amount = subtotal + tax_amount
+            # Tax — single source of truth (tax_engine.compute_tax)
+            from app.services.tax_engine import get_tax_config, compute_tax
+            tax_cfg = await get_tax_config(conn, restaurant_id)
+            breakdown = compute_tax(subtotal, config=tax_cfg)
+            tax_amount = breakdown.total_tax
+            total_amount = breakdown.grand_total
 
             order_id = str(uuid.uuid4())
 
@@ -1142,18 +1140,23 @@ class TableSessionService:
                 """
                 INSERT INTO orders (
                     id, user_id, branch_id, restaurant_id, customer_id,
-                    source, subtotal, tax_amount, discount_amount, total_amount,
+                    source, subtotal, tax_amount, cgst_amount, sgst_amount,
+                    gst_number, discount_amount, total_amount, round_off,
                     status, table_number, delivery_address, delivery_phone,
                     coupon_id, notes, items, metadata
                 ) VALUES (
                     $1, $2, $3, $4, NULL, 'qr_table'::order_source,
-                    $5, $6, 0, $7, 'Queued', $8, NULL, $9,
-                    NULL, $10, $11::jsonb, $12::jsonb
+                    $5, $6, $7, $8, $9, 0, $10, $11, 'Queued', $12, NULL, $13,
+                    NULL, $14, $15::jsonb, $16::jsonb
                 )
                 """,
                 order_id, owner_id,
                 str(session.get("branch_id")) if session.get("branch_id") else None,
-                restaurant_id, float(subtotal), float(tax_amount), float(total_amount),
+                restaurant_id,
+                float(breakdown.subtotal), float(tax_amount),
+                float(breakdown.cgst_amount), float(breakdown.sgst_amount),
+                breakdown.gst_number,
+                float(total_amount), float(breakdown.round_off),
                 table_number, customer_phone, notes,
                 json.dumps([]),
                 json.dumps({
@@ -1161,6 +1164,7 @@ class TableSessionService:
                     "device_id": device_id,
                     "session_id": session_id,
                     "payment_method": payment_method,
+                    "tax": breakdown.to_response(),
                 }),
             )
 
@@ -1338,13 +1342,11 @@ class TableSessionService:
                     "notes": ci.get("notes"),
                 })
 
-            tax_row = await conn.fetchrow(
-                "SELECT tax_percentage FROM restaurant_settings WHERE user_id = $1",
-                owner_id,
-            )
-            tax_pct = Decimal(str(tax_row["tax_percentage"])) if tax_row and tax_row["tax_percentage"] else Decimal("0")
-            tax_amount = subtotal * tax_pct / 100
-            total_amount = subtotal + tax_amount
+            from app.services.tax_engine import get_tax_config, compute_tax
+            tax_cfg = await get_tax_config(conn, restaurant_id)
+            breakdown = compute_tax(subtotal, config=tax_cfg)
+            tax_amount = breakdown.total_tax
+            total_amount = breakdown.grand_total
 
             order_id = str(uuid.uuid4())
 
@@ -1352,18 +1354,23 @@ class TableSessionService:
                 """
                 INSERT INTO orders (
                     id, user_id, branch_id, restaurant_id, customer_id,
-                    source, subtotal, tax_amount, discount_amount, total_amount,
+                    source, subtotal, tax_amount, cgst_amount, sgst_amount,
+                    gst_number, discount_amount, total_amount, round_off,
                     status, table_number, delivery_address, delivery_phone,
                     coupon_id, notes, items, metadata
                 ) VALUES (
                     $1, $2, $3, $4, NULL, 'qr_table'::order_source,
-                    $5, $6, 0, $7, 'Queued', $8, NULL, $9,
-                    NULL, $10, $11::jsonb, $12::jsonb
+                    $5, $6, $7, $8, $9, 0, $10, $11, 'Queued', $12, NULL, $13,
+                    NULL, $14, $15::jsonb, $16::jsonb
                 )
                 """,
                 order_id, owner_id,
                 str(session.get("branch_id")) if session.get("branch_id") else None,
-                restaurant_id, float(subtotal), float(tax_amount), float(total_amount),
+                restaurant_id,
+                float(breakdown.subtotal), float(tax_amount),
+                float(breakdown.cgst_amount), float(breakdown.sgst_amount),
+                breakdown.gst_number,
+                float(total_amount), float(breakdown.round_off),
                 table_number, customer_phone, notes,
                 json.dumps([]),
                 json.dumps({

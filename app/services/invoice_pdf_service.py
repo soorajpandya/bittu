@@ -90,6 +90,10 @@ async def render_customer_invoice(
                    o.created_at,
                    o.subtotal,
                    o.tax_amount,
+                   o.cgst_amount,
+                   o.sgst_amount,
+                   o.gst_number                   AS order_gst_number,
+                   o.round_off,
                    o.discount_amount,
                    o.total_amount,
                    o.table_number,
@@ -150,6 +154,48 @@ async def render_customer_invoice(
     issued_on = (order["created_at"].date()
                  if order["created_at"] else date.today()).isoformat()
 
+    # ── Tax-row rendering ────────────────────────────────────────
+    # Show CGST + SGST split when the order was billed with GST.
+    # When GST was disabled at billing time, omit the tax rows entirely.
+    cgst_amt = order["cgst_amount"] or Decimal("0")
+    sgst_amt = order["sgst_amount"] or Decimal("0")
+    tax_amt  = order["tax_amount"]  or Decimal("0")
+    taxable  = (order["subtotal"] or Decimal("0")) - (order["discount_amount"] or Decimal("0"))
+
+    def _pct(amount: Decimal) -> str:
+        if not amount or not taxable:
+            return ""
+        return f"{(Decimal(str(amount)) / Decimal(str(taxable)) * 100).quantize(Decimal('0.01'))}%"
+
+    tax_rows_html = ""
+    if cgst_amt or sgst_amt:
+        tax_rows_html = (
+            f"<tr><td class='label'>CGST {_pct(cgst_amt)}</td>"
+            f"<td class='value'>{_money(cgst_amt)}</td></tr>"
+            f"<tr><td class='label'>SGST {_pct(sgst_amt)}</td>"
+            f"<td class='value'>{_money(sgst_amt)}</td></tr>"
+        )
+    elif tax_amt:
+        # Legacy row (pre-M065) without CGST/SGST split persisted.
+        tax_rows_html = (
+            f"<tr><td class='label'>Tax (GST)</td>"
+            f"<td class='value'>{_money(tax_amt)}</td></tr>"
+        )
+
+    round_off_html = ""
+    if order["round_off"] and Decimal(str(order["round_off"])) != 0:
+        round_off_html = (
+            f"<tr><td class='label'>Round off</td>"
+            f"<td class='value'>{_money(order['round_off'])}</td></tr>"
+        )
+
+    discount_html = ""
+    if order["discount_amount"] and Decimal(str(order["discount_amount"])) > 0:
+        discount_html = (
+            f"<tr><td class='label'>Discount</td>"
+            f"<td class='value'>- {_money(order['discount_amount'])}</td></tr>"
+        )
+
     html_doc = f"""
 <!DOCTYPE html>
 <html><head><meta charset='utf-8'/>
@@ -178,7 +224,7 @@ async def render_customer_invoice(
       &nbsp;|&nbsp; Email: {_esc(order['merchant_email'])}
     </div>
     <div class='muted'>
-      GSTIN: {_esc(order['merchant_gstin'] or 'N/A')}
+      GSTIN: {_esc(order['order_gst_number'] or order['merchant_gstin'] or 'N/A')}
       &nbsp;|&nbsp; FSSAI: {_esc(order['merchant_fssai'] or 'N/A')}
     </div>
   </div>
@@ -215,8 +261,9 @@ async def render_customer_invoice(
 
   <table class='totals' style='margin-top: 10pt;'>
     <tr><td class='label'>Subtotal</td><td class='value'>{_money(order['subtotal'])}</td></tr>
-    <tr><td class='label'>Discount</td><td class='value'>- {_money(order['discount_amount'])}</td></tr>
-    <tr><td class='label'>Tax (GST)</td><td class='value'>{_money(order['tax_amount'])}</td></tr>
+    {discount_html}
+    {tax_rows_html}
+    {round_off_html}
     <tr class='grand'><td class='label'>Grand Total</td><td class='value'>{_money(order['total_amount'])}</td></tr>
   </table>
 
