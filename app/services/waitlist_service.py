@@ -15,8 +15,22 @@ from app.core.database import get_connection
 from app.core.tenant import tenant_where_clause, tenant_insert_fields
 from app.core.auth import UserContext
 from app.core.exceptions import NotFoundError, ConflictError
+from app.core.events import DomainEvent, emit_and_publish
 
 logger = structlog.get_logger(__name__)
+
+
+async def _broadcast_waitlist(event_type: str, restaurant_id, entry: dict) -> None:
+    """Fire a waitlist domain event so WS subscribers update instantly.
+    Failures are swallowed — never break the HTTP request because of pub/sub."""
+    try:
+        await emit_and_publish(DomainEvent(
+            event_type=event_type,
+            payload=entry,
+            restaurant_id=str(restaurant_id) if restaurant_id else None,
+        ))
+    except Exception:
+        logger.exception("waitlist_event_publish_failed", event_type=event_type)
 
 
 class WaitlistService:
@@ -75,7 +89,9 @@ class WaitlistService:
                                    tenant["user_id"] if source == "staff" else "customer")
 
         logger.info("waitlist_entry_added", id=str(row["id"]), name=customer_name, position=position)
-        return self._format_entry(row)
+        entry = self._format_entry(row)
+        await _broadcast_waitlist("waitlist.created", user.restaurant_id, entry)
+        return entry
 
     # ─── Get active queue ──────────────────────────────────────
 
@@ -189,7 +205,9 @@ class WaitlistService:
         logger.info("waitlist_entry_added_public",
                     id=str(row["id"]), name=customer_name, position=position,
                     restaurant_id=str(restaurant_id))
-        return self._format_entry(row)
+        entry = self._format_entry(row)
+        await _broadcast_waitlist("waitlist.created", restaurant_id, entry)
+        return entry
 
     # ─── Get single entry (public — for QR customers) ─────────
 
