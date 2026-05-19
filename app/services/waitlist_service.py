@@ -356,14 +356,40 @@ class WaitlistService:
         params.append(entry_id)
 
         async with get_connection() as conn:
+            # Look up the entry regardless of status so we can replay an
+            # idempotent success when the same seat call is retried (double-tap
+            # in the UI, network retry, etc.) instead of returning a 404/409.
             entry = await conn.fetchrow(
                 f"""SELECT * FROM waitlist_entries
-                    WHERE {clause} AND id = ${len(params)}
-                    AND status IN ('waiting', 'notified')""",
+                    WHERE {clause} AND id = ${len(params)}""",
                 *params,
             )
             if not entry:
                 raise NotFoundError("Waitlist entry", str(entry_id))
+
+            # Idempotent replay: entry already seated.
+            if entry["status"] == "seated":
+                existing_tid = str(entry["assigned_table_id"]) if entry["assigned_table_id"] else None
+                requested_tid = table_id or existing_tid
+                # Same table (or caller didn't pin one) → replay success.
+                if existing_tid and (not table_id or table_id == existing_tid):
+                    logger.info("waitlist_seat_replay", entry_id=str(entry_id),
+                                table_id=existing_tid)
+                    result = self._format_entry(entry)
+                    # Ensure the table is still marked occupied (in case it
+                    # was manually freed). Best-effort, no error if it fails.
+                    await self._force_table_occupied(existing_tid, user)
+                    return result
+                # Already seated at a DIFFERENT table than the caller asked for.
+                raise ConflictError(
+                    f"Waitlist entry already seated at table {existing_tid}"
+                )
+
+            if entry["status"] not in ("waiting", "notified"):
+                # cancelled / no_show / etc. — not a seatable state.
+                raise ConflictError(
+                    f"Cannot seat entry in status '{entry['status']}'"
+                )
 
             effective_table_id = table_id or (
                 str(entry["assigned_table_id"]) if entry["assigned_table_id"] else None
