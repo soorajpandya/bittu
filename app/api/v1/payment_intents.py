@@ -123,43 +123,26 @@ async def _read_intent_row(conn, merchant_id, order_id):
     )
 
 
-async def _pull_through_from_razorpay(
+async def _dispatch_payments(
     *,
-    merchant_id: str,
+    payments: list,
     internal_order_id: str,
     razorpay_order_id: str,
 ) -> bool:
-    """
-    Best-effort: pull the latest payments for this Razorpay order and feed
-    any captured/authorized/failed payment into the webhook dispatcher so
-    the local mirror catches up. Returns True if at least one event was
-    dispatched (meaning the next DB read should show a fresher state).
+    """Feed each interesting payment through the webhook dispatcher.
 
-    Safe to call repeatedly — the dispatcher is idempotent on (event,
-    razorpay_payment_id).
+    Idempotent w.r.t. (event, razorpay_payment_id) at the dispatcher level.
+    For QR-driven payments we patch `order_id` onto the entity so the
+    captured handler can resolve merchant context the same way it does
+    for direct-order payments.
     """
-    from app.services.razorpay.orders import fetch_order_payments
     from app.services.razorpay.webhook_dispatcher import (
         dispatch_event as rzp_dispatch_event,
     )
 
-    try:
-        resp = await fetch_order_payments(
-            razorpay_order_id, merchant_id=str(merchant_id),
-        )
-    except Exception as exc:  # network / 5xx / auth — swallow & try later
-        logger.warning(
-            "rzp_intent_pullthrough_fetch_failed",
-            order_id=internal_order_id,
-            razorpay_order_id=razorpay_order_id,
-            error=str(exc)[:200],
-        )
-        return False
-
-    items = resp.get("items") or []
     dispatched = False
     # Process oldest first so authorized→captured ordering is preserved.
-    for pay in sorted(items, key=lambda p: p.get("created_at") or 0):
+    for pay in sorted(payments or [], key=lambda p: p.get("created_at") or 0):
         pay_status = (pay.get("status") or "").lower()
         event_name = {
             "captured": "payment.captured",
@@ -168,6 +151,12 @@ async def _pull_through_from_razorpay(
         }.get(pay_status)
         if not event_name:
             continue
+        pay = dict(pay)
+        # QR payments arrive without `order_id` — graft it on so the
+        # captured pipeline can resolve our internal order via the
+        # existing rzp_orders index.
+        if not pay.get("order_id") and razorpay_order_id:
+            pay["order_id"] = razorpay_order_id
         envelope = {
             "event": event_name,
             "account_id": pay.get("account_id"),
@@ -187,6 +176,75 @@ async def _pull_through_from_razorpay(
                 razorpay_payment_id=pay.get("id"),
                 event=event_name,
             )
+    return dispatched
+
+
+async def _pull_through_from_razorpay(
+    *,
+    merchant_id: str,
+    internal_order_id: str,
+    razorpay_order_id: str,
+    qr_id: Optional[str] = None,
+) -> bool:
+    """
+    Best-effort: pull the latest payments from Razorpay and feed them
+    through the webhook dispatcher so the local mirror catches up.
+
+    Tries two sources:
+      1. ``GET /v1/orders/{id}/payments`` — populated for non-QR flows
+         (cards, netbanking, links, standard checkout).
+      2. ``GET /v1/payments/qr_codes/{qr_id}/payments`` — UPI-QR payments
+         are NOT linked to the order on Razorpay's side; they're only
+         visible via the QR code endpoint. This is THE source of truth
+         for our POS flow.
+
+    Returns True if at least one event was dispatched (meaning the next
+    DB read should show a fresher state).
+    """
+    from app.services.razorpay.orders import fetch_order_payments
+    from app.services.razorpay.qr_codes import fetch_qr_payments
+
+    dispatched = False
+
+    # Source 1: order payments (cheap; usually empty for QR flow).
+    try:
+        resp = await fetch_order_payments(
+            razorpay_order_id, merchant_id=str(merchant_id),
+        )
+        if await _dispatch_payments(
+            payments=resp.get("items") or [],
+            internal_order_id=internal_order_id,
+            razorpay_order_id=razorpay_order_id,
+        ):
+            dispatched = True
+    except Exception as exc:
+        logger.warning(
+            "rzp_intent_pullthrough_order_fetch_failed",
+            order_id=internal_order_id,
+            razorpay_order_id=razorpay_order_id,
+            error=str(exc)[:200],
+        )
+
+    # Source 2: QR payments — primary source for UPI-QR flow.
+    if qr_id:
+        try:
+            qr_resp = await fetch_qr_payments(
+                qr_id, merchant_id=str(merchant_id),
+            )
+            if await _dispatch_payments(
+                payments=qr_resp.get("items") or [],
+                internal_order_id=internal_order_id,
+                razorpay_order_id=razorpay_order_id,
+            ):
+                dispatched = True
+        except Exception as exc:
+            logger.warning(
+                "rzp_intent_pullthrough_qr_fetch_failed",
+                order_id=internal_order_id,
+                qr_id=qr_id,
+                error=str(exc)[:200],
+            )
+
     return dispatched
 
 
@@ -265,6 +323,7 @@ async def get_intent(
                 merchant_id=str(user.restaurant_id),
                 internal_order_id=order_id,
                 razorpay_order_id=row["razorpay_order_id"],
+                qr_id=row["qr_id"],
             )
             if dispatched:
                 # Re-read so the response reflects what we just synced.
