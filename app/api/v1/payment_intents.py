@@ -12,9 +12,10 @@ to the caller's tenant.
 """
 from __future__ import annotations
 
+import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel
 
 from app.core.auth import UserContext, require_permission
@@ -23,6 +24,15 @@ from app.core.logging import get_logger
 
 router = APIRouter(prefix="/payment-intents", tags=["Payments"])
 logger = get_logger(__name__)
+
+# In-process throttle: per internal_order_id → monotonic timestamp of last
+# opportunistic Razorpay pull. Bounded; never grows past ~5k entries because
+# closed orders stop polling. Process-local is fine — even with 4 workers
+# each one will at worst pull once per window.
+_LAST_PULLTHROUGH_AT: dict[str, float] = {}
+_PULLTHROUGH_MIN_INTERVAL_S = 5.0   # don't hit Razorpay more than 1×/5s/order
+_PULLTHROUGH_MIN_AGE_S = 8.0        # wait 8s after order creation before first pull
+_FORCE_REFRESH_AFTER_S = 25.0       # tell FE to show "taking longer than usual" UI
 
 
 # ── response models ──────────────────────────────────────────────────────
@@ -43,6 +53,17 @@ class IntentOut(BaseModel):
     qr_close_by: Optional[str] = None
     payment_status: Optional[str] = None
     razorpay_payment_id: Optional[str] = None
+    # ─ Polling hints for clients (Flutter POS) ─
+    # `next_poll_after_ms` — recommended delay before next GET.
+    # `should_force_refresh` — true after ~25s of pending state; FE should
+    # show a "taking longer than usual / try again" affordance.
+    # `seconds_since_created` — wall-clock age of the rzp_orders row.
+    # `is_terminal` — true when no further state change is expected
+    # (captured / failed / cancelled / refunded). FE should stop polling.
+    next_poll_after_ms: int = 2000
+    should_force_refresh: bool = False
+    seconds_since_created: int = 0
+    is_terminal: bool = False
 
 
 class QrOut(BaseModel):
@@ -60,6 +81,139 @@ class QrOut(BaseModel):
 # ── endpoints ────────────────────────────────────────────────────────────
 
 
+_TERMINAL_PAYMENT_STATUSES = {"captured", "failed", "refunded", "cancelled"}
+_PENDING_PAYMENT_STATUSES = {None, "initiated", "pending", "created", "authorized"}
+
+
+async def _read_intent_row(conn, merchant_id, order_id):
+    return await conn.fetchrow(
+        """
+        SELECT
+            o.internal_order_id::text       AS internal_order_id,
+            o.razorpay_order_id,
+            o.amount_paise,
+            o.amount_paid_paise,
+            o.amount_due_paise,
+            o.currency,
+            o.status::text                  AS status,
+            o.created_at                    AS rzp_order_created_at,
+            q.qr_id,
+            q.image_url,
+            q.image_content,
+            q.status::text                  AS qr_status,
+            q.close_by,
+            p.status::text                  AS payment_status,
+            p.razorpay_payment_id
+        FROM rzp_orders o
+        LEFT JOIN rzp_qr_order_links l
+               ON l.rzp_order_uuid = o.id
+              AND l.is_primary = TRUE
+        LEFT JOIN rzp_qr_codes q
+               ON q.qr_id = l.qr_id
+        LEFT JOIN payments p
+               ON p.order_id = o.internal_order_id
+              AND p.restaurant_id = o.merchant_id
+        WHERE o.merchant_id = $1::uuid
+          AND o.internal_order_id = $2::uuid
+        ORDER BY o.created_at DESC
+        LIMIT 1
+        """,
+        merchant_id,
+        order_id,
+    )
+
+
+async def _pull_through_from_razorpay(
+    *,
+    merchant_id: str,
+    internal_order_id: str,
+    razorpay_order_id: str,
+) -> bool:
+    """
+    Best-effort: pull the latest payments for this Razorpay order and feed
+    any captured/authorized/failed payment into the webhook dispatcher so
+    the local mirror catches up. Returns True if at least one event was
+    dispatched (meaning the next DB read should show a fresher state).
+
+    Safe to call repeatedly — the dispatcher is idempotent on (event,
+    razorpay_payment_id).
+    """
+    from app.services.razorpay.orders import fetch_order_payments
+    from app.services.razorpay.webhook_dispatcher import (
+        dispatch_event as rzp_dispatch_event,
+    )
+
+    try:
+        resp = await fetch_order_payments(
+            razorpay_order_id, merchant_id=str(merchant_id),
+        )
+    except Exception as exc:  # network / 5xx / auth — swallow & try later
+        logger.warning(
+            "rzp_intent_pullthrough_fetch_failed",
+            order_id=internal_order_id,
+            razorpay_order_id=razorpay_order_id,
+            error=str(exc)[:200],
+        )
+        return False
+
+    items = resp.get("items") or []
+    dispatched = False
+    # Process oldest first so authorized→captured ordering is preserved.
+    for pay in sorted(items, key=lambda p: p.get("created_at") or 0):
+        pay_status = (pay.get("status") or "").lower()
+        event_name = {
+            "captured": "payment.captured",
+            "authorized": "payment.authorized",
+            "failed": "payment.failed",
+        }.get(pay_status)
+        if not event_name:
+            continue
+        envelope = {
+            "event": event_name,
+            "account_id": pay.get("account_id"),
+            "contains": ["payment"],
+            "payload": {"payment": {"entity": pay}},
+            "created_at": pay.get("created_at"),
+        }
+        try:
+            await rzp_dispatch_event(
+                event=event_name, envelope=envelope, signature=None,
+            )
+            dispatched = True
+        except Exception:
+            logger.exception(
+                "rzp_intent_pullthrough_dispatch_failed",
+                order_id=internal_order_id,
+                razorpay_payment_id=pay.get("id"),
+                event=event_name,
+            )
+    return dispatched
+
+
+def _decorate_intent_hints(out: IntentOut, *, created_at) -> IntentOut:
+    """Attach polling hints + terminality based on current state + age."""
+    age_s = 0
+    if created_at is not None:
+        try:
+            age_s = max(0, int(time.time() - created_at.timestamp()))
+        except Exception:
+            age_s = 0
+    is_terminal = (out.payment_status or "") in _TERMINAL_PAYMENT_STATUSES
+    if is_terminal:
+        next_ms = 0
+    elif age_s < 10:
+        next_ms = 1500
+    elif age_s < 30:
+        next_ms = 2500
+    else:
+        next_ms = 5000
+    out.next_poll_after_ms = next_ms
+    out.should_force_refresh = (not is_terminal) and age_s >= _FORCE_REFRESH_AFTER_S
+    out.seconds_since_created = age_s
+    out.is_terminal = is_terminal
+    return out
+
+
 @router.get(
     "/{order_id}",
     response_model=IntentOut,
@@ -67,43 +221,19 @@ class QrOut(BaseModel):
 )
 async def get_intent(
     order_id: str = Path(..., description="Internal order UUID"),
+    force_sync: bool = Query(
+        False,
+        description=(
+            "If true, the backend pulls the live order/payment state from "
+            "Razorpay before responding. Use sparingly (manual refresh "
+            "button) — the endpoint also self-heals automatically every "
+            "~5s while the payment is pending."
+        ),
+    ),
     user: UserContext = Depends(require_permission("razorpay.orders.read")),
 ):
     async with get_service_connection() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT
-                o.internal_order_id::text       AS internal_order_id,
-                o.razorpay_order_id,
-                o.amount_paise,
-                o.amount_paid_paise,
-                o.amount_due_paise,
-                o.currency,
-                o.status::text                  AS status,
-                q.qr_id,
-                q.image_url,
-                q.image_content,
-                q.status::text                  AS qr_status,
-                q.close_by,
-                p.status::text                  AS payment_status,
-                p.razorpay_payment_id
-            FROM rzp_orders o
-            LEFT JOIN rzp_qr_order_links l
-                   ON l.rzp_order_uuid = o.id
-                  AND l.is_primary = TRUE
-            LEFT JOIN rzp_qr_codes q
-                   ON q.qr_id = l.qr_id
-            LEFT JOIN payments p
-                   ON p.order_id = o.internal_order_id
-                  AND p.restaurant_id = o.merchant_id
-            WHERE o.merchant_id = $1::uuid
-              AND o.internal_order_id = $2::uuid
-            ORDER BY o.created_at DESC
-            LIMIT 1
-            """,
-            user.restaurant_id,
-            order_id,
-        )
+        row = await _read_intent_row(conn, user.restaurant_id, order_id)
 
     if row is None:
         raise HTTPException(
@@ -111,7 +241,44 @@ async def get_intent(
             detail="payment intent not found for this order",
         )
 
-    return IntentOut(
+    # Opportunistic pull-through: if the payment isn't terminal and the
+    # order has been alive long enough (or the caller asked for it), ask
+    # Razorpay for the truth. This is the safety net for missed webhooks.
+    needs_pull = force_sync or (
+        (row["payment_status"] in _PENDING_PAYMENT_STATUSES)
+    )
+    if needs_pull:
+        created_at = row["rzp_order_created_at"]
+        age_s = 0
+        if created_at is not None:
+            try:
+                age_s = time.time() - created_at.timestamp()
+            except Exception:
+                age_s = 0.0
+        last = _LAST_PULLTHROUGH_AT.get(order_id, 0.0)
+        now = time.monotonic()
+        old_enough = force_sync or age_s >= _PULLTHROUGH_MIN_AGE_S
+        cooled_down = force_sync or (now - last) >= _PULLTHROUGH_MIN_INTERVAL_S
+        if old_enough and cooled_down:
+            _LAST_PULLTHROUGH_AT[order_id] = now
+            dispatched = await _pull_through_from_razorpay(
+                merchant_id=str(user.restaurant_id),
+                internal_order_id=order_id,
+                razorpay_order_id=row["razorpay_order_id"],
+            )
+            if dispatched:
+                # Re-read so the response reflects what we just synced.
+                async with get_service_connection() as conn:
+                    row = await _read_intent_row(
+                        conn, user.restaurant_id, order_id,
+                    )
+                if row is None:  # extremely unlikely race
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="payment intent not found for this order",
+                    )
+
+    out = IntentOut(
         internal_order_id=row["internal_order_id"],
         razorpay_order_id=row["razorpay_order_id"],
         amount_paise=int(row["amount_paise"]),
@@ -127,6 +294,7 @@ async def get_intent(
         payment_status=row["payment_status"],
         razorpay_payment_id=row["razorpay_payment_id"],
     )
+    return _decorate_intent_hints(out, created_at=row["rzp_order_created_at"])
 
 
 @router.get(
