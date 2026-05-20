@@ -174,3 +174,245 @@ async def reverse_transfer(
         idempotency_key=idempotency_key,
         merchant_id=merchant_id,
     )
+
+
+# ── Raw passthroughs (Razorpay Route Postman parity) ─────────────────────
+#
+# These helpers forward the request body / query params as-is to Razorpay.
+# They intentionally do NOT reshape payloads so callers can match Razorpay
+# docs verbatim. Auth + merchant key resolution still goes through the
+# shared RazorpayClient (basic auth with key_id/key_secret).
+
+
+async def create_order_with_transfers(
+    *,
+    body: Mapping[str, Any],
+    idempotency_key: Optional[str] = None,
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """POST /v1/orders — body includes `transfers` array (Route)."""
+    client = await get_razorpay_client()
+    return await client.post(
+        "/v1/orders",
+        operation="route.order.create_with_transfers",
+        json_body=dict(body),
+        idempotency_key=idempotency_key,
+        merchant_id=merchant_id,
+    )
+
+
+async def create_direct_transfer(
+    *,
+    body: Mapping[str, Any],
+    idempotency_key: Optional[str] = None,
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """POST /v1/transfers — direct transfer to a linked account."""
+    client = await get_razorpay_client()
+    return await client.post(
+        "/v1/transfers",
+        operation="route.transfers.direct",
+        json_body=dict(body),
+        idempotency_key=idempotency_key,
+        merchant_id=merchant_id,
+    )
+
+
+async def fetch_transfers_for_payment(
+    payment_id: str,
+    *,
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """GET /v1/payments/{payment_id}/transfers."""
+    client = await get_razorpay_client()
+    return await client.get(
+        f"/v1/payments/{payment_id}/transfers",
+        operation="route.transfers.for_payment",
+        merchant_id=merchant_id,
+    )
+
+
+async def fetch_transfers_for_order(
+    order_id: str,
+    *,
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """GET /v1/orders/{order_id}/transfers."""
+    client = await get_razorpay_client()
+    return await client.get(
+        f"/v1/orders/{order_id}/transfers",
+        operation="route.transfers.for_order",
+        merchant_id=merchant_id,
+    )
+
+
+async def fetch_transfer_with_settlement(
+    transfer_id: str,
+    *,
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """GET /v1/transfers/{id}?expand[]=recipient_settlement."""
+    client = await get_razorpay_client()
+    return await client.get(
+        f"/v1/transfers/{transfer_id}",
+        operation="route.transfers.settlement_details",
+        params={"expand[]": "recipient_settlement"},
+        merchant_id=merchant_id,
+    )
+
+
+async def fetch_payments_for_linked_account(
+    account_id: str,
+    *,
+    count: int = 25,
+    skip: int = 0,
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """GET /v1/payments under X-Razorpay-Account header (Route)."""
+    client = await get_razorpay_client()
+    return await client.get(
+        "/v1/payments",
+        operation="route.la.payments",
+        params={"count": count, "skip": skip},
+        merchant_id=merchant_id,
+        account_id=account_id,
+    )
+
+
+async def fetch_reversals_for_transfer(
+    transfer_id: str,
+    *,
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """GET /v1/transfers/{transfer_id}/reversals."""
+    client = await get_razorpay_client()
+    return await client.get(
+        f"/v1/transfers/{transfer_id}/reversals",
+        operation="route.transfers.reversals.list",
+        merchant_id=merchant_id,
+    )
+
+
+async def modify_transfer(
+    transfer_id: str,
+    *,
+    body: Mapping[str, Any],
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """PATCH /v1/transfers/{transfer_id} — modify settlement hold."""
+    client = await get_razorpay_client()
+    return await client.patch(
+        f"/v1/transfers/{transfer_id}",
+        operation="route.transfers.modify",
+        json_body=dict(body),
+        merchant_id=merchant_id,
+    )
+
+
+async def refund_payment(
+    payment_id: str,
+    *,
+    body: Mapping[str, Any],
+    idempotency_key: Optional[str] = None,
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """POST /v1/payments/{payment_id}/refund — supports reverse_all=1."""
+    client = await get_razorpay_client()
+    return await client.post(
+        f"/v1/payments/{payment_id}/refund",
+        operation="route.payments.refund",
+        json_body=dict(body),
+        idempotency_key=idempotency_key,
+        merchant_id=merchant_id,
+    )
+
+
+# ── Stakeholders (v2) ────────────────────────────────────────────────────
+
+
+async def create_stakeholder(
+    account_id: str,
+    *,
+    body: Mapping[str, Any],
+    idempotency_key: Optional[str] = None,
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """POST /v2/accounts/{account_id}/stakeholders."""
+    client = await get_razorpay_client()
+    return await client.post(
+        f"/v2/accounts/{account_id}/stakeholders",
+        operation="route.stakeholder.create",
+        json_body=dict(body),
+        idempotency_key=idempotency_key,
+        merchant_id=merchant_id,
+    )
+
+
+async def update_stakeholder(
+    account_id: str,
+    stakeholder_id: str,
+    *,
+    body: Mapping[str, Any],
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """PATCH /v2/accounts/{account_id}/stakeholders/{stakeholder_id}."""
+    client = await get_razorpay_client()
+    return await client.patch(
+        f"/v2/accounts/{account_id}/stakeholders/{stakeholder_id}",
+        operation="route.stakeholder.update",
+        json_body=dict(body),
+        merchant_id=merchant_id,
+    )
+
+
+# ── Product configuration (v2) ───────────────────────────────────────────
+
+
+async def request_product_configuration(
+    account_id: str,
+    *,
+    body: Mapping[str, Any],
+    idempotency_key: Optional[str] = None,
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """POST /v2/accounts/{account_id}/products."""
+    client = await get_razorpay_client()
+    return await client.post(
+        f"/v2/accounts/{account_id}/products",
+        operation="route.product.request",
+        json_body=dict(body),
+        idempotency_key=idempotency_key,
+        merchant_id=merchant_id,
+    )
+
+
+async def update_product_configuration(
+    account_id: str,
+    product_id: str,
+    *,
+    body: Mapping[str, Any],
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """PATCH /v2/accounts/{account_id}/products/{product_id}."""
+    client = await get_razorpay_client()
+    return await client.patch(
+        f"/v2/accounts/{account_id}/products/{product_id}",
+        operation="route.product.update",
+        json_body=dict(body),
+        merchant_id=merchant_id,
+    )
+
+
+async def fetch_product_configuration(
+    account_id: str,
+    product_id: str,
+    *,
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """GET /v2/accounts/{account_id}/products/{product_id}."""
+    client = await get_razorpay_client()
+    return await client.get(
+        f"/v2/accounts/{account_id}/products/{product_id}",
+        operation="route.product.fetch",
+        merchant_id=merchant_id,
+    )

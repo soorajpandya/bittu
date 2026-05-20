@@ -113,6 +113,9 @@ router.include_router(_rzp_settlements.router)
 # ── Razorpay Route — linked accounts + transfers (Phase 7 deep integration) ──
 from app.api.v1 import rzp_route as _rzp_route
 router.include_router(_rzp_route.router)
+# ── Razorpay Route — raw passthrough endpoints (Postman parity) ──
+from app.api.v1 import rzp_route_raw as _rzp_route_raw
+router.include_router(_rzp_route_raw.router)
 # ── Razorpay Smart Collect — virtual accounts + inbound credits (Phase 8) ──
 from app.api.v1 import rzp_smart_collect as _rzp_smart_collect
 router.include_router(_rzp_smart_collect.router)
