@@ -29,9 +29,14 @@ logger = get_logger(__name__)
 # opportunistic Razorpay pull. Bounded; never grows past ~5k entries because
 # closed orders stop polling. Process-local is fine — even with 4 workers
 # each one will at worst pull once per window.
+#
+# LATENCY TUNING (2026-05): tightened from 8s/5s → 0s/1.2s so the first FE
+# poll fires a pull-through immediately and subsequent polls aren't starved.
+# Per-order cooldown of 1.2s keeps us under Razorpay's rate ceiling while
+# matching a 2s FE poll cadence (≤1 outbound call per poll).
 _LAST_PULLTHROUGH_AT: dict[str, float] = {}
-_PULLTHROUGH_MIN_INTERVAL_S = 5.0   # don't hit Razorpay more than 1×/5s/order
-_PULLTHROUGH_MIN_AGE_S = 8.0        # wait 8s after order creation before first pull
+_PULLTHROUGH_MIN_INTERVAL_S = 1.2   # cooldown between live pulls per order
+_PULLTHROUGH_MIN_AGE_S = 0.0        # no warm-up — pull on the very first poll
 _FORCE_REFRESH_AFTER_S = 25.0       # tell FE to show "taking longer than usual" UI
 
 
@@ -206,24 +211,28 @@ async def _pull_through_from_razorpay(
 
     dispatched = False
 
-    # Source 1: order payments (cheap; usually empty for QR flow).
-    try:
-        resp = await fetch_order_payments(
-            razorpay_order_id, merchant_id=str(merchant_id),
-        )
-        if await _dispatch_payments(
-            payments=resp.get("items") or [],
-            internal_order_id=internal_order_id,
-            razorpay_order_id=razorpay_order_id,
-        ):
-            dispatched = True
-    except Exception as exc:
-        logger.warning(
-            "rzp_intent_pullthrough_order_fetch_failed",
-            order_id=internal_order_id,
-            razorpay_order_id=razorpay_order_id,
-            error=str(exc)[:200],
-        )
+    # Source 1: order payments — ONLY useful for non-QR flows (cards,
+    # netbanking, links, standard checkout). For QR/UPI it is always
+    # empty and costs ~300-700ms per call, so we skip it whenever a
+    # qr_id is present. The QR source below is authoritative.
+    if not qr_id:
+        try:
+            resp = await fetch_order_payments(
+                razorpay_order_id, merchant_id=str(merchant_id),
+            )
+            if await _dispatch_payments(
+                payments=resp.get("items") or [],
+                internal_order_id=internal_order_id,
+                razorpay_order_id=razorpay_order_id,
+            ):
+                dispatched = True
+        except Exception as exc:
+            logger.warning(
+                "rzp_intent_pullthrough_order_fetch_failed",
+                order_id=internal_order_id,
+                razorpay_order_id=razorpay_order_id,
+                error=str(exc)[:200],
+            )
 
     # Source 2: QR payments — primary source for UPI-QR flow.
     if qr_id:
@@ -259,12 +268,12 @@ def _decorate_intent_hints(out: IntentOut, *, created_at) -> IntentOut:
     is_terminal = (out.payment_status or "") in _TERMINAL_PAYMENT_STATUSES
     if is_terminal:
         next_ms = 0
-    elif age_s < 10:
-        next_ms = 1500
+    elif age_s < 12:
+        next_ms = 700        # aggressive early polling — UPI auth typ. 5-15s
     elif age_s < 30:
-        next_ms = 2500
+        next_ms = 1200
     else:
-        next_ms = 5000
+        next_ms = 2500
     out.next_poll_after_ms = next_ms
     out.should_force_refresh = (not is_terminal) and age_s >= _FORCE_REFRESH_AFTER_S
     out.seconds_since_created = age_s

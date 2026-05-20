@@ -102,6 +102,45 @@ manager = ConnectionManager()
 
 
 # ──────────────────────────────────────────────────────────────
+# In-process fast-path push (no Redis required)
+# ──────────────────────────────────────────────────────────────
+
+async def push_local(
+    event_type: str,
+    data: dict,
+    *,
+    branch_id: Optional[str] = None,
+    restaurant_id: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    """Best-effort, never-raising direct broadcast to WS clients that happen
+    to be connected to THIS worker process.
+
+    This is a latency fast-path for events where every millisecond matters
+    (e.g. `payment.captured`). The authoritative cross-worker fan-out is
+    still ``emit_to_redis`` → ``redis_subscriber``; this helper just
+    short-circuits the round trip when the event is produced and consumed
+    on the same uvicorn worker. Calling both is safe — the FE channel layer
+    is idempotent on (event_type, payload) for terminal payment events.
+
+    Failures are swallowed: this MUST NOT break the caller's request.
+    """
+    payload = {"event": event_type, "data": data}
+    try:
+        if branch_id:
+            await manager.broadcast(f"branch:{branch_id}", payload)
+        if restaurant_id:
+            await manager.broadcast(f"restaurant:{restaurant_id}", payload)
+        if entity_id:
+            await manager.broadcast(f"entity:{entity_id}", payload)
+        if user_id:
+            await manager.send_to_user(user_id, payload)
+    except Exception:
+        logger.exception("ws_push_local_failed", event=event_type)
+
+
+# ──────────────────────────────────────────────────────────────
 # Redis pub/sub → WebSocket fan-out
 # ──────────────────────────────────────────────────────────────
 

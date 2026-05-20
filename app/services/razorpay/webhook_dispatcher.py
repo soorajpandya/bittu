@@ -541,6 +541,34 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
             logger.exception("rzp_webhook_event_emit_failed",
                              payment_id=payment_row["id"])
 
+        # ── Lightning-fast WS push (in-process, no Redis required) ──
+        # Direct broadcast for clients connected to THIS worker so the FE
+        # doesn't have to wait for the next 2s poll tick. Cross-worker
+        # delivery still rides emit_to_redis above.
+        try:
+            from app.realtime import push_local
+            await push_local(
+                "payment.captured",
+                {
+                    "order_id":            payment_row.get("order_id"),
+                    "payment_id":          payment_row["id"],
+                    "razorpay_payment_id": rzp_payment_id,
+                    "razorpay_order_id":   rzp_order_id,
+                    "amount":              float(amount_decimal),
+                    "amount_paise":        amount_paise,
+                    "payment_status":      "captured",
+                    "merchant_id":         merchant_id,
+                    "branch_id":           branch_id,
+                    "source":              "webhook",
+                },
+                branch_id=branch_id,
+                restaurant_id=merchant_id,
+                entity_id=payment_row.get("order_id"),
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("rzp_webhook_ws_push_failed",
+                             payment_id=payment_row["id"])
+
         # ── Auto Route split (net-of-Bittu-fee) ──────────────────────────
         # Money flows: Customer → Razorpay → Bittu master → (this transfer) →
         # Merchant's linked account. If the merchant has not finished Route
