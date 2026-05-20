@@ -71,7 +71,7 @@ async def razorpay_payment_webhook(request: Request):
 
     logger.info(
         "razorpay_webhook_received",
-        event=event,
+        event_name=event,
         event_id=result.event_id,
         latency_ms=result.latency_ms,
     )

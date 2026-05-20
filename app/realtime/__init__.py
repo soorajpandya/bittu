@@ -137,7 +137,7 @@ async def push_local(
         if user_id:
             await manager.send_to_user(user_id, payload)
     except Exception:
-        logger.exception("ws_push_local_failed", event=event_type)
+        logger.exception("ws_push_local_failed", event_name=event_type)
 
 
 # ──────────────────────────────────────────────────────────────

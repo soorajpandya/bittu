@@ -80,13 +80,13 @@ async def dispatch_event(
     """
     handler = _HANDLERS.get(event)
     if handler is None:
-        logger.info("rzp_webhook_unhandled", event=event)
+        logger.info("rzp_webhook_unhandled", event_name=event)
         return {"status": "unhandled", "event": event}
 
     try:
         result = await handler(envelope, signature)
     except Exception:
-        logger.exception("rzp_webhook_handler_failed", event=event)
+        logger.exception("rzp_webhook_handler_failed", event_name=event)
         raise
     return {"status": "processed", "event": event, **(result or {})}
 

@@ -338,7 +338,7 @@ class PaymentService:
                     webhook_id, status="skipped",
                     error_message=f"unhandled event_type: {event}",
                 )
-                logger.info("webhook_unhandled", event=event)
+                logger.info("webhook_unhandled", event_name=event)
                 return {"status": "unhandled", "webhook_id": webhook_id}
 
             await reconciliation_service.mark_webhook_processed(
@@ -351,7 +351,7 @@ class PaymentService:
             await reconciliation_service.mark_webhook_processed(
                 webhook_id, status="failed", error_message=str(exc),
             )
-            logger.exception("webhook_processing_failed", event=event, event_id=event_id)
+            logger.exception("webhook_processing_failed", event_name=event, event_id=event_id)
             raise
 
     # ── REFUND ──
