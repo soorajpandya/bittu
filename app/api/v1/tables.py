@@ -636,7 +636,12 @@ async def mark_paid_and_vacate(
     body: MarkPaidVacateIn = MarkPaidVacateIn(),
     user: UserContext = Depends(require_permission("table.close")),
 ):
-    """Mark order as paid and end the table session."""
+    """Mark order as paid and end the table session.
+
+    Accepts: dine_in_sessions.id, legacy table_sessions.id, or restaurant_tables.id.
+    Prefers the active dine-in session; if none exists, falls back to ending the
+    active legacy table_sessions row (which also frees the table).
+    """
     actor = user.owner_id if user.is_branch_user else user.user_id
     async with get_connection() as conn:
         resolved_session_id = await _resolve_active_dinein_session_id(
@@ -644,6 +649,51 @@ async def mark_paid_and_vacate(
             session_id=session_id,
             owner_id=actor,
         )
+
+        # If resolver couldn't find an active dine_in_sessions row, fall back
+        # to the legacy table_sessions engine so tables backed only by the
+        # legacy row still close cleanly.
+        dinein_exists = await conn.fetchval(
+            "SELECT 1 FROM dine_in_sessions WHERE id = $1 AND user_id = $2",
+            resolved_session_id,
+            actor,
+        )
+        legacy_session_id: Optional[str] = None
+        if not dinein_exists:
+            row = await conn.fetchrow(
+                "SELECT id FROM table_sessions WHERE id = $1 AND user_id = $2 AND is_active = true",
+                session_id,
+                actor,
+            )
+            if not row:
+                # Caller may have passed a restaurant_tables.id directly.
+                row = await conn.fetchrow(
+                    """
+                    SELECT ts.id
+                    FROM table_sessions ts
+                    JOIN restaurant_tables rt ON rt.id = ts.table_id
+                    WHERE rt.id = $1 AND ts.user_id = $2 AND ts.is_active = true
+                    ORDER BY ts.started_at DESC
+                    LIMIT 1
+                    """,
+                    session_id,
+                    actor,
+                )
+            if row:
+                legacy_session_id = str(row["id"])
+
+    if legacy_session_id is not None:
+        result = await _svc.end_session(user=user, session_id=legacy_session_id)
+        await log_activity(
+            user_id=user.user_id,
+            branch_id=user.branch_id,
+            action="table.paid_and_vacated",
+            entity_type="table_session",
+            entity_id=legacy_session_id,
+            metadata={"engine": "legacy"},
+        )
+        return result
+
     result = await _dinein_svc.paid_and_vacate(session_id=resolved_session_id, closed_by=actor)
     await log_activity(
         user_id=user.user_id,
