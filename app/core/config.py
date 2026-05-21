@@ -108,6 +108,13 @@ class Settings(BaseSettings):
     GOOGLE_BUSINESS_CLIENT_SECRET: str = ""
     GOOGLE_BUSINESS_REDIRECT_URI: str = "https://www.bittupos.com/google/callback"
 
+    # ── Attestr (KYC / FSSAI / GSTIN verification) ──
+    # Pre-base64-encoded "client_id:client_secret" string from the Attestr
+    # dashboard. Sent verbatim as `Authorization: Basic <token>`.
+    ATTESTR_AUTH_TOKEN: str = ""
+    ATTESTR_BASE_URL: str = "https://api.attestr.com"
+    ATTESTR_TIMEOUT_SECONDS: float = 20.0
+
     # ── Upstash Redis (REST) ──
     UPSTASH_REDIS_REST_URL: str = ""
     UPSTASH_REDIS_REST_TOKEN: str = ""
