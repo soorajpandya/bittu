@@ -40,6 +40,17 @@ async def create_qr_code(
     body: CreateQRIn,
     user: UserContext = Depends(require_permission("payments.create")),
 ):
+    # Gate: don't issue collection QRs for merchants who haven't finished
+    # Route onboarding — captured funds would have no settlement path.
+    from app.services.razorpay.route_service import rzp_route_service
+    try:
+        await rzp_route_service.assert_settlement_ready(
+            merchant_id=str(user.restaurant_id) if user.restaurant_id else None,
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=409, detail=f"merchant_not_settlement_ready: {exc}",
+        )
     return await _svc.create_qr_code(
         name=body.name,
         amount_paise=body.amount_paise,

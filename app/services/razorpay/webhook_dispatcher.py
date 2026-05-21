@@ -967,9 +967,103 @@ async def _handle_refund_created(envelope: dict, signature: Optional[str]) -> di
 
 
 async def _handle_refund_processed(envelope: dict, signature: Optional[str]) -> dict:
-    await _upsert_rzp_refund(_entity(envelope, "refund"), envelope, status="processed")
+    entity = _entity(envelope, "refund")
+    await _upsert_rzp_refund(entity, envelope, status="processed")
     await _maybe_transition_local_refund(envelope, "succeeded")
+    # Phase 8: claw back the merchant's share of the refund from their Route
+    # linked account so the Bittu master ledger stays whole. This is the
+    # auto-reversal path; it is idempotent at the Razorpay layer via
+    # `rzp_transfer_reverse:{transfer_id}:{amount_paise}`.
+    await _maybe_reverse_route_transfer_for_refund(entity)
     return {}
+
+
+async def _maybe_reverse_route_transfer_for_refund(refund_entity: dict) -> None:
+    refund_id = refund_entity.get("id")
+    rzp_payment_id = refund_entity.get("payment_id")
+    refund_amount_paise = int(refund_entity.get("amount") or 0)
+    if not refund_id or not rzp_payment_id or refund_amount_paise <= 0:
+        return
+    try:
+        async with get_service_connection() as conn:
+            # Locate the auto-split transfer that funded this payment to the
+            # merchant. There can be multiple historical transfers (e.g.
+            # split adjustments); pick the most recent non-reversed one.
+            transfer_row = await conn.fetchrow(
+                """
+                SELECT transfer_id, merchant_id::text AS merchant_id,
+                       amount_paise, status::text AS status
+                FROM rzp_route_transfers
+                WHERE razorpay_payment_id = $1
+                  AND merchant_id <> '00000000-0000-0000-0000-000000000000'::uuid
+                  AND status IN ('created', 'processed')
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                rzp_payment_id,
+            )
+            # Compute the merchant's share of the refund. We mirror the
+            # auto-split formula: merchant got (transfer.amount / payment.amount)
+            # of the original capture, so they refund the same proportion.
+            payment_row = await conn.fetchrow(
+                "SELECT amount_paise FROM rzp_payments WHERE razorpay_payment_id = $1 "
+                "ORDER BY created_at DESC LIMIT 1",
+                rzp_payment_id,
+            )
+        if transfer_row is None or payment_row is None:
+            logger.info(
+                "rzp_auto_reverse_skipped_no_transfer",
+                refund_id=refund_id,
+                razorpay_payment_id=rzp_payment_id,
+                has_transfer=transfer_row is not None,
+                has_payment=payment_row is not None,
+            )
+            return
+
+        payment_total = int(payment_row["amount_paise"] or 0)
+        transfer_total = int(transfer_row["amount_paise"] or 0)
+        if payment_total <= 0 or transfer_total <= 0:
+            return
+        # Proportional clawback, capped at the transfer amount.
+        merchant_share_paise = min(
+            transfer_total,
+            (refund_amount_paise * transfer_total) // payment_total,
+        )
+        if merchant_share_paise <= 0:
+            return
+
+        from app.services.razorpay.route_service import rzp_route_service
+        try:
+            await rzp_route_service.reverse_transfer(
+                merchant_id=transfer_row["merchant_id"],
+                transfer_id=transfer_row["transfer_id"],
+                amount_paise=merchant_share_paise,
+                notes={
+                    "source":     "auto_reverse_on_refund",
+                    "refund_id":  refund_id,
+                    "rzp_payment_id": rzp_payment_id,
+                },
+                refund_id=refund_id,
+            )
+            logger.info(
+                "rzp_auto_reverse_ok",
+                refund_id=refund_id,
+                transfer_id=transfer_row["transfer_id"],
+                merchant_share_paise=merchant_share_paise,
+            )
+        except ValueError:
+            # Already terminal — idempotent no-op.
+            logger.info(
+                "rzp_auto_reverse_already_terminal",
+                refund_id=refund_id,
+                transfer_id=transfer_row["transfer_id"],
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "rzp_auto_reverse_failed",
+            refund_id=refund_id,
+            razorpay_payment_id=rzp_payment_id,
+        )
 
 
 async def _handle_refund_failed(envelope: dict, signature: Optional[str]) -> dict:

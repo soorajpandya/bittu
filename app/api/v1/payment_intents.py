@@ -501,6 +501,14 @@ async def refresh_intent(
             owner_user_id=getattr(user, "owner_id", None) or user.user_id,
             create_qr=True,
         )
+    except PermissionError as exc:
+        # Settlement-readiness gate — merchant has opted into Route but
+        # has not finished onboarding. Client should redirect to the
+        # Route onboarding screen.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"merchant_not_settlement_ready: {exc}",
+        )
     except Exception as exc:
         logger.error(
             "rzp_intent_refresh_failed",

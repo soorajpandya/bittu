@@ -139,12 +139,28 @@ async def merchant_360(restaurant_id: str) -> dict[str, Any]:
 
         recent_transfers = await conn.fetch(
             """
-            SELECT transfer_id, razorpay_payment_id, amount_paise,
-                   status::text AS status, on_hold, on_hold_until,
-                   created_at, processed_at, reversed_at
-              FROM rzp_route_transfers
-             WHERE merchant_id = $1::uuid
-             ORDER BY created_at DESC
+            SELECT t.transfer_id,
+                   t.razorpay_payment_id,
+                   t.amount_paise,
+                   t.status::text       AS status,
+                   t.on_hold,
+                   t.on_hold_until,
+                   t.created_at,
+                   t.processed_at,
+                   t.reversed_at,
+                   t.recipient_settlement_id,
+                   t.refund_id,
+                   t.reversal_of_transfer_id,
+                   t.razorpay_order_id,
+                   t.internal_order_id::text AS internal_order_id,
+                   s.status::text       AS settlement_status,
+                   s.settled_at         AS settled_at,
+                   s.amount_paise       AS settlement_amount_paise
+              FROM rzp_route_transfers t
+              LEFT JOIN rzp_settlements s
+                     ON s.settlement_id = t.recipient_settlement_id
+             WHERE t.merchant_id = $1::uuid
+             ORDER BY t.created_at DESC
              LIMIT 20
             """,
             restaurant_id,

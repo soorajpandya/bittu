@@ -22,9 +22,18 @@ from typing import Any, Mapping, Optional
 
 from app.core.database import get_connection, get_service_connection
 from app.core.logging import get_logger
+from app.core.audit_logger import audit_event
 from app.services.razorpay import route as route_api
 
 logger = get_logger(__name__)
+
+
+async def _safe_audit(**kwargs: Any) -> None:
+    """Fire-and-forget audit wrapper — never raises out of business code."""
+    try:
+        await audit_event(**kwargs)
+    except Exception:  # noqa: BLE001
+        logger.exception("rzp_route_audit_failed", action=kwargs.get("action"))
 
 
 _ACCOUNT_STATES: tuple[str, ...] = (
@@ -272,6 +281,17 @@ class RzpRouteService:
         await self.upsert_linked_account_from_razorpay(
             rzp_entity=rzp_resp, merchant_id_override=merchant_id,
         )
+        await _safe_audit(
+            domain="razorpay_route",
+            action="rzp_route.linked_account.create",
+            entity_type="rzp_route_account",
+            entity_id=str(rzp_resp.get("id")) if rzp_resp.get("id") else None,
+            payload={
+                "merchant_id": merchant_id,
+                "linked_account_id": rzp_resp.get("id"),
+                "reference_id": reference_id,
+            },
+        )
 
         # Patch in the bank fields locally if a number was provided. We
         # never send the raw number to Razorpay here — that goes through
@@ -379,6 +399,16 @@ class RzpRouteService:
             merchant_id=merchant_id,
         )
         await self._persist_stakeholder(merchant_id, rzp_resp)
+        await _safe_audit(
+            domain="razorpay_route",
+            action="rzp_route.stakeholder.create",
+            entity_type="rzp_route_stakeholder",
+            entity_id=str(rzp_resp.get("id")) if rzp_resp.get("id") else None,
+            payload={
+                "merchant_id": merchant_id,
+                "linked_account_id": account_id,
+            },
+        )
         return await self.get_linked_account(merchant_id=merchant_id)
 
     async def _persist_stakeholder(
@@ -492,6 +522,19 @@ class RzpRouteService:
             merchant_id=merchant_id,
         )
         await self._persist_product(merchant_id, rzp_resp, tnc_accepted=tnc_accepted)
+        await _safe_audit(
+            domain="razorpay_route",
+            action="rzp_route.product.bank_update",
+            entity_type="rzp_route_product",
+            entity_id=existing["route_product_id"],
+            payload={
+                "merchant_id": merchant_id,
+                "linked_account_id": existing["linked_account_id"],
+                "bank_account_last4": _last4(bank_account_number),
+                "ifsc": ifsc,
+                "product_status": (rzp_resp or {}).get("activation_status"),
+            },
+        )
 
         # Mirror bank fields locally (last4 + sha256 only — never the raw number).
         last4 = _last4(bank_account_number)
@@ -626,12 +669,60 @@ class RzpRouteService:
             )
         return row["merchant_id"] if row else None
 
+    async def _resolve_payment_context(
+        self, razorpay_payment_id: Optional[str]
+    ) -> dict:
+        """Resolve `restaurant_id` (== merchant_id), `internal_order_id`,
+        `razorpay_order_id` for a Razorpay payment id. Returns {} if unknown."""
+        if not razorpay_payment_id:
+            return {}
+        async with get_service_connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT merchant_id::text AS restaurant_id, "
+                "       internal_order_id::text AS internal_order_id, "
+                "       razorpay_order_id "
+                "FROM rzp_payments WHERE razorpay_payment_id = $1 "
+                "ORDER BY created_at DESC LIMIT 1",
+                razorpay_payment_id,
+            )
+        return dict(row) if row else {}
+
+    # ── Settlement-ready gate ────────────────────────────────────────────
+
+    async def assert_settlement_ready(self, *, merchant_id: Optional[str]) -> None:
+        """Block payment intake when the merchant has opted into Route but
+        has not finished onboarding (linked account not activated OR product
+        configuration not activated).
+
+        Merchants without ANY rzp_route_accounts row are treated as legacy
+        (pass through) — a warning is logged so ops can chase migration.
+        Raise ``PermissionError`` to be mapped to HTTP 409 at the boundary.
+        """
+        if not merchant_id:
+            return
+        row = await self._existing_account(merchant_id)
+        if not row:
+            logger.warning(
+                "rzp_route_legacy_merchant_no_account",
+                merchant_id=merchant_id,
+            )
+            return
+        status = row["status"]
+        product_status = row["route_product_status"] if "route_product_status" in row.keys() else None
+        if status != "activated" or (product_status and product_status != "activated"):
+            raise PermissionError(
+                "merchant_not_settlement_ready: linked_account_status="
+                f"{status!r} product_status={product_status!r}"
+            )
+
     async def upsert_transfer_from_razorpay(
         self,
         *,
         rzp_entity: Mapping[str, Any],
         merchant_id_override: Optional[str] = None,
         status_override: Optional[str] = None,
+        refund_id_override: Optional[str] = None,
+        reversal_of_transfer_id_override: Optional[str] = None,
     ) -> Optional[dict]:
         transfer_id = rzp_entity.get("id")
         if not transfer_id:
@@ -668,6 +759,20 @@ class RzpRouteService:
         )
         reversed_at_epoch = rzp_entity.get("reversed_at") if status == "reversed" else None
 
+        # Denormalised links (Phase 8). Razorpay attaches `recipient_settlement_id`
+        # to the transfer entity once it has been included in a settlement batch;
+        # we capture order/restaurant context from rzp_payments on first insert
+        # so dashboards don't need a 4-table join.
+        razorpay_payment_id = rzp_entity.get("source") or rzp_entity.get("razorpay_payment_id") or ""
+        recipient_settlement_id = (
+            rzp_entity.get("recipient_settlement_id")
+            or rzp_entity.get("settlement_id")
+        )
+        ctx = await self._resolve_payment_context(razorpay_payment_id) if razorpay_payment_id else {}
+        restaurant_id = ctx.get("restaurant_id")
+        internal_order_id = ctx.get("internal_order_id")
+        razorpay_order_id = ctx.get("razorpay_order_id")
+
         async with get_service_connection() as conn:
             row = await conn.fetchrow(
                 """
@@ -677,7 +782,9 @@ class RzpRouteService:
                     merchant_id, amount_paise, currency,
                     on_hold, on_hold_until,
                     fee_paise, tax_paise, status,
-                    notes, raw_payload, processed_at, reversed_at
+                    notes, raw_payload, processed_at, reversed_at,
+                    restaurant_id, internal_order_id, razorpay_order_id,
+                    recipient_settlement_id, refund_id, reversal_of_transfer_id
                 ) VALUES (
                     $1, $2, $3, $4, $5::uuid, $6, $7,
                     $8,
@@ -686,7 +793,8 @@ class RzpRouteService:
                     COALESCE($13::jsonb, '{}'::jsonb),
                     $14::jsonb,
                     CASE WHEN $15::bigint IS NULL THEN NULL ELSE to_timestamp($15::bigint) END,
-                    CASE WHEN $16::bigint IS NULL THEN NULL ELSE to_timestamp($16::bigint) END
+                    CASE WHEN $16::bigint IS NULL THEN NULL ELSE to_timestamp($16::bigint) END,
+                    $17::uuid, $18::uuid, $19, $20, $21, $22
                 )
                 ON CONFLICT (transfer_id) DO UPDATE SET
                     razorpay_payment_id  = COALESCE(EXCLUDED.razorpay_payment_id, rzp_route_transfers.razorpay_payment_id),
@@ -704,11 +812,17 @@ class RzpRouteService:
                     raw_payload          = EXCLUDED.raw_payload,
                     processed_at         = COALESCE(EXCLUDED.processed_at, rzp_route_transfers.processed_at),
                     reversed_at          = COALESCE(EXCLUDED.reversed_at, rzp_route_transfers.reversed_at),
+                    restaurant_id            = COALESCE(rzp_route_transfers.restaurant_id, EXCLUDED.restaurant_id),
+                    internal_order_id        = COALESCE(rzp_route_transfers.internal_order_id, EXCLUDED.internal_order_id),
+                    razorpay_order_id        = COALESCE(rzp_route_transfers.razorpay_order_id, EXCLUDED.razorpay_order_id),
+                    recipient_settlement_id  = COALESCE(EXCLUDED.recipient_settlement_id, rzp_route_transfers.recipient_settlement_id),
+                    refund_id                = COALESCE(EXCLUDED.refund_id, rzp_route_transfers.refund_id),
+                    reversal_of_transfer_id  = COALESCE(EXCLUDED.reversal_of_transfer_id, rzp_route_transfers.reversal_of_transfer_id),
                     updated_at           = NOW()
                 RETURNING *
                 """,
                 transfer_id,
-                rzp_entity.get("source") or rzp_entity.get("razorpay_payment_id") or "",
+                razorpay_payment_id,
                 rzp_entity.get("source_account_id"),
                 recipient_account_id,
                 merchant_id,
@@ -723,6 +837,12 @@ class RzpRouteService:
                 json.dumps(dict(rzp_entity)),
                 int(processed_at_epoch) if processed_at_epoch else None,
                 int(reversed_at_epoch) if reversed_at_epoch else None,
+                restaurant_id,
+                internal_order_id,
+                razorpay_order_id,
+                recipient_settlement_id,
+                refund_id_override,
+                reversal_of_transfer_id_override,
             )
         return _row_to_transfer(row)
 
@@ -776,6 +896,19 @@ class RzpRouteService:
             )
             if row:
                 upserted.append(row)
+        await _safe_audit(
+            domain="razorpay_route",
+            action="rzp_route.transfer.create",
+            entity_type="rzp_route_transfer",
+            entity_id=(upserted[0].get("transfer_id") if upserted else None),
+            payload={
+                "merchant_id": merchant_id,
+                "razorpay_payment_id": razorpay_payment_id,
+                "amount_paise": int(amount_paise),
+                "on_hold": bool(on_hold),
+                "transfer_count": len(upserted),
+            },
+        )
         return {"transfers": upserted, "raw": rzp_resp}
 
     async def reverse_transfer(
@@ -785,6 +918,7 @@ class RzpRouteService:
         transfer_id: str,
         amount_paise: Optional[int] = None,
         notes: Optional[Mapping[str, Any]] = None,
+        refund_id: Optional[str] = None,
     ) -> dict:
         # Sanity: transfer must belong to this merchant.
         async with get_service_connection() as conn:
@@ -801,10 +935,13 @@ class RzpRouteService:
             raise ValueError(f"transfer already terminal (status={row['status']!r})")
 
         idem = f"rzp_transfer_reverse:{transfer_id}:{int(amount_paise or 0)}"
+        merged_notes: dict[str, Any] = dict(notes or {})
+        if refund_id:
+            merged_notes.setdefault("refund_id", refund_id)
         rzp_resp = await route_api.reverse_transfer(
             transfer_id,
             amount_paise=amount_paise,
-            notes=dict(notes or {}),
+            notes=merged_notes,
             idempotency_key=idem,
             merchant_id=merchant_id,
         )
@@ -812,10 +949,24 @@ class RzpRouteService:
         try:
             updated = await route_api.fetch_transfer(transfer_id, merchant_id=merchant_id)
             await self.upsert_transfer_from_razorpay(
-                rzp_entity=updated, merchant_id_override=merchant_id,
+                rzp_entity=updated,
+                merchant_id_override=merchant_id,
+                refund_id_override=refund_id,
+                reversal_of_transfer_id_override=transfer_id,
             )
         except Exception:  # noqa: BLE001
             logger.exception("rzp_transfer_refetch_failed", transfer_id=transfer_id)
+        await _safe_audit(
+            domain="razorpay_route",
+            action="rzp_route.transfer.reverse",
+            entity_type="rzp_route_transfer",
+            entity_id=transfer_id,
+            payload={
+                "merchant_id": merchant_id,
+                "amount_paise": int(amount_paise) if amount_paise else None,
+                "refund_id": refund_id,
+            },
+        )
         return rzp_resp
 
     async def sync_transfer(self, *, merchant_id: str, transfer_id: str) -> dict:

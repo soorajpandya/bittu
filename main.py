@@ -154,6 +154,16 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("rzp_invoice_polling_scheduler_start_failed", error=str(exc))
 
+    # Razorpay reconciliation scheduler (Phase 9 — daily 3-way matcher)
+    rzp_reconciliation_task = None
+    try:
+        from app.services.razorpay.reconciliation_scheduler import (
+            start_rzp_reconciliation_scheduler,
+        )
+        rzp_reconciliation_task = start_rzp_reconciliation_scheduler()
+    except Exception as exc:
+        logger.error("rzp_reconciliation_scheduler_start_failed", error=str(exc))
+
     logger.info("startup_complete", db=db_ok, redis=redis_ok)
     yield
 
@@ -204,6 +214,13 @@ async def lifespan(app: FastAPI):
         rzp_invoice_polling_task.cancel()
         try:
             await rzp_invoice_polling_task
+        except asyncio.CancelledError:
+            pass
+
+    if rzp_reconciliation_task is not None:
+        rzp_reconciliation_task.cancel()
+        try:
+            await rzp_reconciliation_task
         except asyncio.CancelledError:
             pass
 

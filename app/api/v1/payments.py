@@ -376,6 +376,11 @@ async def initiate_payment(
                 owner_user_id=getattr(user, "owner_id", None) or user.user_id,
                 create_qr=True,
             )
+        except PermissionError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail=f"merchant_not_settlement_ready: {exc}",
+            )
         except Exception as exc:
             logger.error(
                 "payments_initiate_intent_failed",

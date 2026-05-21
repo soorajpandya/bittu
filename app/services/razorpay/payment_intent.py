@@ -121,6 +121,15 @@ async def create_intent_for_order(
         )
         return existing
 
+    # ── 0.5. settlement-readiness gate ──
+    # If the merchant has opted into Route, their linked account + product
+    # configuration MUST be activated before we accept new payments —
+    # otherwise the captured funds would sit on the Bittu master account
+    # with no path to the merchant's bank. Legacy merchants (no Route row)
+    # pass through. Maps to HTTP 409 at the API boundary.
+    from app.services.razorpay.route_service import rzp_route_service as _route_gate
+    await _route_gate.assert_settlement_ready(merchant_id=merchant_id)
+
     # ── 1. create Razorpay order (idempotent via X-Razorpay-Idempotency) ──
     # Razorpay limits each `notes` value to a string; cap field lengths so we
     # never get rejected at the gateway.
