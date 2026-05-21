@@ -241,6 +241,9 @@ router.include_router(_merchant_reports.router)
 # ── Merchant KYC & Onboarding (Phase 9) — admin only ──
 from app.api.v1 import admin_merchant_kyc as _admin_merchant_kyc
 router.include_router(_admin_merchant_kyc.router)
+# ── Merchant-facing KYC verification (Attestr FSSAI / etc.) ──
+from app.api.v1 import kyc_verify as _kyc_verify
+router.include_router(_kyc_verify.router)
 # ── Fee Engine v2 (Phase 10) — admin only ──
 from app.api.v1 import admin_fee_plans as _admin_fee_plans
 router.include_router(_admin_fee_plans.router)
