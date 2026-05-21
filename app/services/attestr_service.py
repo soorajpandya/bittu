@@ -31,15 +31,35 @@ _FSSAI_RE = re.compile(r"^\d{14}$")
 _FSSAI_PATH = "/api/v1/public/checkx/fssai"
 
 
+class FssaiProduct(TypedDict, total=False):
+    """One product entry from `products[]` when `fetch_products=True`."""
+    name: Optional[str]
+    role: Optional[str]
+    nature_of_business: Optional[str]
+    active: Optional[bool]
+    type: Optional[str]
+
+
 class FssaiVerificationResult(TypedDict, total=False):
     """Shape of the dict returned by `verify_fssai_license`.
 
-    Mirrors the Attestr response plus our `valid` / `message` normalization.
-    Extra Attestr fields (status, address, products, etc.) pass through
-    unchanged inside `raw`.
+    Top-level keys mirror the Attestr response, except `nature_of_business`
+    (snake_cased from Attestr's `natureOfBusiness`). When `valid=False` every
+    optional field is `None`. `raw` always holds the full Attestr response
+    for forward-compat / debugging.
     """
     valid: bool
     message: Optional[str]
+    reg: Optional[str]
+    status: Optional[str]           # e.g. "License Issued"
+    active: Optional[bool]
+    entity: Optional[str]
+    uuid: Optional[int]
+    category: Optional[str]         # e.g. "Central License"
+    state: Optional[str]
+    address: Optional[str]
+    zip: Optional[int]
+    products: Optional[list[FssaiProduct]]
     raw: dict[str, Any]
 
 
@@ -81,6 +101,46 @@ def _extract_message(payload: Any, fallback: str) -> str:
     return fallback
 
 
+def _normalize_products(raw_products: Any) -> Optional[list[FssaiProduct]]:
+    if not isinstance(raw_products, list):
+        return None
+    out: list[FssaiProduct] = []
+    for p in raw_products:
+        if not isinstance(p, dict):
+            continue
+        out.append({
+            "name":               p.get("name"),
+            "role":               p.get("role"),
+            "nature_of_business": p.get("natureOfBusiness"),
+            "active":             p.get("active"),
+            "type":               p.get("type"),
+        })
+    return out
+
+
+def _normalize_fssai(
+    payload: dict[str, Any],
+    *,
+    valid: bool,
+    message: Optional[str],
+) -> FssaiVerificationResult:
+    return {
+        "valid":    valid,
+        "message":  message,
+        "reg":      payload.get("reg"),
+        "status":   payload.get("status"),
+        "active":   payload.get("active"),
+        "entity":   payload.get("entity"),
+        "uuid":     payload.get("uuid"),
+        "category": payload.get("category"),
+        "state":    payload.get("state"),
+        "address":  payload.get("address"),
+        "zip":      payload.get("zip"),
+        "products": _normalize_products(payload.get("products")),
+        "raw":      payload,
+    }
+
+
 async def verify_fssai_license(
     reg: str,
     fetch_products: bool = False,
@@ -94,11 +154,28 @@ async def verify_fssai_license(
             products list (slower, costs more credits).
 
     Returns:
-        {
-            "valid":   bool,        # True only if Attestr confirmed the license
-            "message": str | None,  # Attestr's reason when valid=False
-            "raw":     {...},       # Full Attestr response for downstream use
-        }
+        A dict shaped like `FssaiVerificationResult`. When `valid=True`,
+        top-level fields (`entity`, `reg`, `status`, `address`, `state`,
+        `category`, `zip`, `products`, `active`) carry Attestr's data.
+        When `valid=False`, only `message` is populated and other fields
+        are `None`. `raw` always holds the full Attestr payload.
+
+        Example (valid):
+            {
+              "valid": True, "message": None,
+              "reg": "10013012000249", "status": "License Issued",
+              "entity": "Patanjali Ayurved Ltd.", "active": True,
+              "category": "Central License", "state": "Uttarakhand",
+              "address": "Unit-II, ...", "zip": 249402, "uuid": 66751215,
+              "products": [{ "name": "...", "role": "...",
+                             "nature_of_business": "...",
+                             "active": True, "type": None }],
+              "raw": { ...full Attestr response... }
+            }
+
+        Example (invalid):
+            {"valid": False, "message": "No matching record found",
+             "reg": None, "status": None, ..., "raw": {...}}
 
     Raises:
         ValidationError:     `reg` is not a 14-digit numeric string.
@@ -162,7 +239,7 @@ async def verify_fssai_license(
             valid=valid,
             fetch_products=fetch_products,
         )
-        return {"valid": valid, "message": message, "raw": payload}
+        return _normalize_fssai(payload, valid=valid, message=message)
 
     if status == 400:
         msg = _extract_message(payload, "Attestr rejected the request (400).")
