@@ -56,6 +56,32 @@ class ReverseTransferIn(BaseModel):
     notes: Optional[dict[str, Any]] = None
 
 
+class CreateStakeholderIn(BaseModel):
+    relationship: Optional[dict[str, Any]] = None
+    kyc: Optional[dict[str, Any]] = None
+    addresses: Optional[dict[str, Any]] = None
+
+
+class RequestProductIn(BaseModel):
+    tnc_accepted: bool = True
+
+
+class UpdateProductBankIn(BaseModel):
+    bank_account_number: str = Field(..., min_length=4)
+    ifsc: str = Field(..., min_length=4, max_length=20)
+    beneficiary_name: Optional[str] = None
+    tnc_accepted: bool = True
+
+
+class OnboardIn(BaseModel):
+    bank_account_number: str = Field(..., min_length=4)
+    ifsc: Optional[str] = None
+    beneficiary_name: Optional[str] = None
+    reference_id: Optional[str] = None
+    tnc_accepted: bool = True
+    notes: Optional[dict[str, Any]] = None
+
+
 # ── Linked account ────────────────────────────────────────────────────────
 
 
@@ -96,6 +122,100 @@ async def sync_linked_account(
         return await rzp_route_service.sync_linked_account(merchant_id=_mid(user))
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+# ── Stakeholder (Route onboarding step 3) ─────────────────────────────────
+
+
+@router.post("/linked-account/stakeholder")
+async def create_stakeholder(
+    body: CreateStakeholderIn = Body(default_factory=CreateStakeholderIn),
+    user: UserContext = Depends(require_permission("razorpay.route.write")),
+):
+    try:
+        return await rzp_route_service.create_stakeholder_for_merchant(
+            merchant_id=_mid(user),
+            relationship_overrides=body.relationship,
+            kyc_overrides=body.kyc,
+            addresses_overrides=body.addresses,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ── Product configuration (Route onboarding steps 4 & 5) ─────────────────
+
+
+@router.post("/linked-account/product")
+async def request_product(
+    body: RequestProductIn = Body(default_factory=RequestProductIn),
+    user: UserContext = Depends(require_permission("razorpay.route.write")),
+):
+    try:
+        return await rzp_route_service.request_route_product(
+            merchant_id=_mid(user), tnc_accepted=body.tnc_accepted,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.patch("/linked-account/product")
+async def update_product_bank(
+    body: UpdateProductBankIn,
+    user: UserContext = Depends(require_permission("razorpay.route.write")),
+):
+    try:
+        return await rzp_route_service.update_route_product_with_bank(
+            merchant_id=_mid(user),
+            bank_account_number=body.bank_account_number,
+            ifsc=body.ifsc,
+            beneficiary_name=body.beneficiary_name,
+            tnc_accepted=body.tnc_accepted,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/linked-account/product/sync")
+async def sync_product(
+    user: UserContext = Depends(require_permission("razorpay.route.read")),
+):
+    try:
+        return await rzp_route_service.sync_route_product(merchant_id=_mid(user))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/linked-account/onboard")
+async def onboard_route_merchant(
+    body: OnboardIn,
+    user: UserContext = Depends(require_permission("razorpay.route.write")),
+):
+    """
+    End-to-end Route onboarding: linked account → stakeholder → request
+    product → update product with settlement bank details. Each step is
+    independently idempotent so this endpoint is safe to retry.
+    """
+    try:
+        return await rzp_route_service.onboard_route_merchant(
+            merchant_id=_mid(user),
+            bank_account_number=body.bank_account_number,
+            ifsc=body.ifsc,
+            beneficiary_name=body.beneficiary_name,
+            reference_id=body.reference_id,
+            tnc_accepted=body.tnc_accepted,
+            extra_notes=body.notes,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 # ── Transfers ─────────────────────────────────────────────────────────────

@@ -311,6 +311,306 @@ class RzpRouteService:
         row = await self._existing_account(merchant_id)
         return _row_to_account(row)
 
+    # ── Stakeholder (Route onboarding step 3) ────────────────────────────
+
+    async def create_stakeholder_for_merchant(
+        self,
+        *,
+        merchant_id: str,
+        relationship_overrides: Optional[Mapping[str, Any]] = None,
+        kyc_overrides: Optional[Mapping[str, Any]] = None,
+        addresses_overrides: Optional[Mapping[str, Any]] = None,
+    ) -> dict:
+        """
+        Step 3 of Route onboarding. Creates the stakeholder on Razorpay
+        using the primary KYC owner row and persists the returned
+        ``stakeholder_id`` on ``rzp_route_accounts``.
+
+        Idempotent: if a stakeholder is already bound for this merchant we
+        refetch + re-upsert instead of creating a second one.
+        """
+        existing = await self._existing_account(merchant_id)
+        if not existing or not existing["linked_account_id"]:
+            raise LookupError("No linked account provisioned for this merchant")
+
+        account_id = existing["linked_account_id"]
+        existing_stakeholder_id = existing["stakeholder_id"] if "stakeholder_id" in existing.keys() else None
+
+        if existing_stakeholder_id:
+            rzp_resp = await route_api.fetch_stakeholder(
+                account_id, existing_stakeholder_id, merchant_id=merchant_id,
+            )
+            await self._persist_stakeholder(merchant_id, rzp_resp)
+            return await self.get_linked_account(merchant_id=merchant_id)
+
+        snap = await self._kyc_snapshot(merchant_id)
+        owner = snap["owner"]
+        profile = snap["profile"]
+
+        if not owner or not owner.get("full_name"):
+            raise ValueError(
+                "KYC owner missing — add a primary owner before creating a stakeholder"
+            )
+
+        name_parts = (owner.get("full_name") or "").strip().split()
+        relationship = {
+            "executive": True,
+            "director":  False,
+            "owner":     True,
+        }
+        if relationship_overrides:
+            relationship.update(dict(relationship_overrides))
+
+        body: dict[str, Any] = {
+            "name": owner.get("full_name"),
+            "email": owner.get("email") or profile.get("contact_email"),
+            "phone": owner.get("phone") or profile.get("contact_phone"),
+            "relationship": relationship,
+        }
+        if kyc_overrides:
+            body["kyc"] = dict(kyc_overrides)
+        if addresses_overrides:
+            body["addresses"] = dict(addresses_overrides)
+
+        rzp_resp = await route_api.create_stakeholder(
+            account_id,
+            body=body,
+            idempotency_key=f"rzp_route_stakeholder:{merchant_id}",
+            merchant_id=merchant_id,
+        )
+        await self._persist_stakeholder(merchant_id, rzp_resp)
+        return await self.get_linked_account(merchant_id=merchant_id)
+
+    async def _persist_stakeholder(
+        self, merchant_id: str, rzp_entity: Mapping[str, Any]
+    ) -> None:
+        sth_id = rzp_entity.get("id")
+        if not sth_id:
+            return
+        async with get_service_connection() as conn:
+            await conn.execute(
+                """
+                UPDATE rzp_route_accounts
+                   SET stakeholder_id  = $2,
+                       stakeholder_raw = $3::jsonb,
+                       updated_at      = NOW()
+                 WHERE merchant_id = $1::uuid
+                """,
+                merchant_id, sth_id, json.dumps(dict(rzp_entity)),
+            )
+
+    # ── Product configuration (Route onboarding steps 4 & 5) ─────────────
+
+    async def request_route_product(
+        self,
+        *,
+        merchant_id: str,
+        tnc_accepted: bool = True,
+    ) -> dict:
+        """
+        Step 4 of Route onboarding. Requests the ``route`` product config.
+        Idempotent: if a product is already bound we refetch + re-upsert.
+        """
+        existing = await self._existing_account(merchant_id)
+        if not existing or not existing["linked_account_id"]:
+            raise LookupError("No linked account provisioned for this merchant")
+        if not existing["stakeholder_id"]:
+            raise ValueError(
+                "Stakeholder must be created before requesting a product configuration"
+            )
+
+        account_id = existing["linked_account_id"]
+        existing_product_id = existing["route_product_id"]
+
+        if existing_product_id:
+            rzp_resp = await route_api.fetch_product_configuration(
+                account_id, existing_product_id, merchant_id=merchant_id,
+            )
+            await self._persist_product(merchant_id, rzp_resp, tnc_accepted=tnc_accepted)
+            return await self.get_linked_account(merchant_id=merchant_id)
+
+        rzp_resp = await route_api.request_product_configuration(
+            account_id,
+            product_name="route",
+            tnc_accepted=tnc_accepted,
+            idempotency_key=f"rzp_route_product:{merchant_id}",
+            merchant_id=merchant_id,
+        )
+        await self._persist_product(
+            merchant_id, rzp_resp, tnc_accepted=tnc_accepted, mark_requested=True,
+        )
+        return await self.get_linked_account(merchant_id=merchant_id)
+
+    async def update_route_product_with_bank(
+        self,
+        *,
+        merchant_id: str,
+        bank_account_number: str,
+        ifsc: str,
+        beneficiary_name: Optional[str] = None,
+        tnc_accepted: bool = True,
+    ) -> dict:
+        """
+        Step 5 of Route onboarding. Sends settlement bank details to
+        Razorpay so the product configuration can be activated. The full
+        account number is used in-memory only — we persist last4 + sha256.
+        """
+        existing = await self._existing_account(merchant_id)
+        if not existing or not existing["linked_account_id"]:
+            raise LookupError("No linked account provisioned for this merchant")
+        if not existing["route_product_id"]:
+            raise ValueError(
+                "Route product configuration must be requested before bank update"
+            )
+
+        if not bank_account_number or not ifsc:
+            raise ValueError("bank_account_number and ifsc are required")
+
+        snap = await self._kyc_snapshot(merchant_id)
+        beneficiary = (
+            beneficiary_name
+            or snap["bank"].get("account_holder_name")
+            or snap["owner"].get("full_name")
+            or snap["profile"].get("legal_name")
+        )
+        if not beneficiary:
+            raise ValueError("beneficiary_name required and not derivable from KYC")
+
+        body: dict[str, Any] = {
+            "settlements": {
+                "account_number":   bank_account_number,
+                "ifsc_code":        ifsc,
+                "beneficiary_name": beneficiary,
+            },
+            "tnc_accepted": bool(tnc_accepted),
+        }
+
+        rzp_resp = await route_api.update_product_configuration(
+            existing["linked_account_id"],
+            existing["route_product_id"],
+            body=body,
+            merchant_id=merchant_id,
+        )
+        await self._persist_product(merchant_id, rzp_resp, tnc_accepted=tnc_accepted)
+
+        # Mirror bank fields locally (last4 + sha256 only — never the raw number).
+        last4 = _last4(bank_account_number)
+        bhash = _hash_account(bank_account_number)
+        async with get_service_connection() as conn:
+            await conn.execute(
+                """
+                UPDATE rzp_route_accounts
+                   SET bank_account_ifsc  = COALESCE($2, bank_account_ifsc),
+                       bank_account_last4 = COALESCE($3, bank_account_last4),
+                       bank_account_hash  = COALESCE($4, bank_account_hash),
+                       updated_at         = NOW()
+                 WHERE merchant_id = $1::uuid
+                """,
+                merchant_id, ifsc, last4, bhash,
+            )
+        return await self.get_linked_account(merchant_id=merchant_id)
+
+    async def sync_route_product(self, *, merchant_id: str) -> dict:
+        existing = await self._existing_account(merchant_id)
+        if not existing or not existing["linked_account_id"]:
+            raise LookupError("No linked account provisioned for this merchant")
+        if not existing["route_product_id"]:
+            raise LookupError("No route product configuration on this account")
+        rzp_resp = await route_api.fetch_product_configuration(
+            existing["linked_account_id"],
+            existing["route_product_id"],
+            merchant_id=merchant_id,
+        )
+        await self._persist_product(merchant_id, rzp_resp)
+        return await self.get_linked_account(merchant_id=merchant_id)
+
+    async def _persist_product(
+        self,
+        merchant_id: str,
+        rzp_entity: Mapping[str, Any],
+        *,
+        tnc_accepted: Optional[bool] = None,
+        mark_requested: bool = False,
+    ) -> None:
+        product_id = rzp_entity.get("id")
+        if not product_id:
+            return
+        status = (rzp_entity.get("activation_status") or rzp_entity.get("status") or "").lower() or None
+        async with get_service_connection() as conn:
+            await conn.execute(
+                """
+                UPDATE rzp_route_accounts
+                   SET route_product_id            = $2,
+                       route_product_status        = COALESCE($3, route_product_status),
+                       route_product_raw           = $4::jsonb,
+                       route_product_requested_at  = CASE
+                           WHEN $5::boolean AND route_product_requested_at IS NULL THEN NOW()
+                           ELSE route_product_requested_at END,
+                       route_product_activated_at  = CASE
+                           WHEN $3 = 'activated' AND route_product_activated_at IS NULL THEN NOW()
+                           ELSE route_product_activated_at END,
+                       tnc_accepted_at             = CASE
+                           WHEN $6::boolean AND tnc_accepted_at IS NULL THEN NOW()
+                           ELSE tnc_accepted_at END,
+                       updated_at                  = NOW()
+                 WHERE merchant_id = $1::uuid
+                """,
+                merchant_id,
+                product_id,
+                status,
+                json.dumps(dict(rzp_entity)),
+                bool(mark_requested),
+                bool(tnc_accepted) if tnc_accepted is not None else False,
+            )
+
+    # ── Full onboarding orchestrator ─────────────────────────────────────
+
+    async def onboard_route_merchant(
+        self,
+        *,
+        merchant_id: str,
+        bank_account_number: str,
+        ifsc: Optional[str] = None,
+        beneficiary_name: Optional[str] = None,
+        reference_id: Optional[str] = None,
+        tnc_accepted: bool = True,
+        extra_notes: Optional[Mapping[str, Any]] = None,
+    ) -> dict:
+        """
+        End-to-end Route onboarding orchestrator (steps 2-5 of the
+        corrected flow). Each step is independently idempotent so callers
+        can re-invoke on failure without producing duplicates.
+        """
+        # Step 2 — linked account (idempotent).
+        await self.provision_linked_account(
+            merchant_id=merchant_id,
+            bank_account_number=None,  # bank goes to /products, not /accounts
+            ifsc_override=ifsc,
+            beneficiary_name_override=beneficiary_name,
+            reference_id=reference_id,
+            extra_notes=extra_notes,
+        )
+        # Step 3 — stakeholder (idempotent).
+        await self.create_stakeholder_for_merchant(merchant_id=merchant_id)
+        # Step 4 — request product configuration (idempotent).
+        await self.request_route_product(
+            merchant_id=merchant_id, tnc_accepted=tnc_accepted,
+        )
+        # Step 5 — update product config with settlement bank details.
+        snap_ifsc = ifsc
+        if not snap_ifsc:
+            snap = await self._kyc_snapshot(merchant_id)
+            snap_ifsc = snap["bank"].get("ifsc")
+        if not snap_ifsc:
+            raise ValueError("ifsc required and not present in KYC primary bank")
+        return await self.update_route_product_with_bank(
+            merchant_id=merchant_id,
+            bank_account_number=bank_account_number,
+            ifsc=snap_ifsc,
+            beneficiary_name=beneficiary_name,
+            tnc_accepted=tnc_accepted,
+        )
+
     # ── Transfers ───────────────────────────────────────────────────────
 
     async def _resolve_merchant_for_transfer(

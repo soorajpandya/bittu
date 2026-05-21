@@ -94,6 +94,135 @@ async def delete_linked_account(
     )
 
 
+# ── Stakeholders (v2) ────────────────────────────────────────────────────
+#
+# Step 3 of Route onboarding: every linked account needs at least one
+# stakeholder before a product configuration can be requested.
+
+
+async def create_stakeholder(
+    account_id: str,
+    *,
+    body: Mapping[str, Any],
+    idempotency_key: Optional[str] = None,
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """POST /v2/accounts/{account_id}/stakeholders"""
+    client = await get_razorpay_client()
+    return await client.post(
+        f"/v2/accounts/{account_id}/stakeholders",
+        operation="route.stakeholder.create",
+        json_body=dict(body),
+        idempotency_key=idempotency_key,
+        merchant_id=merchant_id,
+    )
+
+
+async def fetch_stakeholder(
+    account_id: str,
+    stakeholder_id: str,
+    *,
+    merchant_id: Optional[str] = None,
+) -> dict:
+    client = await get_razorpay_client()
+    return await client.get(
+        f"/v2/accounts/{account_id}/stakeholders/{stakeholder_id}",
+        operation="route.stakeholder.fetch",
+        merchant_id=merchant_id,
+    )
+
+
+async def fetch_all_stakeholders(
+    account_id: str, *, merchant_id: Optional[str] = None
+) -> dict:
+    client = await get_razorpay_client()
+    return await client.get(
+        f"/v2/accounts/{account_id}/stakeholders",
+        operation="route.stakeholder.list",
+        merchant_id=merchant_id,
+    )
+
+
+async def update_stakeholder(
+    account_id: str,
+    stakeholder_id: str,
+    *,
+    body: Mapping[str, Any],
+    merchant_id: Optional[str] = None,
+) -> dict:
+    client = await get_razorpay_client()
+    return await client.patch(
+        f"/v2/accounts/{account_id}/stakeholders/{stakeholder_id}",
+        operation="route.stakeholder.update",
+        json_body=dict(body),
+        merchant_id=merchant_id,
+    )
+
+
+# ── Product configuration (v2) ───────────────────────────────────────────
+#
+# Steps 4 & 5 of Route onboarding: request the `route` product, then update
+# it with the merchant's settlement bank details. The product configuration
+# transitions to `activated` once Razorpay reviews the bank details.
+
+
+async def request_product_configuration(
+    account_id: str,
+    *,
+    product_name: str = "route",
+    tnc_accepted: bool = True,
+    extra: Optional[Mapping[str, Any]] = None,
+    idempotency_key: Optional[str] = None,
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """POST /v2/accounts/{account_id}/products"""
+    body: dict[str, Any] = {
+        "product_name": product_name,
+        "tnc_accepted": bool(tnc_accepted),
+    }
+    if extra:
+        body.update(dict(extra))
+    client = await get_razorpay_client()
+    return await client.post(
+        f"/v2/accounts/{account_id}/products",
+        operation="route.product.request",
+        json_body=body,
+        idempotency_key=idempotency_key,
+        merchant_id=merchant_id,
+    )
+
+
+async def update_product_configuration(
+    account_id: str,
+    product_id: str,
+    *,
+    body: Mapping[str, Any],
+    merchant_id: Optional[str] = None,
+) -> dict:
+    """PATCH /v2/accounts/{account_id}/products/{product_id}"""
+    client = await get_razorpay_client()
+    return await client.patch(
+        f"/v2/accounts/{account_id}/products/{product_id}",
+        operation="route.product.update",
+        json_body=dict(body),
+        merchant_id=merchant_id,
+    )
+
+
+async def fetch_product_configuration(
+    account_id: str,
+    product_id: str,
+    *,
+    merchant_id: Optional[str] = None,
+) -> dict:
+    client = await get_razorpay_client()
+    return await client.get(
+        f"/v2/accounts/{account_id}/products/{product_id}",
+        operation="route.product.fetch",
+        merchant_id=merchant_id,
+    )
+
+
 # ── Transfers (v1) ───────────────────────────────────────────────────────
 
 
