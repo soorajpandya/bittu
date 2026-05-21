@@ -316,17 +316,21 @@ class MerchantWalletService:
 
         gross = Decimal(str(gross_amount))
         fee, gst, net = _calc_fee(gross)
+        # Headline merchant-facing deduction is the full 5 % cut
+        # (gross - net), not just our platform share. Razorpay's portion
+        # is intercepted server-side and does not appear as a separate
+        # line on the merchant's bank statement.
         return {
             "method":            method,
             "channel":           "online",
             "gross_amount":      _f(gross),
             "platform_fee":      _f(fee),
             "gst_on_fee":        _f(gst),
-            "total_deduction":   _f(fee + gst),
+            "total_deduction":   _f(gross - net),
             "net_settlement":    _f(net),
-            "fee_rate_pct":      "0.2542%",
+            "fee_rate_pct":      "3.2473%",
             "gst_rate_pct":      "18%",
-            "total_rate_pct":    "0.30%",
+            "total_rate_pct":    "5.00%",
             "settlement_eta":    "T+1 (next working day)",
         }
 

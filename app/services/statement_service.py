@@ -4,15 +4,32 @@ Statement & Settlement Service
 Merchant-facing settlement experience — Razorpay/PhonePe-style dashboard
 inside Bittu POS.
 
-Architecture
+Architecture (5 % gross-deduction model)
 ─────────────────────────────────────────────────────────────────────────────
-Bittu charges a 0.4% platform fee + 18% GST on that fee per collected
-payment, then settles the net amount to the merchant's bank account.
+A flat 5.00 % of every collected payment is deducted from the merchant's
+gross. They receive exactly (gross × 0.95) in their bank account.
+
+That 5 % cut is split three ways:
+
+  1. Razorpay server-side cut — 0.99 % + 18 % GST  ≈ 1.1682 % of gross.
+     Razorpay intercepts this BEFORE settling the remainder to our
+     pooled account, so we never "own" these paisa.
+  2. Platform pool — what's left of the 5 % after Razorpay's slice
+     ≈ 3.8318 % of gross. GST-inclusive.
+  3. The pool is reverse-extracted into our base platform fee
+     (pool ÷ 1.18  ≈ 3.2473 % of gross) and the GST component on it
+     (residual "plug"  ≈ 0.5845 % of gross). Computing GST as the
+     residual guarantees  bittu_fee + gst_on_fee == platform_pool  at
+     paisa precision — no rounding drift across batches.
 
   Gross Amount (collected from customers)
-  – Bittu Platform Fee  (gross × 0.4%)
-  – GST on Fee          (fee × 18%)
-  = Net Settlement Amount  (credited to merchant bank)
+  – Razorpay PG cut       (gross × 1.1682 %)   ← intercepted server-side
+  – Bittu Platform Fee    (pool  ÷ 1.18)
+  – GST on Platform Fee   (pool  − bittu_fee)
+  = Net Settlement Amount (gross × 95.00 %)    ← credited to merchant bank
+
+Invariant per settlement transaction:
+  razorpay_cut + bittu_fee + gst_on_fee + net_to_merchant == gross
 
 Key design decisions:
   • Decimal-safe arithmetic via Python's Decimal — no floats
@@ -57,43 +74,101 @@ from app.services.escrow_integration import release_holds_for_settlement
 logger = get_logger(__name__)
 
 # ── Fee constants ─────────────────────────────────────────────────────────────
-# Total merchant-side deduction is fixed at 0.30 % of the gross transaction.
-# That headline rate is split into:
-#   * platform fee   = TOTAL_DEDUCTION_RATE / (1 + GST_RATE)   (~0.2542 %)
-#   * GST on the fee = platform_fee * GST_RATE                 (~0.0458 %)
-# Computing in this order guarantees `fee + gst == total` to the paisa.
-TOTAL_DEDUCTION_RATE = Decimal("0.003000")  # 0.30 % flat (incl. GST)
-GST_RATE             = Decimal("0.180000")  # 18 % GST applied on the fee
-BITTU_FEE_RATE       = (TOTAL_DEDUCTION_RATE / (Decimal("1") + GST_RATE)).quantize(
+# 5 % flat gross deduction. Customer pays gross, merchant nets gross × 0.95.
+TOTAL_DEDUCTION_RATE = Decimal("0.050000")   # 5.00 % flat gross deduction
+GST_RATE             = Decimal("0.180000")   # 18 % GST
+
+# Razorpay's automatic server-side cut: 0.99 % base + 18 % GST on that base.
+# Computed inline so the relationship stays self-documenting; equivalent to
+# Decimal("0.011682").
+RAZORPAY_TOTAL_RATE  = (
+    Decimal("0.009900") * (Decimal("1.000000") + GST_RATE)
+)  # = 0.011682  (1.1682 % of gross)
+
+# Remainder of the 5 % cut after Razorpay's slice = our gross platform pool.
+# The pool is GST-inclusive; reverse-extract the base platform fee, then
+# treat GST as the residual so the three components reconcile exactly.
+PLATFORM_POOL_RATE   = TOTAL_DEDUCTION_RATE - RAZORPAY_TOTAL_RATE  # 0.038318
+BITTU_FEE_RATE       = (PLATFORM_POOL_RATE / (Decimal("1") + GST_RATE)).quantize(
     Decimal("0.000001"), rounding=ROUND_HALF_UP
-)  # ≈ 0.002542
+)  # ≈ 0.032473  (3.2473 % of gross)
 
 
 def _q2(val) -> Decimal:
-    """Quantize to 2 decimal places (for display/final amounts)."""
+    """Quantize to 2 decimal places — bank-facing (paisa) amounts."""
     return Decimal(str(val)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+def _q4(val) -> Decimal:
+    """Quantize to 4 decimal places — internal revenue-split components."""
+    return Decimal(str(val)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+
+
 def _q6(val) -> Decimal:
-    """Quantize to 6 decimal places (for intermediate fee calculations)."""
+    """Quantize to 6 decimal places — for rate constants only."""
     return Decimal(str(val)).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
 
 
-def _calc_fee(gross: Decimal) -> tuple[Decimal, Decimal, Decimal]:
+def _calc_settlement_breakdown(gross) -> dict:
     """
-    Return (bittu_fee, gst_on_fee, net_settlement).
+    Full per-settlement breakdown under the 5 % gross-deduction model.
 
-    Computes the headline 0.30% total deduction first, then derives the
-    base fee and GST so that  base + gst == total  to the paisa.  This
-    is the same approach a payment gateway uses on its merchant
-    statements: the visible deduction matches the bank line exactly.
+    Bank-facing amounts (`total_deduction`, `net_to_merchant`) are quantized
+    to paisa (2 dp) — they hit the merchant's bank statement and must match
+    exactly. Internal revenue-split components (`razorpay_cut`, `bittu_fee`,
+    `gst_on_fee`) are held at 4 dp so we don't lose precision when
+    reconciling against Razorpay's own settlement files, while still
+    summing back to `total_deduction` at paisa precision.
+
+    Invariants (verified at 4 dp; trivially round-trip at 2 dp):
+        razorpay_cut + bittu_fee + gst_on_fee == total_deduction
+        net_to_merchant + total_deduction      == gross
+
+    Worked example for gross = ₹100.00:
+        total_deduction = 5.0000   net_to_merchant = 95.0000
+        razorpay_cut    = 1.1682   platform_pool   = 3.8318
+        bittu_fee       = 3.2473   gst_on_fee      = 0.5845
     """
     gross = _q2(gross)
-    total_deduction = _q2(gross * TOTAL_DEDUCTION_RATE)        # exact 0.30%
-    bittu_fee       = _q2(total_deduction / (Decimal("1") + GST_RATE))
-    gst_on_fee      = _q2(total_deduction - bittu_fee)         # plug so sum is exact
-    net             = _q2(gross - total_deduction)
-    return bittu_fee, gst_on_fee, net
+
+    # Bank-facing — exact at paisa.
+    total_deduction = _q2(gross * TOTAL_DEDUCTION_RATE)
+    net_to_merchant = _q2(gross - total_deduction)
+
+    # Razorpay intercepts this server-side; we never receive these paisa.
+    razorpay_cut    = _q4(gross * RAZORPAY_TOTAL_RATE)
+
+    # What lands in our pooled account, GST-inclusive. Anchored on the
+    # already-paisa-quantized `total_deduction` so the three components
+    # always add back up to it exactly.
+    platform_pool   = _q4(_q4(total_deduction) - razorpay_cut)
+
+    # Reverse-extract base platform fee, then plug GST as the residual.
+    bittu_fee       = _q4(platform_pool / (Decimal("1") + GST_RATE))
+    gst_on_fee      = _q4(platform_pool - bittu_fee)
+
+    return {
+        "gross":            gross,
+        "total_deduction":  total_deduction,
+        "net_to_merchant":  net_to_merchant,
+        "razorpay_cut":     razorpay_cut,
+        "platform_pool":    platform_pool,
+        "bittu_fee":        bittu_fee,
+        "gst_on_fee":       gst_on_fee,
+    }
+
+
+def _calc_fee(gross) -> tuple[Decimal, Decimal, Decimal]:
+    """
+    Back-compat tuple: ``(bittu_fee, gst_on_fee, net_to_merchant)``.
+
+    Returns ONLY our platform share — the Razorpay-intercepted cut is
+    NOT folded into ``bittu_fee`` or ``gst_on_fee``. Callers that need
+    the full split (e.g. settlement-create routes, reconciliation jobs)
+    should call :func:`_calc_settlement_breakdown` instead.
+    """
+    br = _calc_settlement_breakdown(gross)
+    return br["bittu_fee"], br["gst_on_fee"], br["net_to_merchant"]
 
 
 def _make_reference(restaurant_id: str) -> str:
@@ -203,7 +278,8 @@ class StatementService:
                     COALESCE(SUM(bs.net_settlement_amount)
                         FILTER (WHERE bs.settlement_status = 'settled'), 0)     AS settled_amount,
                     COALESCE(SUM(bs.bittu_fee_amount), 0)                       AS total_bittu_charges,
-                    COALESCE(SUM(bs.gst_amount), 0)                             AS gst_on_charges
+                    COALESCE(SUM(bs.gst_amount), 0)                             AS gst_on_charges,
+                    COALESCE(SUM(bs.razorpay_cut_amount), 0)                    AS razorpay_charges
                 FROM bittu_settlements bs
                 WHERE bs.restaurant_id = $1
                   AND DATE(bs.created_at AT TIME ZONE 'Asia/Kolkata') BETWEEN $2 AND $3
@@ -231,7 +307,10 @@ class StatementService:
         settled_amount      = float(stl_agg["settled_amount"])
         total_bittu_charges = float(stl_agg["total_bittu_charges"])
         gst_on_charges      = float(stl_agg["gst_on_charges"])
-        total_deductions    = total_bittu_charges + gst_on_charges
+        razorpay_charges    = float(stl_agg["razorpay_charges"])
+        # Headline merchant-facing deduction = full 5 % cut
+        # = platform fee + GST + Razorpay's intercepted slice.
+        total_deductions    = total_bittu_charges + gst_on_charges + razorpay_charges
         pending_settlement  = max(0.0, total_received - settled_amount)
         net_amount_credited = settled_amount
 
@@ -285,6 +364,7 @@ class StatementService:
             "settled_amount":       settled_amount,
             "total_bittu_charges":  total_bittu_charges,
             "gst_on_charges":       gst_on_charges,
+            "razorpay_charges":     razorpay_charges,
             "total_deductions":     total_deductions,
             "net_amount_credited":  net_amount_credited,
             "upcoming_settlement": {
@@ -293,9 +373,15 @@ class StatementService:
                 "message":  upcoming_eta_message,
             },
             "fee_info": {
-                "bittu_fee_rate_pct": "0.2542%",
-                "gst_rate_pct":       "18%",
-                "description": "Bittu charges 0.4% platform fee + 18% GST on fee per settlement",
+                "total_deduction_rate_pct": "5.00%",
+                "razorpay_cut_rate_pct":    "1.1682%",
+                "bittu_fee_rate_pct":       "3.2473%",
+                "gst_rate_pct":             "18%",
+                "description": (
+                    "5% flat gross deduction. Razorpay auto-deducts 1.1682% "
+                    "(0.99% + 18% GST); the remainder is Bittu's platform fee "
+                    "(reverse-GST extracted) and the GST on that fee."
+                ),
             },
         }
 
@@ -864,7 +950,11 @@ class StatementService:
         oid = UUID(order_id)
 
         gross = _q2(gross_amount)
-        bittu_fee, gst_on_fee, net = _calc_fee(gross)
+        br = _calc_settlement_breakdown(gross)
+        bittu_fee    = br["bittu_fee"]
+        gst_on_fee   = br["gst_on_fee"]
+        net          = br["net_to_merchant"]
+        razorpay_cut = br["razorpay_cut"]
 
         # Idempotency: bail out if this payment is already settled/enqueued
         async with get_connection() as conn:
@@ -887,7 +977,8 @@ class StatementService:
         async with get_serializable_transaction() as conn:
             # Find existing PENDING batch for today
             batch = await conn.fetchrow("""
-                SELECT id, gross_amount, bittu_fee_amount, gst_amount, net_settlement_amount
+                SELECT id, gross_amount, bittu_fee_amount, gst_amount,
+                       net_settlement_amount, razorpay_cut_amount
                 FROM bittu_settlements
                 WHERE restaurant_id = $1
                   AND settlement_status = 'pending'
@@ -903,6 +994,7 @@ class StatementService:
                 new_fee   = _q6(Decimal(str(batch["bittu_fee_amount"])) + bittu_fee)
                 new_gst   = _q6(Decimal(str(batch["gst_amount"])) + gst_on_fee)
                 new_net   = _q2(Decimal(str(batch["net_settlement_amount"])) + net)
+                new_rzp   = _q6(Decimal(str(batch["razorpay_cut_amount"])) + razorpay_cut)
 
                 await conn.execute("""
                     UPDATE bittu_settlements
@@ -910,30 +1002,34 @@ class StatementService:
                         bittu_fee_amount      = $3,
                         gst_amount            = $4,
                         net_settlement_amount = $5,
-                        expected_settlement_at = $6,
+                        razorpay_cut_amount   = $6,
+                        expected_settlement_at = $7,
                         updated_at            = NOW()
                     WHERE id = $1
-                """, batch_id, float(new_gross), float(new_fee), float(new_gst), float(new_net), eta)
+                """, batch_id, float(new_gross), float(new_fee), float(new_gst),
+                    float(new_net), float(new_rzp), eta)
             else:
                 # Create new batch
                 ref = _make_reference(restaurant_id)
                 batch_id = await conn.fetchval("""
                     INSERT INTO bittu_settlements (
                         restaurant_id, branch_id, settlement_reference,
-                        gross_amount, bittu_fee_amount, gst_amount, net_settlement_amount,
+                        gross_amount, bittu_fee_amount, gst_amount,
+                        net_settlement_amount, razorpay_cut_amount,
                         fee_rate, gst_rate, settlement_cycle, settlement_status,
                         expected_settlement_at, idempotency_key,
                         period_start, period_end
                     ) VALUES (
-                        $1, $2, $3, $4, $5, $6, $7,
-                        $8, $9, $10, 'pending',
-                        $11, $12,
-                        $13, $13
+                        $1, $2, $3, $4, $5, $6, $7, $8,
+                        $9, $10, $11, 'pending',
+                        $12, $13,
+                        $14, $14
                     )
                     RETURNING id
                 """,
                     rid, bid, ref,
-                    float(gross), float(bittu_fee), float(gst_on_fee), float(net),
+                    float(gross), float(bittu_fee), float(gst_on_fee),
+                    float(net), float(razorpay_cut),
                     float(BITTU_FEE_RATE), float(GST_RATE), cycle,
                     eta, idem_key,
                     datetime.now(timezone.utc),
@@ -951,12 +1047,14 @@ class StatementService:
                     settlement_id, restaurant_id, branch_id,
                     payment_id, order_id,
                     gross_amount, fee_amount, gst_amount, net_amount,
+                    razorpay_cut_amount,
                     transaction_type, payment_method, customer_name, order_reference,
                     settlement_status
                 ) VALUES (
                     $1, $2, $3, $4, $5,
                     $6, $7, $8, $9,
-                    'payment', $10, $11, $12,
+                    $10,
+                    'payment', $11, $12, $13,
                     'pending'
                 )
                 RETURNING id
@@ -964,6 +1062,7 @@ class StatementService:
                 batch_id, rid, bid,
                 pid, oid,
                 float(gross), float(bittu_fee), float(gst_on_fee), float(net),
+                float(razorpay_cut),
                 payment_method, customer_name, order_reference,
             )
 
@@ -995,6 +1094,7 @@ class StatementService:
             "gross_amount":  float(gross),
             "bittu_fee":     float(bittu_fee),
             "gst_on_fee":    float(gst_on_fee),
+            "razorpay_cut":  float(razorpay_cut),
             "net_amount":    float(net),
             "status":        "queued",
             "eta":           eta.isoformat(),
@@ -1273,22 +1373,32 @@ class StatementService:
 
     def calculate_fee(self, gross_amount: float) -> dict:
         """
-        Public utility: return fee breakdown for a given gross amount.
-        Used by the frontend to show real-time fee preview before confirming.
+        Public utility: return the full per-settlement fee breakdown for a
+        given gross amount under the 5 % deduction model.
+
+        Used by the frontend to show a real-time fee preview before the
+        merchant confirms a transaction, and by settlement-create routes
+        that need every component (Razorpay cut included) for accounting.
         """
-        gross = _q2(gross_amount)
-        bittu_fee, gst_on_fee, net = _calc_fee(gross)
+        br = _calc_settlement_breakdown(gross_amount)
         return {
-            "gross_amount":    float(gross),
-            "bittu_fee_rate":  "0.2542%",
-            "bittu_fee":       float(bittu_fee),
-            "gst_rate":        "18%",
-            "gst_on_fee":      float(gst_on_fee),
-            "total_deductions": float(bittu_fee + gst_on_fee),
-            "net_settlement":  float(net),
+            "gross_amount":           float(br["gross"]),
+            "total_deduction_rate":   "5.00%",
+            "total_deduction":        float(br["total_deduction"]),
+            "razorpay_cut_rate":      "1.1682%",
+            "razorpay_cut":           float(br["razorpay_cut"]),
+            "platform_pool":          float(br["platform_pool"]),
+            "bittu_fee_rate":         "3.2473%",
+            "bittu_fee":              float(br["bittu_fee"]),
+            "gst_rate":               "18%",
+            "gst_on_fee":             float(br["gst_on_fee"]),
+            "net_settlement":         float(br["net_to_merchant"]),
             "formula": (
-                f"₹{float(gross):,.2f} × 0.4% = ₹{float(bittu_fee):,.4f} fee "
-                f"+ ₹{float(gst_on_fee):,.4f} GST = ₹{float(net):,.2f} net"
+                f"₹{float(br['gross']):,.2f} × 5% = ₹{float(br['total_deduction']):,.2f} cut → "
+                f"₹{float(br['razorpay_cut']):,.4f} Razorpay + "
+                f"₹{float(br['bittu_fee']):,.4f} fee + "
+                f"₹{float(br['gst_on_fee']):,.4f} GST; "
+                f"net ₹{float(br['net_to_merchant']):,.2f}"
             ),
         }
 

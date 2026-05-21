@@ -378,13 +378,15 @@ async def debug_context(
 
 @router.get(
     "/fee-calculator",
-    summary="Preview Bittu fee for a given gross amount",
+    summary="Preview the per-settlement deduction breakdown for a gross amount",
     description=(
-        "Returns real-time fee breakdown for a hypothetical gross amount:\n"
-        "  gross × 0.4% = Bittu fee\n"
-        "  fee × 18% = GST on fee\n"
-        "  net = gross − fee − GST\n\n"
-        "Useful for the frontend to show merchants what they will receive."
+        "Returns the real-time fee breakdown under the 5 % gross-deduction model:\n"
+        "  gross × 5.00 %    = total deduction\n"
+        "  gross × 1.1682 %  = Razorpay cut (auto-deducted)\n"
+        "  remainder ÷ 1.18  = Bittu platform fee (reverse-GST extracted)\n"
+        "  remainder − fee   = GST on fee (residual, paisa-exact)\n"
+        "  net = gross − total deduction (95 % of gross)\n\n"
+        "Useful for the frontend to show merchants exactly what they will receive."
     ),
 )
 async def fee_calculator(
