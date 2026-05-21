@@ -250,6 +250,19 @@ router.include_router(_admin_fee_plans.router)
 # ── Super Admin (top-level platform operations) ──
 from app.api.v1 import super_admin as _super_admin
 router.include_router(_super_admin.router)
+# ── Burptech Super-Admin extensions (overview, schedulers, route, 360, bulk, finance) ──
+from app.api.v1 import super_admin_overview       as _super_admin_overview
+from app.api.v1 import super_admin_schedulers     as _super_admin_schedulers
+from app.api.v1 import super_admin_route          as _super_admin_route
+from app.api.v1 import super_admin_merchant_360   as _super_admin_merchant_360
+from app.api.v1 import super_admin_bulk           as _super_admin_bulk
+from app.api.v1 import super_admin_finance        as _super_admin_finance
+router.include_router(_super_admin_overview.router)
+router.include_router(_super_admin_schedulers.router)
+router.include_router(_super_admin_route.router)
+router.include_router(_super_admin_merchant_360.router)
+router.include_router(_super_admin_bulk.router)
+router.include_router(_super_admin_finance.router)
 # ── Cross-merchant pay-ins, settlements, webhook failures (Phase 11) ──
 from app.api.v1 import admin_payments       as _admin_payments
 from app.api.v1 import admin_settlements    as _admin_settlements
@@ -297,6 +310,13 @@ _platform_router.include_router(_admin_fin_reports.router)
 _platform_router.include_router(_admin_merchant_kyc.router)
 _platform_router.include_router(_admin_merchant_statements.router)
 _platform_router.include_router(_admin_tax_invoices.router)
+_platform_router.include_router(_super_admin.router)
+_platform_router.include_router(_super_admin_overview.router)
+_platform_router.include_router(_super_admin_schedulers.router)
+_platform_router.include_router(_super_admin_route.router)
+_platform_router.include_router(_super_admin_merchant_360.router)
+_platform_router.include_router(_super_admin_bulk.router)
+_platform_router.include_router(_super_admin_finance.router)
 
 router.include_router(_platform_router,  prefix="/api")  # /api/platform/v1/...
 router.include_router(_merchant_router,  prefix="/api")  # /api/merchant/v1/...

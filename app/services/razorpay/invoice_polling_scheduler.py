@@ -74,22 +74,8 @@ async def _scheduler_loop(interval_sec: int) -> None:
         raise
 
     while True:
-        started = datetime.now(timezone.utc)
         try:
-            invoices = await _candidate_invoices()
-            refreshed = 0
-            for merchant_id, invoice_id in invoices:
-                if await _refresh_invoice(merchant_id, invoice_id):
-                    refreshed += 1
-
-            logger.info(
-                "rzp_invoice_polling_tick",
-                candidates=len(invoices),
-                refreshed=refreshed,
-                elapsed_ms=int(
-                    (datetime.now(timezone.utc) - started).total_seconds() * 1000
-                ),
-            )
+            await run_once()
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -99,6 +85,20 @@ async def _scheduler_loop(interval_sec: int) -> None:
             await asyncio.sleep(interval_sec)
         except asyncio.CancelledError:
             raise
+
+
+async def run_once() -> dict:
+    """One-shot tick. Used by the loop AND by super-admin manual triggers."""
+    started = datetime.now(timezone.utc)
+    invoices = await _candidate_invoices()
+    refreshed = 0
+    for merchant_id, invoice_id in invoices:
+        if await _refresh_invoice(merchant_id, invoice_id):
+            refreshed += 1
+    elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+    result = {"candidates": len(invoices), "refreshed": refreshed, "elapsed_ms": elapsed_ms}
+    logger.info("rzp_invoice_polling_tick", **result)
+    return result
 
 
 def start_rzp_invoice_polling_scheduler(

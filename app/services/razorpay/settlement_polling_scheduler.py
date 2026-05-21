@@ -106,29 +106,8 @@ async def _scheduler_loop(interval_sec: int, lookback_days: int) -> None:
         raise
 
     while True:
-        started = datetime.now(timezone.utc)
         try:
-            merchants = await _candidate_merchants()
-            settlements_total = 0
-            recon_total = 0
-            for mid in merchants:
-                settlements_total += await _pull_settlements_for_merchant(
-                    mid,
-                    lookback_days=lookback_days,
-                    page_size=DEFAULT_PAGE_SIZE,
-                )
-                recon = await _pull_recon_for_merchant(mid)
-                recon_total += int(recon.get("inserted") or 0)
-
-            logger.info(
-                "rzp_settlement_polling_tick",
-                merchants=len(merchants),
-                settlements_upserted=settlements_total,
-                recon_rows_inserted=recon_total,
-                elapsed_ms=int(
-                    (datetime.now(timezone.utc) - started).total_seconds() * 1000
-                ),
-            )
+            await run_once(lookback_days=lookback_days)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -138,6 +117,29 @@ async def _scheduler_loop(interval_sec: int, lookback_days: int) -> None:
             await asyncio.sleep(interval_sec)
         except asyncio.CancelledError:
             raise
+
+
+async def run_once(*, lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> dict:
+    """One-shot tick. Used by the loop AND by super-admin manual triggers."""
+    started = datetime.now(timezone.utc)
+    merchants = await _candidate_merchants()
+    settlements_total = 0
+    recon_total = 0
+    for mid in merchants:
+        settlements_total += await _pull_settlements_for_merchant(
+            mid, lookback_days=lookback_days, page_size=DEFAULT_PAGE_SIZE,
+        )
+        recon = await _pull_recon_for_merchant(mid)
+        recon_total += int(recon.get("inserted") or 0)
+    elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+    result = {
+        "merchants": len(merchants),
+        "settlements_upserted": settlements_total,
+        "recon_rows_inserted": recon_total,
+        "elapsed_ms": elapsed_ms,
+    }
+    logger.info("rzp_settlement_polling_tick", **result)
+    return result
 
 
 def start_rzp_settlement_polling_scheduler(

@@ -91,27 +91,8 @@ async def _scheduler_loop(interval_sec: int, page_size: int) -> None:
         raise
 
     while True:
-        started = datetime.now(timezone.utc)
         try:
-            vas = await _candidate_vas()
-            va_refreshes = 0
-            txns_total = 0
-            for merchant_id, virtual_account_id in vas:
-                if await _refresh_va(merchant_id, virtual_account_id):
-                    va_refreshes += 1
-                txns_total += await _pull_va_payments(
-                    merchant_id, virtual_account_id, page_size=page_size,
-                )
-
-            logger.info(
-                "rzp_smart_collect_polling_tick",
-                vas=len(vas),
-                va_refreshes=va_refreshes,
-                txns_upserted=txns_total,
-                elapsed_ms=int(
-                    (datetime.now(timezone.utc) - started).total_seconds() * 1000
-                ),
-            )
+            await run_once(page_size=page_size)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -121,6 +102,29 @@ async def _scheduler_loop(interval_sec: int, page_size: int) -> None:
             await asyncio.sleep(interval_sec)
         except asyncio.CancelledError:
             raise
+
+
+async def run_once(*, page_size: int = DEFAULT_PAGE_SIZE) -> dict:
+    """One-shot tick. Used by the loop AND by super-admin manual triggers."""
+    started = datetime.now(timezone.utc)
+    vas = await _candidate_vas()
+    va_refreshes = 0
+    txns_total = 0
+    for merchant_id, virtual_account_id in vas:
+        if await _refresh_va(merchant_id, virtual_account_id):
+            va_refreshes += 1
+        txns_total += await _pull_va_payments(
+            merchant_id, virtual_account_id, page_size=page_size,
+        )
+    elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+    result = {
+        "vas": len(vas),
+        "va_refreshes": va_refreshes,
+        "txns_upserted": txns_total,
+        "elapsed_ms": elapsed_ms,
+    }
+    logger.info("rzp_smart_collect_polling_tick", **result)
+    return result
 
 
 def start_rzp_smart_collect_polling_scheduler(

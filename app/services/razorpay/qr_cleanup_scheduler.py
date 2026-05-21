@@ -122,17 +122,8 @@ async def _scheduler_loop(interval_sec: int) -> None:
         raise
 
     while True:
-        started = datetime.now(timezone.utc)
         try:
-            n = await _close_expired_batch()
-            if n:
-                logger.info(
-                    "rzp_qr_cleanup_tick",
-                    closed=n,
-                    elapsed_ms=int(
-                        (datetime.now(timezone.utc) - started).total_seconds() * 1000
-                    ),
-                )
+            await run_once()
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -141,6 +132,17 @@ async def _scheduler_loop(interval_sec: int) -> None:
             await asyncio.sleep(interval_sec)
         except asyncio.CancelledError:
             raise
+
+
+async def run_once() -> dict:
+    """One-shot tick. Used by the loop AND by super-admin manual triggers."""
+    started = datetime.now(timezone.utc)
+    n = await _close_expired_batch()
+    elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+    result = {"closed": int(n), "elapsed_ms": elapsed_ms}
+    if n:
+        logger.info("rzp_qr_cleanup_tick", **result)
+    return result
 
 
 def start_rzp_qr_cleanup_scheduler(

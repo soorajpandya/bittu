@@ -112,29 +112,8 @@ async def _scheduler_loop(interval_sec: int, lookback_days: int) -> None:
         raise
 
     while True:
-        started = datetime.now(timezone.utc)
         try:
-            accounts = await _candidate_accounts()
-            account_refreshes = 0
-            transfers_total = 0
-            for merchant_id, linked_account_id in accounts:
-                if await _refresh_account(merchant_id, linked_account_id):
-                    account_refreshes += 1
-                transfers_total += await _pull_transfers(
-                    merchant_id,
-                    lookback_days=lookback_days,
-                    page_size=DEFAULT_PAGE_SIZE,
-                )
-
-            logger.info(
-                "rzp_route_polling_tick",
-                accounts=len(accounts),
-                account_refreshes=account_refreshes,
-                transfers_upserted=transfers_total,
-                elapsed_ms=int(
-                    (datetime.now(timezone.utc) - started).total_seconds() * 1000
-                ),
-            )
+            await run_once(lookback_days=lookback_days)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -144,6 +123,31 @@ async def _scheduler_loop(interval_sec: int, lookback_days: int) -> None:
             await asyncio.sleep(interval_sec)
         except asyncio.CancelledError:
             raise
+
+
+async def run_once(*, lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> dict:
+    """One-shot tick. Used by the loop AND by super-admin manual triggers."""
+    started = datetime.now(timezone.utc)
+    accounts = await _candidate_accounts()
+    account_refreshes = 0
+    transfers_total = 0
+    for merchant_id, linked_account_id in accounts:
+        if await _refresh_account(merchant_id, linked_account_id):
+            account_refreshes += 1
+        transfers_total += await _pull_transfers(
+            merchant_id,
+            lookback_days=lookback_days,
+            page_size=DEFAULT_PAGE_SIZE,
+        )
+    elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+    result = {
+        "accounts": len(accounts),
+        "account_refreshes": account_refreshes,
+        "transfers_upserted": transfers_total,
+        "elapsed_ms": elapsed_ms,
+    }
+    logger.info("rzp_route_polling_tick", **result)
+    return result
 
 
 def start_rzp_route_polling_scheduler(

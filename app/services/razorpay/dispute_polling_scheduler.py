@@ -94,22 +94,8 @@ async def _scheduler_loop(interval_sec: int, lookback_days: int) -> None:
         raise
 
     while True:
-        started = datetime.now(timezone.utc)
         try:
-            merchants = await _candidate_merchants()
-            total = 0
-            for mid in merchants:
-                total += await _poll_one_merchant(
-                    mid, lookback_days=lookback_days, page_size=DEFAULT_PAGE_SIZE,
-                )
-            logger.info(
-                "rzp_dispute_polling_tick",
-                merchants=len(merchants),
-                reconciled=total,
-                elapsed_ms=int(
-                    (datetime.now(timezone.utc) - started).total_seconds() * 1000
-                ),
-            )
+            await run_once(lookback_days=lookback_days)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -119,6 +105,21 @@ async def _scheduler_loop(interval_sec: int, lookback_days: int) -> None:
             await asyncio.sleep(interval_sec)
         except asyncio.CancelledError:
             raise
+
+
+async def run_once(*, lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> dict:
+    """One-shot tick. Used by the loop AND by super-admin manual triggers."""
+    started = datetime.now(timezone.utc)
+    merchants = await _candidate_merchants()
+    total = 0
+    for mid in merchants:
+        total += await _poll_one_merchant(
+            mid, lookback_days=lookback_days, page_size=DEFAULT_PAGE_SIZE,
+        )
+    elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+    result = {"merchants": len(merchants), "reconciled": total, "elapsed_ms": elapsed_ms}
+    logger.info("rzp_dispute_polling_tick", **result)
+    return result
 
 
 def start_rzp_dispute_polling_scheduler(
