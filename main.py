@@ -346,6 +346,100 @@ def create_app() -> FastAPI:
             },
         )
 
+    # -- Razorpay upstream errors → structured, user-actionable responses --
+    # Without this, RazorpayAPIError falls through to the generic 500
+    # INTERNAL_ERROR handler in the middleware which lies about retryability
+    # (admin-locked KYC forms, for example, are NOT retryable).
+    from app.services.razorpay.client import (
+        RazorpayAPIError as _RzpAPIErr,
+        RazorpayBadRequestError as _RzpBadReq,
+        RazorpayRateLimitedError as _RzpRateLimited,
+        RazorpayServerError as _RzpServerErr,
+    )
+
+    def _map_razorpay_error(exc: _RzpAPIErr) -> tuple[int, str, str, bool]:
+        """Return (http_status, error_code, user_message, retryable)."""
+        desc = (exc.error_description or "").strip()
+        rzp_code = (exc.error_code or "").strip()
+        lower = desc.lower()
+
+        # Razorpay locks the merchant activation form while their ops team
+        # reviews a needs_clarification submission. No edits possible until
+        # they release it; retrying just hammers the same 400.
+        if "locked for editing" in lower or "form has been locked" in lower:
+            return (
+                423,
+                "RZP_FORM_LOCKED",
+                (
+                    "Razorpay is currently reviewing your account. "
+                    "Please wait for their response or contact Razorpay "
+                    "support to release the activation form before retrying."
+                ),
+                False,
+            )
+        if isinstance(exc, _RzpRateLimited):
+            return (429, "RZP_RATE_LIMITED", desc or "Razorpay rate limit hit.", True)
+        if isinstance(exc, _RzpServerErr):
+            return (
+                502,
+                "RZP_UPSTREAM_ERROR",
+                desc or "Razorpay is temporarily unavailable.",
+                True,
+            )
+        if isinstance(exc, _RzpBadReq):
+            # Surface Razorpay's own description verbatim — it's already
+            # the most useful thing we can show the merchant.
+            msg = desc or "Razorpay rejected the request."
+            if rzp_code:
+                msg = f"{msg} ({rzp_code})"
+            return (422, "RZP_BAD_REQUEST", msg, False)
+        # Unknown upstream shape.
+        return (
+            502,
+            "RZP_UPSTREAM_ERROR",
+            desc or "Razorpay returned an unexpected error.",
+            False,
+        )
+
+    @app.exception_handler(_RzpAPIErr)
+    async def razorpay_exception_handler(request: _Req, exc: _RzpAPIErr) -> _JSONResp:
+        request_id = getattr(request.state, "request_id", None)
+        status_code, code, message, retryable = _map_razorpay_error(exc)
+        try:
+            from app.core.logging import get_logger as _get_logger
+            _rlog = _get_logger("app.razorpay")
+            _rlog.warning(
+                "razorpay_upstream_error",
+                extra={
+                    "path": str(request.url.path),
+                    "method": request.method,
+                    "request_id": request_id,
+                    "rzp_status": exc.status_code,
+                    "rzp_error_code": exc.error_code,
+                    "rzp_description": exc.error_description,
+                    "mapped_status": status_code,
+                    "mapped_code": code,
+                },
+            )
+        except Exception:
+            pass
+        return _JSONResp(
+            status_code=status_code,
+            content={
+                "error": {
+                    "code": code,
+                    "message": message,
+                    "details": {
+                        "rzp_status": exc.status_code,
+                        "rzp_error_code": exc.error_code,
+                        "rzp_description": exc.error_description,
+                    },
+                    "retryable": retryable,
+                },
+                "request_id": request_id,
+            },
+        )
+
     # -- Routes --
     app.include_router(api_router)
 
