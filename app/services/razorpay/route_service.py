@@ -297,6 +297,15 @@ class RzpRouteService:
         if profile.get("gstin"):
             legal_info["gst"] = profile["gstin"]
 
+        # Razorpay caps reference_id at 20 chars. UUID-based fallback
+        # (`merchant:<uuid>` = 45 chars) would 400. Use a short prefix +
+        # first 16 hex chars of the merchant UUID (= 18 chars total),
+        # and clamp any caller-supplied value to 20.
+        if reference_id:
+            ref = str(reference_id)[:20]
+        else:
+            ref = "m_" + merchant_id.replace("-", "")[:16]
+
         rzp_resp = await route_api.create_linked_account(
             email=email,
             phone=phone,
@@ -306,7 +315,7 @@ class RzpRouteService:
             profile=rzp_profile,
             legal_info=legal_info or None,
             notes=notes,
-            reference_id=reference_id or f"merchant:{merchant_id}",
+            reference_id=ref,
             idempotency_key=f"rzp_route_account:{merchant_id}",
             merchant_id=merchant_id,
         )
