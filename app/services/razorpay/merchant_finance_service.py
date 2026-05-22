@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Optional
@@ -89,6 +90,36 @@ def _require_merchant(merchant_id: Optional[str]) -> str:
     if not merchant_id:
         raise ValidationError("merchant context is required")
     return merchant_id
+
+
+def _as_dict(value: Any) -> dict:
+    """Coerce a JSONB column value to a dict.
+
+    asyncpg returns JSONB as a raw JSON string when no codec is registered
+    (which is the case for this pool — see app/core/database.py). Older
+    rows may also legitimately contain a stringified JSON blob. Anything
+    that isn't a dict-shaped JSON object collapses to {} so downstream
+    `.get(...)` calls never explode.
+    """
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            value = value.decode("utf-8")
+        except Exception:
+            return {}
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return {}
+        try:
+            parsed = json.loads(s)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 # ─────────────────────────── service ──────────────────────────────────────
@@ -179,7 +210,7 @@ class MerchantFinanceService:
     def _project_payment(row: dict) -> dict:
         gross = _money(row["amount_paise"])
         merchant, commission = _split_gross(gross)
-        notes = row.get("notes") or {}
+        notes = _as_dict(row.get("notes"))
         return {
             "transaction_id": row["razorpay_payment_id"],
             "payment_id": row["razorpay_payment_id"],
