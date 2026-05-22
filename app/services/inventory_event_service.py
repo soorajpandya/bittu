@@ -194,7 +194,10 @@ class InventoryEventService:
                 correlation_id=correlation_id,
             ))
 
-        await cache_delete_pattern(f"inv:bal:{ingredient_id}:*")
+        # Cache invalidation is best-effort; don't block the caller on a
+        # Redis SCAN + per-key DELETE round-trip storm.
+        import asyncio as _asyncio
+        _asyncio.create_task(cache_delete_pattern(f"inv:bal:{ingredient_id}:*"))
         return str(event_id)
 
     async def reverse_event(

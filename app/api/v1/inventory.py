@@ -27,6 +27,7 @@ Every mutation:
 """
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 from typing import Optional
 
@@ -249,13 +250,15 @@ async def create_adjustment(
             float(body.quantity), body.unit, float(body.unit_cost or 0),
             body.reason, body.notes, event_id, user.user_id,
         )
-    await log_activity(
+    # Fire-and-forget the audit log so we don't hold the HTTP response
+    # waiting on a second Supabase round-trip.
+    asyncio.create_task(log_activity(
         user_id=user.user_id, branch_id=user.branch_id,
         action="inventory.adjusted", entity_type="ingredient",
         entity_id=body.ingredient_id,
         metadata={"adjustment_id": str(adj_id), "type": body.adjustment_type,
                   "qty": float(body.quantity)},
-    )
+    ))
     return {"adjustment_id": str(adj_id), "event_id": event_id}
 
 
