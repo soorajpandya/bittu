@@ -192,3 +192,114 @@ async def track_funnel(
         step=body.step,
         metadata=body.metadata,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Best-selling items + ingredient consumption (lightweight aggregates)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/top-items")
+async def top_selling_items(
+    days: int = Query(30, ge=1, le=365, description="Look-back window in days"),
+    limit: int = Query(10, ge=1, le=100),
+    branch_id: Optional[str] = Query(None),
+    user: UserContext = Depends(require_permission("analytics.read")),
+):
+    """
+    Most-ordered menu items in the last `days` days, ranked by units sold.
+    Excludes non-revenue (cancelled / refunded / failed) orders.
+    """
+    branch = branch_id or user.branch_id
+    async with get_connection() as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT
+                oi.item_id,
+                COALESCE(oi.item_name, i."Item_Name")          AS item_name,
+                SUM(oi.quantity)::int                           AS units_sold,
+                SUM(oi.total_price)::numeric(14,2)              AS revenue,
+                COUNT(DISTINCT oi.order_id)                     AS orders
+            FROM order_items oi
+            JOIN orders o ON o.id = oi.order_id
+            LEFT JOIN items i ON i."Item_ID" = oi.item_id
+            WHERE o.restaurant_id = $1::uuid
+              AND ($2::uuid IS NULL OR o.branch_id = $2::uuid)
+              AND o.created_at >= NOW() - ($3 || ' days')::interval
+              AND {_REVENUE_ORDERS_FILTER.replace('status', 'o.status')}
+              AND oi.item_id IS NOT NULL
+            GROUP BY oi.item_id, COALESCE(oi.item_name, i."Item_Name")
+            ORDER BY units_sold DESC, revenue DESC
+            LIMIT $4
+            """,
+            user.restaurant_id, branch, days, limit,
+        )
+    return {
+        "window_days": days,
+        "branch_id": branch,
+        "items": [
+            {
+                "item_id": r["item_id"],
+                "item_name": r["item_name"],
+                "units_sold": r["units_sold"],
+                "revenue": float(r["revenue"] or 0),
+                "orders": r["orders"],
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/ingredient-usage")
+async def ingredient_usage(
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(20, ge=1, le=200),
+    branch_id: Optional[str] = Query(None),
+    user: UserContext = Depends(require_permission("inventory.read")),
+):
+    """
+    Quantity (and value) of each ingredient consumed in the last `days` days.
+    Reads outflows from `inventory_ledger` (consumption / wastage / adjustment_out
+    / transfer_out). Excludes purchases / restocks / opening balances.
+    """
+    branch = branch_id or user.branch_id
+    async with get_connection() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT
+                l.ingredient_id,
+                i.name                                              AS name,
+                i.unit                                              AS unit,
+                SUM(l.quantity_out)::numeric(14,3)                  AS qty_consumed,
+                SUM(l.quantity_out * COALESCE(l.unit_cost, 0))::numeric(14,2)
+                                                                    AS value_consumed,
+                COUNT(*)                                            AS movements
+            FROM inventory_ledger l
+            JOIN ingredients i ON i.id = l.ingredient_id
+            WHERE l.restaurant_id = $1::uuid
+              AND ($2::uuid IS NULL OR l.branch_id = $2::uuid)
+              AND l.created_at >= NOW() - ($3 || ' days')::interval
+              AND l.quantity_out > 0
+              AND l.transaction_type IN (
+                    'consumption', 'wastage', 'adjustment_out', 'transfer_out'
+              )
+            GROUP BY l.ingredient_id, i.name, i.unit
+            ORDER BY qty_consumed DESC
+            LIMIT $4
+            """,
+            user.restaurant_id, branch, days, limit,
+        )
+    return {
+        "window_days": days,
+        "branch_id": branch,
+        "ingredients": [
+            {
+                "ingredient_id": r["ingredient_id"],
+                "name": r["name"],
+                "unit": r["unit"],
+                "qty_consumed": float(r["qty_consumed"] or 0),
+                "value_consumed": float(r["value_consumed"] or 0),
+                "movements": r["movements"],
+            }
+            for r in rows
+        ],
+    }
