@@ -115,6 +115,19 @@ class OnboardIn(BaseModel):
         None, description="savings|current|nro|nre"
     )
 
+    # ── Razorpay /v2/accounts profile fields ────────────────────────
+    # Forwarded verbatim to Razorpay's create-linked-account call.
+    # `addresses` is the full Razorpay-shaped dict (e.g.
+    # {"registered": {"street1": ..., "city": ..., ...}}). When omitted
+    # the handler builds it from registered_address above.
+    category: Optional[str] = Field(
+        None, description="Razorpay profile.category (defaults to 'food')"
+    )
+    subcategory: Optional[str] = Field(
+        None, description="Razorpay profile.subcategory (defaults to 'restaurant')"
+    )
+    addresses: Optional[dict[str, Any]] = None
+
 
 # ── Linked account ────────────────────────────────────────────────────────
 
@@ -252,6 +265,9 @@ async def onboard_route_merchant(
             reference_id=body.reference_id,
             tnc_accepted=body.tnc_accepted,
             extra_notes=body.notes,
+            category=body.category,
+            subcategory=body.subcategory,
+            addresses_override=body.addresses,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

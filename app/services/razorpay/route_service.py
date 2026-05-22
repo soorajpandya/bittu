@@ -89,7 +89,8 @@ class RzpRouteService:
         """Pull the bits of KYC needed to provision a linked account."""
         async with get_connection() as conn:
             profile = await conn.fetchrow(
-                "SELECT legal_name, business_type, contact_email, contact_phone "
+                "SELECT legal_name, business_type, contact_email, contact_phone, "
+                "       pan, gstin, registered_address "
                 "FROM merchant_kyc_profiles WHERE merchant_id = $1::uuid",
                 merchant_id,
             )
@@ -226,6 +227,9 @@ class RzpRouteService:
         beneficiary_name_override: Optional[str] = None,
         reference_id: Optional[str] = None,
         extra_notes: Optional[Mapping[str, Any]] = None,
+        category: Optional[str] = None,
+        subcategory: Optional[str] = None,
+        addresses_override: Optional[Mapping[str, Any]] = None,
     ) -> dict:
         """
         Create a Razorpay linked account for this merchant if one doesn't
@@ -259,17 +263,41 @@ class RzpRouteService:
         if extra_notes:
             notes.update(dict(extra_notes))
 
+        # Build profile.addresses: prefer caller override, else the
+        # KYC profile's registered_address (wrapped under the
+        # `registered` key Razorpay expects).
+        if addresses_override is not None:
+            addresses = dict(addresses_override)
+        else:
+            reg_addr = profile.get("registered_address")
+            if isinstance(reg_addr, str):
+                try:
+                    import json as _json
+                    reg_addr = _json.loads(reg_addr)
+                except Exception:
+                    reg_addr = None
+            addresses = {"registered": reg_addr} if reg_addr else {}
+
+        rzp_profile: dict[str, Any] = {
+            "category": category or "food",
+            "subcategory": subcategory or "restaurant",
+            "addresses": addresses,
+        }
+
+        legal_info: dict[str, Any] = {}
+        if profile.get("pan"):
+            legal_info["pan"] = profile["pan"]
+        if profile.get("gstin"):
+            legal_info["gst"] = profile["gstin"]
+
         rzp_resp = await route_api.create_linked_account(
             email=email,
             phone=phone,
             legal_business_name=profile["legal_name"],
             business_type=str(profile.get("business_type") or "individual"),
             contact_name=contact_name,
-            profile={
-                "category": "food",
-                "subcategory": "restaurant",
-                "addresses": {},
-            },
+            profile=rzp_profile,
+            legal_info=legal_info or None,
             notes=notes,
             reference_id=reference_id or f"merchant:{merchant_id}",
             idempotency_key=f"rzp_route_account:{merchant_id}",
@@ -618,6 +646,9 @@ class RzpRouteService:
         reference_id: Optional[str] = None,
         tnc_accepted: bool = True,
         extra_notes: Optional[Mapping[str, Any]] = None,
+        category: Optional[str] = None,
+        subcategory: Optional[str] = None,
+        addresses_override: Optional[Mapping[str, Any]] = None,
     ) -> dict:
         """
         End-to-end Route onboarding orchestrator (steps 2-5 of the
@@ -632,6 +663,9 @@ class RzpRouteService:
             beneficiary_name_override=beneficiary_name,
             reference_id=reference_id,
             extra_notes=extra_notes,
+            category=category,
+            subcategory=subcategory,
+            addresses_override=addresses_override,
         )
         # Step 3 — stakeholder (idempotent).
         await self.create_stakeholder_for_merchant(merchant_id=merchant_id)
