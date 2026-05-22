@@ -31,7 +31,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from app.core.auth import UserContext, require_permission
 from app.core.database import get_connection, get_serializable_transaction
@@ -189,9 +189,17 @@ async def list_snapshots(
 # ════════════════════════════════════════════════════════════════════════════
 
 class AdjustmentIn(BaseModel):
+    # Accept legacy/alternate client field name `direction` as an alias for
+    # `adjustment_type` so older Flutter builds don't 422 on this endpoint.
+    model_config = ConfigDict(populate_by_name=True)
+
     ingredient_id: str
     branch_id: Optional[str] = None
-    adjustment_type: str = Field(..., pattern="^(increase|decrease|recount|damage|theft|found)$")
+    adjustment_type: str = Field(
+        ...,
+        validation_alias=AliasChoices("adjustment_type", "direction"),
+        pattern="^(increase|decrease|recount|damage|theft|found)$",
+    )
     quantity: Decimal = Field(..., gt=0)
     unit: Optional[str] = None
     unit_cost: Optional[Decimal] = None
