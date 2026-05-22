@@ -62,6 +62,11 @@ _LEGACY_COMMISSION_RATE = Decimal("0.05")
 _LEGACY_MERCHANT_RATE   = Decimal("0.95")
 
 
+# Local POS payment methods that bypass Razorpay entirely. Stored in the
+# `payments` table; settled the moment they're recorded (no clearing).
+_CASH_METHODS = ("cash", "counter", "cod")
+
+
 # Statement entry categories (spec-mandated names).
 ENTRY_PAYMENT_RECEIVED      = "PAYMENT_RECEIVED"
 ENTRY_COMMISSION_DEDUCTED   = "COMMISSION_DEDUCTED"
@@ -279,24 +284,41 @@ class MerchantFinanceService:
                 """,
                 merchant_id, from_date, to_date,
             )
+            # Cash / counter / COD payments live in the local `payments`
+            # table and never touch Razorpay. They count toward gross
+            # sales but bypass settlement entirely (the cash is already
+            # in the merchant's till).
+            cash_row = await conn.fetchrow(
+                """
+                SELECT COALESCE(SUM(amount), 0)::numeric(14,2) AS cash_amount,
+                       COUNT(*)::bigint                         AS cash_count
+                FROM payments
+                WHERE restaurant_id = $1::uuid
+                  AND status        = 'completed'
+                  AND LOWER(method)  = ANY($4::text[])
+                  AND ($2::date IS NULL OR (COALESCE(paid_at, created_at))::date >= $2::date)
+                  AND ($3::date IS NULL OR (COALESCE(paid_at, created_at))::date <= $3::date)
+                """,
+                merchant_id, from_date, to_date, list(_CASH_METHODS),
+            )
 
-        gross    = _money(gross_row["gross_paise"])
-        transfers = _money(transfer_paise or 0)
-        settled  = _money(settled_net_paise or 0)
-        refunds  = _money(refund_paise or 0)
+        online_gross = _money(gross_row["gross_paise"])
+        cash_gross   = Decimal(str(cash_row["cash_amount"] or 0)).quantize(_Q2, rounding=ROUND_HALF_UP)
+        gross        = online_gross + cash_gross
+        transfers    = _money(transfer_paise or 0)
+        settled      = _money(settled_net_paise or 0)
+        refunds      = _money(refund_paise or 0)
 
-        # Merchant's share is gross minus Bittu's flat 5% commission.
-        # We use the documented contract formula so the FE sees a non-zero
-        # `pending_settlement` as soon as a payment is captured, even
-        # before Route transfers have fired (which only happens once the
-        # linked account is fully activated).
-        merchant_share = (gross * Decimal("0.95")).quantize(Decimal("0.01"))
-        commission = gross - merchant_share
+        # Merchant's share of *online* gross is gross minus Bittu's flat
+        # 5% commission. Cash never has commission.
+        merchant_share_online = (online_gross * Decimal("0.95")).quantize(Decimal("0.01"))
+        commission = online_gross - merchant_share_online
         if commission < 0:
             commission = Decimal("0.00")
 
-        # Pending = money owed to merchant but not yet sent to their bank.
-        pending = merchant_share - settled - refunds
+        # Pending = online money owed to merchant but not yet sent to
+        # their bank. Cash is already with them so it is NOT pending.
+        pending = merchant_share_online - settled - refunds
         if pending < 0:
             pending = Decimal("0.00")
 
@@ -312,12 +334,14 @@ class MerchantFinanceService:
             "kyc_status":          (linked or {}).get("kyc_status"),
             "linked_account_id":   (linked or {}).get("linked_account_id"),
             "gross_sales":         float(gross),
-            "settled_amount":      float(_q(settled)),
+            "cash_sales":          float(cash_gross),
+            "online_sales":        float(online_gross),
+            "settled_amount":      float(_q(settled + cash_gross)),
             "platform_commission": float(_q(commission)),
             "pending_settlement":  float(_q(pending)),
             "refunds":             float(refunds),
             "available_balance":   float(_q(available)),
-            "transaction_count":   int(gross_row["tx_count"]),
+            "transaction_count":   int(gross_row["tx_count"]) + int(cash_row["cash_count"] or 0),
             "currency":            "INR",
             "window": {
                 "from": from_date.isoformat() if from_date else None,
@@ -378,6 +402,50 @@ class MerchantFinanceService:
             "error_code":       row.get("error_code"),
             "error_description": row.get("error_description"),
             "source":           "razorpay",
+        }
+
+    @staticmethod
+    def _project_cash_payment(row: dict) -> dict:
+        """Project a row from the local `payments` table (cash / counter /
+        COD) into the same shape as a Razorpay capture, so the FE can list
+        them on the statement screen uniformly. Cash settles instantly:
+        merchant_amount = gross, no commission, no transfer.
+        """
+        amount = Decimal(str(row.get("amount") or 0)).quantize(_Q2, rounding=ROUND_HALF_UP)
+        method = (row.get("method") or "cash").lower()
+        pid = str(row.get("id"))
+        oid = row.get("order_id")
+        return {
+            "transaction_id":    pid,
+            "payment_id":        pid,
+            "transfer_id":       None,
+            "order_id":          None,
+            "internal_order_id": str(oid) if oid else None,
+            "amount":            float(amount),
+            "gross_amount":      float(amount),
+            "merchant_amount":   float(amount),
+            "commission_amount": 0.0,
+            "currency":          row.get("currency") or "INR",
+            # FE treats anything other than pending/processing/sent_to_bank
+            # as "non-pending"; cash is effectively already settled.
+            "status":            "settled",
+            "settlement_status": "settled",
+            "payment_method":    method,
+            "method_detail":     {"vpa": None, "bank": None, "wallet": None, "card_id": None},
+            "customer_email":    None,
+            "customer_contact":  None,
+            "customer_name":     None,
+            "captured":          True,
+            "captured_at":       _iso(row.get("paid_at") or row.get("created_at")),
+            "created_at":        _iso(row.get("created_at")),
+            "fee":               0.0,
+            "tax":               0.0,
+            "description":       None,
+            "notes":             {},
+            "error_code":        None,
+            "error_description": None,
+            "source":            "cash",
+            "channel":           "cash",
         }
 
     async def list_transactions(
@@ -464,13 +532,65 @@ class MerchantFinanceService:
                 limit, offset,
             )
 
+            # Also fetch cash / counter / COD payments from the local
+            # `payments` table so the statement screen shows them
+            # alongside online captures. Skip when caller asked for a
+            # Razorpay-specific method (upi/card/netbanking/wallet).
+            include_cash = payment_method is None or payment_method.lower() in _CASH_METHODS
+            cash_rows: list = []
+            cash_total = 0
+            if include_cash:
+                cash_total = await conn.fetchval(
+                    """
+                    SELECT COUNT(*)
+                    FROM payments
+                    WHERE restaurant_id = $1::uuid
+                      AND status        = 'completed'
+                      AND LOWER(method)  = ANY($8::text[])
+                      AND ($2::date IS NULL OR (COALESCE(paid_at, created_at))::date >= $2::date)
+                      AND ($3::date IS NULL OR (COALESCE(paid_at, created_at))::date <= $3::date)
+                      AND ($4::text IS NULL OR LOWER(method) = $4::text)
+                      AND ($5::bigint IS NULL OR (amount * 100)::bigint >= $5::bigint)
+                      AND ($6::bigint IS NULL OR (amount * 100)::bigint <= $6::bigint)
+                      AND ($7::text IS NULL OR id::text ILIKE $7 OR order_id::text ILIKE $7)
+                    """,
+                    merchant_id, from_date, to_date,
+                    payment_method, min_paise, max_paise, like,
+                    list(_CASH_METHODS),
+                ) or 0
+                cash_rows = await conn.fetch(
+                    """
+                    SELECT id, order_id, method, amount, currency, status,
+                           paid_at, created_at
+                    FROM payments
+                    WHERE restaurant_id = $1::uuid
+                      AND status        = 'completed'
+                      AND LOWER(method)  = ANY($8::text[])
+                      AND ($2::date IS NULL OR (COALESCE(paid_at, created_at))::date >= $2::date)
+                      AND ($3::date IS NULL OR (COALESCE(paid_at, created_at))::date <= $3::date)
+                      AND ($4::text IS NULL OR LOWER(method) = $4::text)
+                      AND ($5::bigint IS NULL OR (amount * 100)::bigint >= $5::bigint)
+                      AND ($6::bigint IS NULL OR (amount * 100)::bigint <= $6::bigint)
+                      AND ($7::text IS NULL OR id::text ILIKE $7 OR order_id::text ILIKE $7)
+                    ORDER BY COALESCE(paid_at, created_at) DESC
+                    LIMIT $9 OFFSET $10
+                    """,
+                    merchant_id, from_date, to_date,
+                    payment_method, min_paise, max_paise, like,
+                    list(_CASH_METHODS),
+                    limit, offset,
+                )
+
         items = [self._project_payment(dict(r)) for r in rows]
+        items.extend(self._project_cash_payment(dict(r)) for r in cash_rows)
+        # Newest first across both sources.
+        items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
         return {
             "items":    items,
-            "total":    int(total or 0),
+            "total":    int(total or 0) + int(cash_total or 0),
             "limit":    limit,
             "offset":   offset,
-            "has_more": offset + limit < int(total or 0),
+            "has_more": offset + limit < (int(total or 0) + int(cash_total or 0)),
         }
 
     # ── settlements list / detail / timeline ─────────────────────────────
