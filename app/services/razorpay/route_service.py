@@ -278,6 +278,13 @@ class RzpRouteService:
                     reg_addr = None
             addresses = {"registered": reg_addr} if reg_addr else {}
 
+        if not addresses or not any(addresses.values()):
+            raise ValueError(
+                "registered address required — send `addresses` "
+                "(e.g. {\"registered\": {street1, city, state, postal_code, country}}) "
+                "or fill `registered_address` on the KYC profile"
+            )
+
         rzp_profile: dict[str, Any] = {
             "category": category or "food",
             "subcategory": subcategory or "restaurant",
