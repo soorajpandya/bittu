@@ -34,4 +34,10 @@ async def auto_link_ingredients(
 ):
     """AI-suggest ingredients, match/create raw materials, link to item."""
     uid = user.owner_id if user.is_branch_user else user.user_id
-    return await _svc.auto_link_ingredients(uid, body.item_id, body.item_name)
+    return await _svc.auto_link_ingredients(
+        uid,
+        body.item_id,
+        body.item_name,
+        restaurant_id=user.restaurant_id,
+        branch_id=user.branch_id,
+    )

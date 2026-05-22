@@ -87,6 +87,8 @@ class AIIngredientService:
         user_id: str,
         item_id: int,
         item_name: str,
+        restaurant_id: str | None = None,
+        branch_id: str | None = None,
     ) -> list[dict]:
         """
         AI-suggest ingredients for an item, match to existing raw materials,
@@ -112,14 +114,29 @@ class AIIngredientService:
                 if row:
                     ingredient_id = row["id"]
                 else:
-                    # Create the raw material
+                    # Create the raw material — MUST include restaurant_id so the
+                    # ingredient is visible to /inventory/balances (which filters
+                    # by restaurant_id, not user_id).
                     row = await conn.fetchrow(
                         """
-                        INSERT INTO ingredients (user_id, name, unit, current_stock, minimum_stock, cost_per_unit)
-                        VALUES ($1, $2, $3, 0, 0, 0)
+                        INSERT INTO ingredients (
+                            user_id, restaurant_id, branch_id,
+                            name, unit,
+                            current_stock, stock_quantity,
+                            minimum_stock, cost_per_unit,
+                            is_active, created_at, updated_at
+                        )
+                        VALUES (
+                            $1, $2::uuid, $3::uuid,
+                            $4, $5,
+                            0, 0,
+                            0, 0,
+                            TRUE, NOW(), NOW()
+                        )
                         RETURNING id
                         """,
-                        user_id, name, unit,
+                        user_id, restaurant_id, branch_id,
+                        name, unit,
                     )
                     ingredient_id = row["id"]
 
