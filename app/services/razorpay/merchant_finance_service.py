@@ -241,8 +241,8 @@ class MerchantFinanceService:
                 FROM rzp_payments
                 WHERE merchant_id = $1::uuid
                   AND status      = 'captured'
-                  AND ($2::date IS NULL OR (COALESCE(captured_at, created_at))::date >= $2::date)
-                  AND ($3::date IS NULL OR (COALESCE(captured_at, created_at))::date <= $3::date)
+                  AND ($2::date IS NULL OR (COALESCE(captured_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
+                  AND ($3::date IS NULL OR (COALESCE(captured_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
                 """,
                 merchant_id, from_date, to_date,
             )
@@ -253,8 +253,8 @@ class MerchantFinanceService:
                 FROM rzp_route_transfers
                 WHERE merchant_id = $1::uuid
                   AND status      IN ('created', 'processed')
-                  AND ($2::date IS NULL OR (COALESCE(processed_at, created_at))::date >= $2::date)
-                  AND ($3::date IS NULL OR (COALESCE(processed_at, created_at))::date <= $3::date)
+                  AND ($2::date IS NULL OR (COALESCE(processed_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
+                  AND ($3::date IS NULL OR (COALESCE(processed_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
                 """,
                 merchant_id, from_date, to_date,
             )
@@ -268,8 +268,8 @@ class MerchantFinanceService:
                 LEFT JOIN rzp_settlements s ON s.settlement_id = sp.settlement_id
                 WHERE sp.merchant_id = $1::uuid
                   AND COALESCE(s.status::text, 'processed') = 'processed'
-                  AND ($2::date IS NULL OR COALESCE(s.settled_at::date, sp.created_at::date) >= $2::date)
-                  AND ($3::date IS NULL OR COALESCE(s.settled_at::date, sp.created_at::date) <= $3::date)
+                  AND ($2::date IS NULL OR COALESCE((s.settled_at AT TIME ZONE 'Asia/Kolkata')::date, (sp.created_at AT TIME ZONE 'Asia/Kolkata')::date) >= $2::date)
+                  AND ($3::date IS NULL OR COALESCE((s.settled_at AT TIME ZONE 'Asia/Kolkata')::date, (sp.created_at AT TIME ZONE 'Asia/Kolkata')::date) <= $3::date)
                 """,
                 merchant_id, from_date, to_date,
             )
@@ -279,8 +279,8 @@ class MerchantFinanceService:
                 FROM rzp_refunds
                 WHERE merchant_id = $1::uuid
                   AND status      IN ('pending', 'processed')
-                  AND ($2::date IS NULL OR (COALESCE(processed_at, created_at))::date >= $2::date)
-                  AND ($3::date IS NULL OR (COALESCE(processed_at, created_at))::date <= $3::date)
+                  AND ($2::date IS NULL OR (COALESCE(processed_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
+                  AND ($3::date IS NULL OR (COALESCE(processed_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
                 """,
                 merchant_id, from_date, to_date,
             )
@@ -296,8 +296,8 @@ class MerchantFinanceService:
                 WHERE restaurant_id = $1::uuid
                   AND status        = 'completed'
                   AND LOWER(method)  = ANY($4::text[])
-                  AND ($2::date IS NULL OR (COALESCE(paid_at, created_at))::date >= $2::date)
-                  AND ($3::date IS NULL OR (COALESCE(paid_at, created_at))::date <= $3::date)
+                  AND ($2::date IS NULL OR (COALESCE(paid_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
+                  AND ($3::date IS NULL OR (COALESCE(paid_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
                 """,
                 merchant_id, from_date, to_date, list(_CASH_METHODS),
             )
@@ -473,8 +473,8 @@ class MerchantFinanceService:
                 FROM rzp_payments
                 WHERE merchant_id = $1::uuid
                   AND status      = 'captured'
-                  AND ($2::date  IS NULL OR (COALESCE(captured_at, created_at))::date >= $2::date)
-                  AND ($3::date  IS NULL OR (COALESCE(captured_at, created_at))::date <= $3::date)
+                  AND ($2::date  IS NULL OR (COALESCE(captured_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
+                  AND ($3::date  IS NULL OR (COALESCE(captured_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
                   AND ($4::text  IS NULL OR method = $4::text)
                   AND ($5::bigint IS NULL OR amount_paise >= $5::bigint)
                   AND ($6::bigint IS NULL OR amount_paise <= $6::bigint)
@@ -512,8 +512,8 @@ class MerchantFinanceService:
                 ) t ON TRUE
                 WHERE p.merchant_id = $1::uuid
                   AND p.status      = 'captured'
-                  AND ($2::date  IS NULL OR (COALESCE(p.captured_at, p.created_at))::date >= $2::date)
-                  AND ($3::date  IS NULL OR (COALESCE(p.captured_at, p.created_at))::date <= $3::date)
+                  AND ($2::date  IS NULL OR (COALESCE(p.captured_at, p.created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
+                  AND ($3::date  IS NULL OR (COALESCE(p.captured_at, p.created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
                   AND ($4::text  IS NULL OR p.method = $4::text)
                   AND ($5::bigint IS NULL OR p.amount_paise >= $5::bigint)
                   AND ($6::bigint IS NULL OR p.amount_paise <= $6::bigint)
@@ -547,8 +547,8 @@ class MerchantFinanceService:
                     WHERE restaurant_id = $1::uuid
                       AND status        = 'completed'
                       AND LOWER(method)  = ANY($8::text[])
-                      AND ($2::date IS NULL OR (COALESCE(paid_at, created_at))::date >= $2::date)
-                      AND ($3::date IS NULL OR (COALESCE(paid_at, created_at))::date <= $3::date)
+                      AND ($2::date IS NULL OR (COALESCE(paid_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
+                      AND ($3::date IS NULL OR (COALESCE(paid_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
                       AND ($4::text IS NULL OR LOWER(method) = $4::text)
                       AND ($5::bigint IS NULL OR (amount * 100)::bigint >= $5::bigint)
                       AND ($6::bigint IS NULL OR (amount * 100)::bigint <= $6::bigint)
@@ -566,8 +566,8 @@ class MerchantFinanceService:
                     WHERE restaurant_id = $1::uuid
                       AND status        = 'completed'
                       AND LOWER(method)  = ANY($8::text[])
-                      AND ($2::date IS NULL OR (COALESCE(paid_at, created_at))::date >= $2::date)
-                      AND ($3::date IS NULL OR (COALESCE(paid_at, created_at))::date <= $3::date)
+                      AND ($2::date IS NULL OR (COALESCE(paid_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
+                      AND ($3::date IS NULL OR (COALESCE(paid_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
                       AND ($4::text IS NULL OR LOWER(method) = $4::text)
                       AND ($5::bigint IS NULL OR (amount * 100)::bigint >= $5::bigint)
                       AND ($6::bigint IS NULL OR (amount * 100)::bigint <= $6::bigint)
@@ -615,8 +615,8 @@ class MerchantFinanceService:
                     LEFT JOIN rzp_settlements s ON s.settlement_id = sp.settlement_id
                     WHERE sp.merchant_id = $1::uuid
                       AND ($2::text IS NULL OR s.status::text = $2::text)
-                      AND ($3::date IS NULL OR COALESCE(s.settled_at::date, sp.created_at::date) >= $3::date)
-                      AND ($4::date IS NULL OR COALESCE(s.settled_at::date, sp.created_at::date) <= $4::date)
+                      AND ($3::date IS NULL OR COALESCE((s.settled_at AT TIME ZONE 'Asia/Kolkata')::date, (sp.created_at AT TIME ZONE 'Asia/Kolkata')::date) >= $3::date)
+                      AND ($4::date IS NULL OR COALESCE((s.settled_at AT TIME ZONE 'Asia/Kolkata')::date, (sp.created_at AT TIME ZONE 'Asia/Kolkata')::date) <= $4::date)
                     GROUP BY sp.settlement_id
                 ) g
                 """,
@@ -641,8 +641,8 @@ class MerchantFinanceService:
                 LEFT JOIN rzp_settlements s ON s.settlement_id = sp.settlement_id
                 WHERE sp.merchant_id = $1::uuid
                   AND ($2::text IS NULL OR s.status::text = $2::text)
-                  AND ($3::date IS NULL OR COALESCE(s.settled_at::date, sp.created_at::date) >= $3::date)
-                  AND ($4::date IS NULL OR COALESCE(s.settled_at::date, sp.created_at::date) <= $4::date)
+                  AND ($3::date IS NULL OR COALESCE((s.settled_at AT TIME ZONE 'Asia/Kolkata')::date, (sp.created_at AT TIME ZONE 'Asia/Kolkata')::date) >= $3::date)
+                  AND ($4::date IS NULL OR COALESCE((s.settled_at AT TIME ZONE 'Asia/Kolkata')::date, (sp.created_at AT TIME ZONE 'Asia/Kolkata')::date) <= $4::date)
                 GROUP BY sp.settlement_id
                 ORDER BY COALESCE(MAX(s.settled_at), MIN(sp.created_at)) DESC NULLS LAST
                 LIMIT $5 OFFSET $6
@@ -893,7 +893,7 @@ class MerchantFinanceService:
                 ) r ON TRUE
                 WHERE p.merchant_id = $1::uuid
                   AND p.status      = 'captured'
-                  AND (COALESCE(p.captured_at, p.created_at))::date BETWEEN $2::date AND $3::date
+                  AND (COALESCE(p.captured_at, p.created_at) AT TIME ZONE 'Asia/Kolkata')::date BETWEEN $2::date AND $3::date
                 ORDER BY COALESCE(p.captured_at, p.created_at) ASC
                 """,
                 merchant_id, start, end,
@@ -1035,8 +1035,8 @@ class MerchantFinanceService:
                 ) t ON TRUE
                 WHERE p.merchant_id = $1::uuid
                   AND p.status      = 'captured'
-                  AND ($2::date IS NULL OR (COALESCE(p.captured_at, p.created_at))::date >= $2::date)
-                  AND ($3::date IS NULL OR (COALESCE(p.captured_at, p.created_at))::date <= $3::date)
+                  AND ($2::date IS NULL OR (COALESCE(p.captured_at, p.created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
+                  AND ($3::date IS NULL OR (COALESCE(p.captured_at, p.created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
                 """,
                 merchant_id, from_date, to_date,
             )
@@ -1048,8 +1048,8 @@ class MerchantFinanceService:
                 FROM rzp_route_transfers
                 WHERE merchant_id = $1::uuid
                   AND status      IN ('created', 'processed')
-                  AND ($2::date IS NULL OR (COALESCE(processed_at, created_at))::date >= $2::date)
-                  AND ($3::date IS NULL OR (COALESCE(processed_at, created_at))::date <= $3::date)
+                  AND ($2::date IS NULL OR (COALESCE(processed_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
+                  AND ($3::date IS NULL OR (COALESCE(processed_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
                 """,
                 merchant_id, from_date, to_date,
             )
@@ -1064,8 +1064,8 @@ class MerchantFinanceService:
                 FROM rzp_settlement_payments sp
                 LEFT JOIN rzp_settlements s ON s.settlement_id = sp.settlement_id
                 WHERE sp.merchant_id = $1::uuid
-                  AND ($2::date IS NULL OR COALESCE(s.settled_at::date, sp.created_at::date) >= $2::date)
-                  AND ($3::date IS NULL OR COALESCE(s.settled_at::date, sp.created_at::date) <= $3::date)
+                  AND ($2::date IS NULL OR COALESCE((s.settled_at AT TIME ZONE 'Asia/Kolkata')::date, (sp.created_at AT TIME ZONE 'Asia/Kolkata')::date) >= $2::date)
+                  AND ($3::date IS NULL OR COALESCE((s.settled_at AT TIME ZONE 'Asia/Kolkata')::date, (sp.created_at AT TIME ZONE 'Asia/Kolkata')::date) <= $3::date)
                 GROUP BY sp.settlement_id
                 """,
                 merchant_id, from_date, to_date,
@@ -1077,8 +1077,8 @@ class MerchantFinanceService:
                 FROM rzp_refunds
                 WHERE merchant_id = $1::uuid
                   AND status      IN ('pending', 'processed')
-                  AND ($2::date IS NULL OR (COALESCE(processed_at, created_at))::date >= $2::date)
-                  AND ($3::date IS NULL OR (COALESCE(processed_at, created_at))::date <= $3::date)
+                  AND ($2::date IS NULL OR (COALESCE(processed_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
+                  AND ($3::date IS NULL OR (COALESCE(processed_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
                 """,
                 merchant_id, from_date, to_date,
             )
