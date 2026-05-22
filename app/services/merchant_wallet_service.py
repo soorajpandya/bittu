@@ -547,8 +547,20 @@ class MerchantWalletService:
                        o.total_amount    AS order_total,
                        o.status          AS order_status
                 FROM   payments p
-                LEFT   JOIN bittu_settlement_transactions bst
-                       ON bst.payment_id = p.id AND bst.transaction_type = 'payment'
+                -- LATERAL + LIMIT 1 keeps payment rows 1-to-1 even when a
+                -- payment has multiple bittu_settlement_transactions rows
+                -- (e.g. pending → processed transitions, retries, re-recon).
+                -- A plain LEFT JOIN here multiplies the payment row and
+                -- the FE sees the same `pay_…` ID twice.
+                LEFT   JOIN LATERAL (
+                    SELECT id, settlement_id, fee_amount, gst_amount,
+                           net_amount, settlement_status
+                    FROM   bittu_settlement_transactions
+                    WHERE  payment_id = p.id
+                      AND  transaction_type = 'payment'
+                    ORDER  BY created_at DESC, id DESC
+                    LIMIT  1
+                ) bst ON TRUE
                 LEFT   JOIN orders o ON o.id = p.order_id
                 WHERE  {where}
                 ORDER  BY p.created_at DESC

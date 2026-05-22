@@ -412,30 +412,23 @@ async def fee_calculator(
 )
 async def advance_settlement(
     settlement_id: str,
-    body: AdvanceSettlementRequest,
+    body: AdvanceSettlementRequest = None,  # type: ignore[assignment]
     x_idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
     user: UserContext = Depends(require_permission("statements.admin")),
 ):
-    restaurant_id = _rid(user)
-    actor_id = user.owner_id if user.is_branch_user else user.user_id
-    try:
-        return await statement_service.transition_settlement(
-            settlement_id=settlement_id,
-            restaurant_id=restaurant_id,
-            new_status=body.new_status,
-            actor_id=actor_id,
-            actor_type="user",
-            bank_reference=body.bank_reference_number,
-            failure_reason=body.failure_reason,
-            metadata=body.metadata,
-        )
-    except NotFoundError as exc:
-        raise _handle_not_found(exc)
-    except ValidationError as exc:
-        raise _handle_validation(exc)
-    except Exception as exc:
-        logger.error("advance_settlement_failed", settlement_id=settlement_id, error=str(exc))
-        raise HTTPException(status_code=500, detail="Failed to advance settlement")
+    """
+    410 Gone. Settlements are now sourced live from Razorpay and follow
+    Razorpay's own lifecycle (`created → processing → processed | failed`).
+    There is no manually-advanceable state on the Bittu side anymore.
+    """
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Manual settlement advancement is disabled. Settlement state is "
+            "now owned by Razorpay; use GET /merchant-wallet/settlements/"
+            f"{settlement_id}/timeline to inspect the live lifecycle."
+        ),
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
