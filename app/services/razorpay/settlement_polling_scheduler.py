@@ -30,18 +30,30 @@ DEFAULT_PAGE_SIZE = 100
 INITIAL_DELAY_SEC = 180                  # let API warm up
 
 
-async def _candidate_merchants() -> list[str]:
-    """Merchants with at least one Razorpay linked account."""
+async def _candidate_merchants() -> list[tuple[str, str]]:
+    """Return ``(merchant_id, linked_account_id)`` for every merchant whose
+    Razorpay linked account is **activated**.
+
+    Non-activated accounts (``created``, ``rejected``, ``suspended``,
+    ``deleted``) are skipped because:
+      * Razorpay rejects ``X-Razorpay-Account: acc_xxx`` requests for
+        non-activated accounts with 400; and
+      * they have no settlement data to mirror in the first place.
+    """
     async with get_service_connection() as conn:
         rows = await conn.fetch(
-            "SELECT DISTINCT merchant_id::text AS merchant_id "
-            "FROM rzp_route_accounts WHERE merchant_id IS NOT NULL"
+            "SELECT merchant_id::text AS merchant_id, linked_account_id "
+            "FROM rzp_route_accounts "
+            "WHERE merchant_id IS NOT NULL "
+            "  AND linked_account_id IS NOT NULL "
+            "  AND status = 'activated'"
         )
-    return [r["merchant_id"] for r in rows if r["merchant_id"]]
+    return [(r["merchant_id"], r["linked_account_id"]) for r in rows]
 
 
 async def _pull_settlements_for_merchant(
-    merchant_id: str, *, lookback_days: int, page_size: int,
+    merchant_id: str, linked_account_id: str,
+    *, lookback_days: int, page_size: int,
 ) -> int:
     from app.services.razorpay import settlements as rzp_settlements_api
     from app.services.razorpay.settlement_service import rzp_settlement_service
@@ -51,12 +63,15 @@ async def _pull_settlements_for_merchant(
     )
     try:
         resp = await rzp_settlements_api.list_settlements(
-            count=page_size, skip=0, from_ts=from_ts, merchant_id=merchant_id,
+            count=page_size, skip=0, from_ts=from_ts,
+            merchant_id=merchant_id,
+            account_id=linked_account_id,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "rzp_settlement_polling_list_failed",
-            merchant_id=merchant_id, error=str(exc),
+            merchant_id=merchant_id, linked_account_id=linked_account_id,
+            error=str(exc),
         )
         return 0
 
@@ -72,13 +87,16 @@ async def _pull_settlements_for_merchant(
             logger.exception(
                 "rzp_settlement_polling_upsert_failed",
                 merchant_id=merchant_id,
+                linked_account_id=linked_account_id,
                 settlement_id=entity.get("id"),
             )
     return upserted
 
 
-async def _pull_recon_for_merchant(merchant_id: str) -> dict:
-    """Pull yesterday's recon report for a merchant."""
+async def _pull_recon_for_merchant(
+    merchant_id: str, linked_account_id: str,
+) -> dict:
+    """Pull yesterday's recon report for a merchant's linked account."""
     from app.services.razorpay.settlement_service import rzp_settlement_service
 
     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
@@ -86,11 +104,13 @@ async def _pull_recon_for_merchant(merchant_id: str) -> dict:
         return await rzp_settlement_service.fetch_recon_and_persist(
             year=yesterday.year, month=yesterday.month, day=yesterday.day,
             merchant_id=merchant_id,
+            account_id=linked_account_id,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "rzp_settlement_polling_recon_failed",
-            merchant_id=merchant_id, error=str(exc),
+            merchant_id=merchant_id, linked_account_id=linked_account_id,
+            error=str(exc),
         )
         return {"seen": 0, "inserted": 0, "error": str(exc)}
 
@@ -125,11 +145,12 @@ async def run_once(*, lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> dict:
     merchants = await _candidate_merchants()
     settlements_total = 0
     recon_total = 0
-    for mid in merchants:
+    for mid, linked_account_id in merchants:
         settlements_total += await _pull_settlements_for_merchant(
-            mid, lookback_days=lookback_days, page_size=DEFAULT_PAGE_SIZE,
+            mid, linked_account_id,
+            lookback_days=lookback_days, page_size=DEFAULT_PAGE_SIZE,
         )
-        recon = await _pull_recon_for_merchant(mid)
+        recon = await _pull_recon_for_merchant(mid, linked_account_id)
         recon_total += int(recon.get("inserted") or 0)
     elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
     result = {

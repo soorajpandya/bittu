@@ -1,37 +1,40 @@
 """
 Razorpay-backed merchant finance projection layer.
 
-Source of truth: the **local Razorpay mirror tables** (`rzp_payments`,
-`rzp_refunds`, `rzp_settlements`, `rzp_settlement_payments`). These are
-kept in sync with Razorpay's master account by `webhook_dispatcher.py`
-and the polling/recon services. Every row is tagged with a `merchant_id`
-that is resolved from `notes.merchant_id` at ingest time.
+Source of truth: the **local Razorpay mirror tables**:
 
-Why local, not live Razorpay
-----------------------------
-Razorpay's `/v1/payments` is **master-account-wide** — all merchants
-share the same listing — so filtering would require paginating every
-payment on the platform and matching `notes.merchant_id` client-side.
-The local mirror is already partitioned by `merchant_id` (indexed),
-so a per-merchant query is a single indexed scan instead of an O(N)
-walk over the whole platform.
+* ``rzp_route_accounts``       — merchant linked-account state (KYC gate)
+* ``rzp_route_transfers``      — real net money sent to the merchant's linked
+                                  account; the authoritative "what the
+                                  merchant has earned" stream.
+* ``rzp_settlements``          — Razorpay-side settlement headers (utr,
+                                  status, settled_at) for the linked account.
+* ``rzp_settlement_payments``  — per-settlement line items (which
+                                  payments/refunds/adjustments rolled into
+                                  this settlement).
+* ``rzp_payments``             — gross payment events (used for the
+                                  Transactions tab + gross-sales context).
+* ``rzp_refunds``              — refund debits.
 
-Commission model
+Activation model
 ----------------
-Bittu retains a flat **5%** of every captured payment:
+A merchant is **Route-active** iff ``rzp_route_accounts.status='activated'``
+AND ``linked_account_id IS NOT NULL`` for that ``merchant_id``.
 
-    merchant_amount    = gross × 0.95
-    commission_amount  = gross × 0.05
-
-The split is computed at projection time; it is not stored anywhere
-in the database.
+* **Route-active**  → all numbers come from ``rzp_route_transfers``
+  (the actual amount Razorpay moved to the linked account). Commission is
+  derived as ``payment_amount − transfer_amount`` (real, not synthetic).
+* **Pre-onboarded** → wallet endpoints return ``wallet_status='pending_kyc'``
+  with every numeric field set to ``0`` (so the frontend never displays a
+  fake "withdrawable balance" for an unonboarded merchant). The
+  Transactions tab still lists payments (just without a per-row split).
 
 Tenant isolation
 ----------------
-Every query hard-filters by `merchant_id = $1::uuid` where `merchant_id`
-is the caller's `UserContext.restaurant_id`. There is no Route linked
-account requirement — any merchant with an `rzp_payments` row can read
-their finance views.
+Every query hard-filters by ``merchant_id = $1::uuid``.
+``rzp_route_accounts`` is read via ``get_service_connection`` because it
+lives outside per-tenant RLS scope; everything else uses the RLS-bound
+``get_connection``.
 """
 from __future__ import annotations
 
@@ -42,16 +45,29 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Optional
 
-from app.core.database import get_connection
+from app.core.database import get_connection, get_service_connection
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-COMMISSION_RATE = Decimal("0.05")
-MERCHANT_RATE = Decimal("0.95")
 _Q2 = Decimal("0.01")
+
+
+# Synthetic split — used ONLY for pre-onboarded merchants where there is no
+# transfer row to read from. Once a merchant is Route-active, commission is
+# derived from the actual transfer amount, not from this constant.
+_LEGACY_COMMISSION_RATE = Decimal("0.05")
+_LEGACY_MERCHANT_RATE   = Decimal("0.95")
+
+
+# Statement entry categories (spec-mandated names).
+ENTRY_PAYMENT_RECEIVED      = "PAYMENT_RECEIVED"
+ENTRY_COMMISSION_DEDUCTED   = "COMMISSION_DEDUCTED"
+ENTRY_TRANSFER_CREATED      = "TRANSFER_CREATED"
+ENTRY_SETTLEMENT_PROCESSED  = "SETTLEMENT_PROCESSED"
+ENTRY_REFUND                = "REFUND"
 
 
 # ─────────────────────────── helpers ──────────────────────────────────────
@@ -69,11 +85,11 @@ def _q(x: Decimal) -> Decimal:
     return x.quantize(_Q2, rounding=ROUND_HALF_UP)
 
 
-def _split_gross(gross_rupees: Decimal) -> tuple[Decimal, Decimal]:
-    """Return (merchant_amount, commission_amount) summing to gross."""
+def _legacy_split(gross_rupees: Decimal) -> tuple[Decimal, Decimal]:
+    """Synthetic 95/5 fallback for merchants without a transfer record."""
     if gross_rupees <= 0:
         return Decimal("0.00"), Decimal("0.00")
-    merchant = _q(gross_rupees * MERCHANT_RATE)
+    merchant = _q(gross_rupees * _LEGACY_MERCHANT_RATE)
     commission = _q(gross_rupees - merchant)
     return merchant, commission
 
@@ -93,13 +109,8 @@ def _require_merchant(merchant_id: Optional[str]) -> str:
 
 
 def _as_dict(value: Any) -> dict:
-    """Coerce a JSONB column value to a dict.
-
-    asyncpg returns JSONB as a raw JSON string when no codec is registered
-    (which is the case for this pool — see app/core/database.py). Older
-    rows may also legitimately contain a stringified JSON blob. Anything
-    that isn't a dict-shaped JSON object collapses to {} so downstream
-    `.get(...)` calls never explode.
+    """Coerce a JSONB column value (which asyncpg returns as raw str on
+    this pool) into a dict so downstream ``.get(...)`` calls never blow up.
     """
     if value is None:
         return {}
@@ -122,11 +133,80 @@ def _as_dict(value: Any) -> dict:
     return {}
 
 
+def _wallet_status_for(account_status: Optional[str]) -> str:
+    """Map an rzp_route_accounts.status value to a wallet_status code."""
+    if not account_status:
+        return "pending_kyc"
+    s = account_status.lower()
+    if s == "activated":
+        return "active"
+    if s == "rejected":
+        return "kyc_rejected"
+    if s == "suspended":
+        return "suspended"
+    return "pending_kyc"
+
+
 # ─────────────────────────── service ──────────────────────────────────────
 
 
 class MerchantFinanceService:
     """Read-only finance projection over the local Razorpay mirror tables."""
+
+    # ── activation gate ──────────────────────────────────────────────────
+
+    async def _linked_account(self, merchant_id: str) -> Optional[dict]:
+        """Fetch the merchant's linked-account snapshot (or None).
+
+        Read via ``get_service_connection`` because ``rzp_route_accounts``
+        is not RLS-scoped to ``app.tenant_id``.
+        """
+        async with get_service_connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT linked_account_id, status::text AS status, "
+                "       kyc_status, activation_status "
+                "FROM rzp_route_accounts "
+                "WHERE merchant_id = $1::uuid",
+                merchant_id,
+            )
+        return dict(row) if row else None
+
+    @staticmethod
+    def _is_active(linked: Optional[dict]) -> bool:
+        if not linked:
+            return False
+        return (
+            (linked.get("status") or "").lower() == "activated"
+            and bool(linked.get("linked_account_id"))
+        )
+
+    def _pending_wallet(
+        self, merchant_id: str, linked: Optional[dict],
+        *, from_date: Optional[date], to_date: Optional[date],
+    ) -> dict:
+        """Zeroed-out wallet response for pre-onboarded / suspended merchants.
+
+        Every key in the activated response is present so the frontend
+        never sees a missing field; only the numbers change.
+        """
+        return {
+            "merchant_id":         merchant_id,
+            "wallet_status":       _wallet_status_for((linked or {}).get("status")),
+            "kyc_status":          (linked or {}).get("kyc_status"),
+            "linked_account_id":   (linked or {}).get("linked_account_id"),
+            "gross_sales":         0.0,
+            "settled_amount":      0.0,
+            "platform_commission": 0.0,
+            "pending_settlement":  0.0,
+            "refunds":             0.0,
+            "available_balance":   0.0,
+            "transaction_count":   0,
+            "currency":            "INR",
+            "window": {
+                "from": from_date.isoformat() if from_date else None,
+                "to":   to_date.isoformat()   if to_date   else None,
+            },
+        }
 
     # ── wallet snapshot ──────────────────────────────────────────────────
 
@@ -138,11 +218,19 @@ class MerchantFinanceService:
         to_date: Optional[date] = None,
     ) -> dict:
         merchant_id = _require_merchant(merchant_id)
+        linked = await self._linked_account(merchant_id)
+        if not self._is_active(linked):
+            return self._pending_wallet(
+                merchant_id, linked, from_date=from_date, to_date=to_date,
+            )
+
         async with get_connection() as conn:
-            pay = await conn.fetchrow(
+            # Gross captured payments (context only — does NOT contribute
+            # to merchant's available balance; what matters is transfers).
+            gross_row = await conn.fetchrow(
                 """
                 SELECT COALESCE(SUM(amount_paise), 0)::bigint AS gross_paise,
-                       COUNT(*)::bigint                       AS tx_count
+                       COUNT(*)::bigint                        AS tx_count
                 FROM rzp_payments
                 WHERE merchant_id = $1::uuid
                   AND status      = 'captured'
@@ -151,56 +239,77 @@ class MerchantFinanceService:
                 """,
                 merchant_id, from_date, to_date,
             )
-            setl_gross = await conn.fetchval(
+            # Real money that left Bittu master → merchant's linked account.
+            transfer_paise = await conn.fetchval(
                 """
                 SELECT COALESCE(SUM(amount_paise), 0)::bigint
-                FROM rzp_settlement_payments
+                FROM rzp_route_transfers
                 WHERE merchant_id = $1::uuid
-                  AND type        = 'payment'
-                  AND ($2::date IS NULL OR created_at::date >= $2::date)
-                  AND ($3::date IS NULL OR created_at::date <= $3::date)
+                  AND status      IN ('created', 'processed')
+                  AND ($2::date IS NULL OR (COALESCE(processed_at, created_at))::date >= $2::date)
+                  AND ($3::date IS NULL OR (COALESCE(processed_at, created_at))::date <= $3::date)
                 """,
                 merchant_id, from_date, to_date,
             )
-            refunded = await conn.fetchval(
+            # Net of merchant share that has been settled (i.e. credit -
+            # debit on each line of rzp_settlement_payments for this
+            # merchant's linked-account settlements).
+            settled_net_paise = await conn.fetchval(
+                """
+                SELECT COALESCE(SUM(sp.credit_paise - sp.debit_paise), 0)::bigint
+                FROM rzp_settlement_payments sp
+                LEFT JOIN rzp_settlements s ON s.settlement_id = sp.settlement_id
+                WHERE sp.merchant_id = $1::uuid
+                  AND COALESCE(s.status::text, 'processed') = 'processed'
+                  AND ($2::date IS NULL OR COALESCE(s.settled_at::date, sp.created_at::date) >= $2::date)
+                  AND ($3::date IS NULL OR COALESCE(s.settled_at::date, sp.created_at::date) <= $3::date)
+                """,
+                merchant_id, from_date, to_date,
+            )
+            refund_paise = await conn.fetchval(
                 """
                 SELECT COALESCE(SUM(amount_paise), 0)::bigint
                 FROM rzp_refunds
                 WHERE merchant_id = $1::uuid
                   AND status      IN ('pending', 'processed')
-                  AND ($2::date IS NULL OR created_at::date >= $2::date)
-                  AND ($3::date IS NULL OR created_at::date <= $3::date)
+                  AND ($2::date IS NULL OR (COALESCE(processed_at, created_at))::date >= $2::date)
+                  AND ($3::date IS NULL OR (COALESCE(processed_at, created_at))::date <= $3::date)
                 """,
                 merchant_id, from_date, to_date,
             )
 
-        gross = _money(pay["gross_paise"])
-        merchant_share, commission = _split_gross(gross)
-        # Settled-share of gross = settled gross × 95%
-        settled_gross = _money(setl_gross or 0)
-        settled_share, _ = _split_gross(settled_gross)
-        refunds = _money(refunded or 0)
+        gross    = _money(gross_row["gross_paise"])
+        transfers = _money(transfer_paise or 0)
+        settled  = _money(settled_net_paise or 0)
+        refunds  = _money(refund_paise or 0)
 
-        pending = merchant_share - settled_share
-        if pending < 0:
-            pending = Decimal("0.00")
-        available = settled_share - refunds
+        # Commission is the real platform take: gross − what actually went
+        # to the merchant's linked account.
+        commission = gross - transfers
+        if commission < 0:
+            commission = Decimal("0.00")
+
+        # Available = what's in the linked account waiting for settlement.
+        available = transfers - settled - refunds
         if available < 0:
             available = Decimal("0.00")
 
         return {
-            "merchant_id": merchant_id,
-            "gross_sales": float(gross),
-            "settled_amount": float(_q(settled_share)),
-            "platform_commission": float(commission),
-            "pending_settlement": float(_q(pending)),
-            "refunds": float(refunds),
-            "available_balance": float(_q(available)),
-            "transaction_count": int(pay["tx_count"]),
-            "currency": "INR",
+            "merchant_id":         merchant_id,
+            "wallet_status":       "active",
+            "kyc_status":          (linked or {}).get("kyc_status"),
+            "linked_account_id":   (linked or {}).get("linked_account_id"),
+            "gross_sales":         float(gross),
+            "settled_amount":      float(_q(settled)),
+            "platform_commission": float(_q(commission)),
+            "pending_settlement":  float(_q(available)),
+            "refunds":             float(refunds),
+            "available_balance":   float(_q(available)),
+            "transaction_count":   int(gross_row["tx_count"]),
+            "currency":            "INR",
             "window": {
                 "from": from_date.isoformat() if from_date else None,
-                "to": to_date.isoformat() if to_date else None,
+                "to":   to_date.isoformat()   if to_date   else None,
             },
         }
 
@@ -209,41 +318,54 @@ class MerchantFinanceService:
     @staticmethod
     def _project_payment(row: dict) -> dict:
         gross = _money(row["amount_paise"])
-        merchant, commission = _split_gross(gross)
+        transfer_paise = row.get("transfer_paise")
+        transfer_id    = row.get("transfer_id")
+        if transfer_paise is not None:
+            merchant   = _money(transfer_paise)
+            commission = gross - merchant
+            if commission < 0:
+                commission = Decimal("0.00")
+            commission = _q(commission)
+        else:
+            # Pre-Route fallback (no transfer row yet) — show gross only;
+            # don't fabricate a 95/5 split that doesn't match real money.
+            merchant   = Decimal("0.00")
+            commission = Decimal("0.00")
         notes = _as_dict(row.get("notes"))
         return {
-            "transaction_id": row["razorpay_payment_id"],
-            "payment_id": row["razorpay_payment_id"],
-            "order_id": row.get("razorpay_order_id"),
+            "transaction_id":   row["razorpay_payment_id"],
+            "payment_id":       row["razorpay_payment_id"],
+            "transfer_id":      transfer_id,
+            "order_id":         row.get("razorpay_order_id"),
             "internal_order_id": (
                 str(row["internal_order_id"]) if row.get("internal_order_id") else None
             ),
-            "amount": float(gross),
-            "gross_amount": float(gross),
-            "merchant_amount": float(merchant),
+            "amount":           float(gross),
+            "gross_amount":     float(gross),
+            "merchant_amount":  float(merchant),
             "commission_amount": float(commission),
-            "currency": row.get("currency") or "INR",
-            "status": row["status"],
-            "payment_method": row.get("method"),
+            "currency":         row.get("currency") or "INR",
+            "status":           row["status"],
+            "payment_method":   row.get("method"),
             "method_detail": {
-                "vpa": row.get("upi_vpa"),
-                "bank": row.get("bank_reference"),
-                "wallet": None,
+                "vpa":     row.get("upi_vpa"),
+                "bank":    row.get("bank_reference"),
+                "wallet":  None,
                 "card_id": None,
             },
-            "customer_email": notes.get("customer_email"),
+            "customer_email":   notes.get("customer_email"),
             "customer_contact": notes.get("customer_contact"),
-            "customer_name": notes.get("customer_name"),
-            "captured": bool(row.get("captured")),
-            "captured_at": _iso(row.get("captured_at")),
-            "created_at": _iso(row.get("created_at")),
-            "fee": float(_money(row.get("fee_paise"))),
-            "tax": float(_money(row.get("tax_paise"))),
-            "description": notes.get("description"),
-            "notes": notes,
-            "error_code": row.get("error_code"),
+            "customer_name":    notes.get("customer_name"),
+            "captured":         bool(row.get("captured")),
+            "captured_at":      _iso(row.get("captured_at")),
+            "created_at":       _iso(row.get("created_at")),
+            "fee":              float(_money(row.get("fee_paise"))),
+            "tax":              float(_money(row.get("tax_paise"))),
+            "description":      notes.get("description"),
+            "notes":            notes,
+            "error_code":       row.get("error_code"),
             "error_description": row.get("error_description"),
-            "source": "razorpay",
+            "source":           "razorpay",
         }
 
     async def list_transactions(
@@ -287,29 +409,42 @@ class MerchantFinanceService:
                 merchant_id, from_date, to_date,
                 payment_method, min_paise, max_paise, like,
             )
+            # LATERAL pick of the matching transfer for this payment (if
+            # any). For pre-onboarded merchants this just returns NULLs and
+            # _project_payment falls back to gross-only display.
             rows = await conn.fetch(
                 """
-                SELECT razorpay_payment_id, razorpay_order_id, internal_order_id,
-                       amount_paise, fee_paise, tax_paise, currency,
-                       method, upi_vpa, bank_reference,
-                       status::text AS status, captured, captured_at,
-                       error_code, error_description, notes, created_at
-                FROM rzp_payments
-                WHERE merchant_id = $1::uuid
-                  AND status      = 'captured'
-                  AND ($2::date  IS NULL OR (COALESCE(captured_at, created_at))::date >= $2::date)
-                  AND ($3::date  IS NULL OR (COALESCE(captured_at, created_at))::date <= $3::date)
-                  AND ($4::text  IS NULL OR method = $4::text)
-                  AND ($5::bigint IS NULL OR amount_paise >= $5::bigint)
-                  AND ($6::bigint IS NULL OR amount_paise <= $6::bigint)
+                SELECT p.razorpay_payment_id, p.razorpay_order_id, p.internal_order_id,
+                       p.amount_paise, p.fee_paise, p.tax_paise, p.currency,
+                       p.method, p.upi_vpa, p.bank_reference,
+                       p.status::text AS status, p.captured, p.captured_at,
+                       p.error_code, p.error_description, p.notes, p.created_at,
+                       t.transfer_id, t.amount_paise AS transfer_paise
+                FROM rzp_payments p
+                LEFT JOIN LATERAL (
+                    SELECT transfer_id, amount_paise
+                    FROM rzp_route_transfers
+                    WHERE razorpay_payment_id = p.razorpay_payment_id
+                      AND merchant_id         = p.merchant_id
+                      AND status              IN ('created', 'processed')
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ) t ON TRUE
+                WHERE p.merchant_id = $1::uuid
+                  AND p.status      = 'captured'
+                  AND ($2::date  IS NULL OR (COALESCE(p.captured_at, p.created_at))::date >= $2::date)
+                  AND ($3::date  IS NULL OR (COALESCE(p.captured_at, p.created_at))::date <= $3::date)
+                  AND ($4::text  IS NULL OR p.method = $4::text)
+                  AND ($5::bigint IS NULL OR p.amount_paise >= $5::bigint)
+                  AND ($6::bigint IS NULL OR p.amount_paise <= $6::bigint)
                   AND ($7::text  IS NULL
-                       OR razorpay_payment_id ILIKE $7
-                       OR razorpay_order_id   ILIKE $7
-                       OR upi_vpa             ILIKE $7
-                       OR (notes ->> 'customer_email')   ILIKE $7
-                       OR (notes ->> 'customer_contact') ILIKE $7
-                       OR (notes ->> 'customer_name')    ILIKE $7)
-                ORDER BY COALESCE(captured_at, created_at) DESC, razorpay_payment_id DESC
+                       OR p.razorpay_payment_id ILIKE $7
+                       OR p.razorpay_order_id   ILIKE $7
+                       OR p.upi_vpa             ILIKE $7
+                       OR (p.notes ->> 'customer_email')   ILIKE $7
+                       OR (p.notes ->> 'customer_contact') ILIKE $7
+                       OR (p.notes ->> 'customer_name')    ILIKE $7)
+                ORDER BY COALESCE(p.captured_at, p.created_at) DESC, p.razorpay_payment_id DESC
                 LIMIT $8 OFFSET $9
                 """,
                 merchant_id, from_date, to_date,
@@ -319,10 +454,10 @@ class MerchantFinanceService:
 
         items = [self._project_payment(dict(r)) for r in rows]
         return {
-            "items": items,
-            "total": int(total or 0),
-            "limit": limit,
-            "offset": offset,
+            "items":    items,
+            "total":    int(total or 0),
+            "limit":    limit,
+            "offset":   offset,
             "has_more": offset + limit < int(total or 0),
         }
 
@@ -362,6 +497,7 @@ class MerchantFinanceService:
                                          THEN sp.amount_paise ELSE 0 END), 0)::bigint AS gross_paise,
                        COALESCE(SUM(CASE WHEN sp.type = 'refund'
                                          THEN sp.amount_paise ELSE 0 END), 0)::bigint AS refund_paise,
+                       COALESCE(SUM(sp.credit_paise - sp.debit_paise), 0)::bigint     AS merchant_paise,
                        COALESCE(SUM(sp.fee_paise), 0)::bigint  AS fee_paise,
                        COALESCE(SUM(sp.tax_paise), 0)::bigint  AS tax_paise,
                        COUNT(*) FILTER (WHERE sp.type = 'payment')::bigint AS tx_count,
@@ -384,36 +520,42 @@ class MerchantFinanceService:
 
         items = [self._project_settlement_row(dict(r), merchant_id) for r in rows]
         return {
-            "items": items,
-            "total": int(total or 0),
-            "limit": limit,
-            "offset": offset,
+            "items":    items,
+            "total":    int(total or 0),
+            "limit":    limit,
+            "offset":   offset,
             "has_more": offset + limit < int(total or 0),
         }
 
     @staticmethod
     def _project_settlement_row(row: dict, merchant_id: str) -> dict:
-        gross = _money(row["gross_paise"])
-        refunds = _money(row["refund_paise"])
-        net_gross = gross - refunds
-        if net_gross < 0:
-            net_gross = Decimal("0.00")
-        merchant, commission = _split_gross(net_gross)
+        gross    = _money(row["gross_paise"])
+        refunds  = _money(row["refund_paise"])
+        merchant = _money(row.get("merchant_paise") or 0)
+        if merchant <= 0:
+            # Defensive: if the settlement-line credit/debit columns are
+            # zero (older recon rows), fall back to (gross - refunds).
+            merchant = gross - refunds
+            if merchant < 0:
+                merchant = Decimal("0.00")
+        commission = gross - refunds - merchant
+        if commission < 0:
+            commission = Decimal("0.00")
         return {
-            "settlement_id": row["settlement_id"],
-            "merchant_id": merchant_id,
-            "gross_amount": float(_q(net_gross)),
-            "merchant_amount": float(merchant),
-            "commission_amount": float(commission),
-            "refund_amount": float(refunds),
-            "fees": float(_money(row.get("fee_paise"))),
-            "tax": float(_money(row.get("tax_paise"))),
+            "settlement_id":     row["settlement_id"],
+            "merchant_id":       merchant_id,
+            "gross_amount":      float(_q(gross - refunds)),
+            "merchant_amount":   float(_q(merchant)),
+            "commission_amount": float(_q(commission)),
+            "refund_amount":     float(refunds),
+            "fees":              float(_money(row.get("fee_paise"))),
+            "tax":               float(_money(row.get("tax_paise"))),
             "transaction_count": int(row.get("tx_count") or 0),
-            "utr": row.get("utr"),
-            "status": row.get("status") or "pending",
-            "settled_at": _iso(row.get("settled_at")),
-            "created_at": _iso(row.get("settled_at") or row.get("first_seen_at")),
-            "currency": "INR",
+            "utr":               row.get("utr"),
+            "status":            row.get("status") or "pending",
+            "settled_at":        _iso(row.get("settled_at")),
+            "created_at":        _iso(row.get("settled_at") or row.get("first_seen_at")),
+            "currency":          "INR",
         }
 
     async def get_settlement(self, merchant_id: str, settlement_id: str) -> dict:
@@ -426,6 +568,7 @@ class MerchantFinanceService:
                                          THEN sp.amount_paise ELSE 0 END), 0)::bigint AS gross_paise,
                        COALESCE(SUM(CASE WHEN sp.type = 'refund'
                                          THEN sp.amount_paise ELSE 0 END), 0)::bigint AS refund_paise,
+                       COALESCE(SUM(sp.credit_paise - sp.debit_paise), 0)::bigint     AS merchant_paise,
                        COALESCE(SUM(sp.fee_paise), 0)::bigint  AS fee_paise,
                        COALESCE(SUM(sp.tax_paise), 0)::bigint  AS tax_paise,
                        COUNT(*) FILTER (WHERE sp.type = 'payment')::bigint AS tx_count,
@@ -449,12 +592,22 @@ class MerchantFinanceService:
                 SELECT sp.razorpay_payment_id, sp.type, sp.amount_paise,
                        sp.fee_paise, sp.tax_paise, sp.credit_paise, sp.debit_paise,
                        sp.created_at,
-                       p.method, p.upi_vpa
+                       p.method, p.upi_vpa,
+                       t.transfer_id, t.amount_paise AS transfer_paise
                 FROM rzp_settlement_payments sp
                 LEFT JOIN rzp_payments_index pi
                        ON pi.razorpay_payment_id = sp.razorpay_payment_id
                 LEFT JOIN rzp_payments p
                        ON p.id = pi.payment_uuid
+                LEFT JOIN LATERAL (
+                    SELECT transfer_id, amount_paise
+                    FROM rzp_route_transfers
+                    WHERE razorpay_payment_id = sp.razorpay_payment_id
+                      AND merchant_id         = sp.merchant_id
+                      AND status              IN ('created', 'processed')
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ) t ON TRUE
                 WHERE sp.merchant_id  = $1::uuid
                   AND sp.settlement_id = $2
                 ORDER BY sp.created_at ASC
@@ -463,21 +616,26 @@ class MerchantFinanceService:
             )
 
         out = self._project_settlement_row(dict(header), merchant_id)
-        out["payments"] = [
-            {
-                "payment_id": r["razorpay_payment_id"],
-                "type": r["type"],
-                "amount": float(_money(r["amount_paise"])),
-                "fee": float(_money(r["fee_paise"])),
-                "tax": float(_money(r["tax_paise"])),
-                "credit": float(_money(r["credit_paise"])),
-                "debit": float(_money(r["debit_paise"])),
-                "method": r.get("method"),
-                "vpa": r.get("upi_vpa"),
-                "created_at": _iso(r["created_at"]),
-            }
-            for r in lines
-        ]
+        transfer_ids: list[str] = []
+        out["payments"] = []
+        for r in lines:
+            tid = r.get("transfer_id")
+            if tid and tid not in transfer_ids:
+                transfer_ids.append(tid)
+            out["payments"].append({
+                "payment_id":  r["razorpay_payment_id"],
+                "transfer_id": tid,
+                "type":        r["type"],
+                "amount":      float(_money(r["amount_paise"])),
+                "fee":         float(_money(r["fee_paise"])),
+                "tax":         float(_money(r["tax_paise"])),
+                "credit":      float(_money(r["credit_paise"])),
+                "debit":       float(_money(r["debit_paise"])),
+                "method":      r.get("method"),
+                "vpa":         r.get("upi_vpa"),
+                "created_at":  _iso(r["created_at"]),
+            })
+        out["transfer_ids"] = transfer_ids
         return out
 
     async def settlement_timeline(self, merchant_id: str, settlement_id: str) -> dict:
@@ -519,19 +677,19 @@ class MerchantFinanceService:
                 done = (st in ORDER and ORDER.index(st) <= ORDER.index(status)) if status in ORDER else False
                 pending_flag = not done
             events.append({
-                "status": st,
-                "label": st.replace("_", " ").title(),
+                "status":    st,
+                "label":     st.replace("_", " ").title(),
                 "completed": done,
-                "pending": pending_flag,
-                "at": anchor if done else None,
+                "pending":   pending_flag,
+                "at":        anchor if done else None,
             })
 
         return {
-            "settlement_id": settlement_id,
+            "settlement_id":  settlement_id,
             "current_status": status,
-            "utr": meta["utr"] if meta else None,
-            "events": events,
-            "source": "razorpay",
+            "utr":            meta["utr"] if meta else None,
+            "events":         events,
+            "source":         "razorpay",
         }
 
     # ── CSV export ───────────────────────────────────────────────────────
@@ -550,32 +708,56 @@ class MerchantFinanceService:
         if start > end:
             raise ValidationError("from_date must be <= to_date")
 
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        # Spec-mandated columns (TASK 4). Method dropped from spec but
+        # retained as the final column so we don't lose information.
+        w.writerow([
+            "Date", "Payment ID", "Transfer ID", "Settlement ID",
+            "Gross Amount", "Commission", "Merchant Amount",
+            "Refund", "Status", "UTR", "Method",
+        ])
+
         async with get_connection() as conn:
             rows = await conn.fetch(
                 """
                 SELECT p.razorpay_payment_id           AS payment_id,
-                       COALESCE(sp.settlement_id, '') AS settlement_id,
                        p.amount_paise                  AS gross_paise,
-                       COALESCE(r.refund_paise, 0)    AS refund_paise,
                        p.status::text                  AS status,
                        COALESCE(p.captured_at, p.created_at) AS at,
                        p.method                        AS method,
-                       p.notes                         AS notes
+                       t.transfer_id                   AS transfer_id,
+                       t.amount_paise                  AS transfer_paise,
+                       sp.settlement_id                AS settlement_id,
+                       s.utr                           AS utr,
+                       COALESCE(r.refund_paise, 0)    AS refund_paise
                 FROM rzp_payments p
+                LEFT JOIN LATERAL (
+                    SELECT transfer_id, amount_paise
+                    FROM rzp_route_transfers
+                    WHERE razorpay_payment_id = p.razorpay_payment_id
+                      AND merchant_id         = p.merchant_id
+                      AND status              IN ('created', 'processed')
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ) t ON TRUE
                 LEFT JOIN LATERAL (
                     SELECT settlement_id
                     FROM rzp_settlement_payments
                     WHERE razorpay_payment_id = p.razorpay_payment_id
                       AND merchant_id         = p.merchant_id
-                      AND type = 'payment'
+                      AND type                = 'payment'
+                    ORDER BY created_at DESC
                     LIMIT 1
                 ) sp ON TRUE
+                LEFT JOIN rzp_settlements s
+                       ON s.settlement_id = sp.settlement_id
                 LEFT JOIN LATERAL (
                     SELECT COALESCE(SUM(amount_paise), 0)::bigint AS refund_paise
                     FROM rzp_refunds
                     WHERE razorpay_payment_id = p.razorpay_payment_id
                       AND merchant_id         = p.merchant_id
-                      AND status IN ('pending', 'processed')
+                      AND status              IN ('pending', 'processed')
                 ) r ON TRUE
                 WHERE p.merchant_id = $1::uuid
                   AND p.status      = 'captured'
@@ -585,26 +767,29 @@ class MerchantFinanceService:
                 merchant_id, start, end,
             )
 
-        buf = io.StringIO()
-        w = csv.writer(buf)
-        w.writerow([
-            "Date", "Payment ID", "Settlement ID",
-            "Gross Amount", "Merchant Amount", "Commission",
-            "Refund", "Status", "Method",
-        ])
         for r in rows:
-            gross_rupees = _money(r["gross_paise"])
-            merchant_rupees, commission_rupees = _split_gross(gross_rupees)
-            refund_rupees = _money(r["refund_paise"])
+            gross   = _money(r["gross_paise"])
+            if r.get("transfer_paise") is not None:
+                merchant = _money(r["transfer_paise"])
+                commission = gross - merchant
+                if commission < 0:
+                    commission = Decimal("0.00")
+            else:
+                # No transfer yet — leave both blank to avoid faking a split.
+                merchant   = Decimal("0.00")
+                commission = Decimal("0.00")
+            refund = _money(r["refund_paise"])
             w.writerow([
                 _iso(r["at"]) or "",
                 r["payment_id"],
-                r["settlement_id"] or "",
-                f"{gross_rupees:.2f}",
-                f"{merchant_rupees:.2f}",
-                f"{commission_rupees:.2f}",
-                f"{refund_rupees:.2f}",
+                r.get("transfer_id")   or "",
+                r.get("settlement_id") or "",
+                f"{gross:.2f}",
+                f"{_q(commission):.2f}",
+                f"{_q(merchant):.2f}",
+                f"{refund:.2f}",
                 r["status"],
+                r.get("utr") or "",
                 r.get("method") or "",
             ])
 
@@ -615,12 +800,25 @@ class MerchantFinanceService:
 
     async def ledger_balance(self, merchant_id: str) -> dict:
         merchant_id = _require_merchant(merchant_id)
+        linked = await self._linked_account(merchant_id)
+        if not self._is_active(linked):
+            return {
+                "merchant_id":        merchant_id,
+                "wallet_status":      _wallet_status_for((linked or {}).get("status")),
+                "current_balance":    0.0,
+                "pending_settlement": 0.0,
+                "settled_amount":     0.0,
+                "refunded_amount":    0.0,
+                "currency":           "INR",
+            }
+
         async with get_connection() as conn:
-            captured = await conn.fetchval(
+            transfers = await conn.fetchval(
                 """
                 SELECT COALESCE(SUM(amount_paise), 0)::bigint
-                FROM rzp_payments
-                WHERE merchant_id = $1::uuid AND status = 'captured'
+                FROM rzp_route_transfers
+                WHERE merchant_id = $1::uuid
+                  AND status      IN ('created', 'processed')
                 """,
                 merchant_id,
             )
@@ -632,37 +830,36 @@ class MerchantFinanceService:
                 """,
                 merchant_id,
             )
-            settled_gross = await conn.fetchval(
+            settled_net = await conn.fetchval(
                 """
-                SELECT COALESCE(SUM(amount_paise), 0)::bigint
-                FROM rzp_settlement_payments
-                WHERE merchant_id = $1::uuid AND type = 'payment'
+                SELECT COALESCE(SUM(sp.credit_paise - sp.debit_paise), 0)::bigint
+                FROM rzp_settlement_payments sp
+                LEFT JOIN rzp_settlements s ON s.settlement_id = sp.settlement_id
+                WHERE sp.merchant_id = $1::uuid
+                  AND COALESCE(s.status::text, 'processed') = 'processed'
                 """,
                 merchant_id,
             )
 
-        gross = _money(captured or 0)
-        merchant_share, _ = _split_gross(gross)
-        refunds = _money(refunded or 0)
-        settled_share, _ = _split_gross(_money(settled_gross or 0))
+        transfers_r = _money(transfers or 0)
+        settled_r   = _money(settled_net or 0)
+        refunds_r   = _money(refunded or 0)
 
-        current = merchant_share - refunds
-        if current < 0:
-            current = Decimal("0.00")
-        pending = merchant_share - settled_share
-        if pending < 0:
-            pending = Decimal("0.00")
+        available = transfers_r - settled_r - refunds_r
+        if available < 0:
+            available = Decimal("0.00")
 
         return {
-            "merchant_id": merchant_id,
-            "current_balance": float(_q(current)),
-            "pending_settlement": float(_q(pending)),
-            "settled_amount": float(_q(settled_share)),
-            "refunded_amount": float(refunds),
-            "currency": "INR",
+            "merchant_id":        merchant_id,
+            "wallet_status":      "active",
+            "current_balance":    float(_q(available)),
+            "pending_settlement": float(_q(available)),
+            "settled_amount":     float(_q(settled_r)),
+            "refunded_amount":    float(refunds_r),
+            "currency":           "INR",
         }
 
-    # ── ledger entries (synthetic projection) ────────────────────────────
+    # ── ledger entries (statement projection) ────────────────────────────
 
     async def _build_entries(
         self,
@@ -672,35 +869,66 @@ class MerchantFinanceService:
         to_date: Optional[date],
     ) -> list[dict]:
         """
-        Materialise the merchant's ledger as a chronological stream:
-          CREDIT  payment       (per captured payment)
-          DEBIT   commission    (5% of each captured payment, synthetic)
-          DEBIT   settlement    (per settlement_id, merchant's share)
-          DEBIT   refund        (per refund)
-        Returns ascending by timestamp with `balance_after` filled in.
+        Materialise the merchant's statement as a chronological stream:
+
+          PAYMENT_RECEIVED     (informational, does not move merchant balance)
+          COMMISSION_DEDUCTED  (informational, does not move merchant balance)
+          TRANSFER_CREATED     (+ balance — real money into linked account)
+          SETTLEMENT_PROCESSED (− balance — payout to merchant bank)
+          REFUND               (− balance)
+
+        Only ``TRANSFER_CREATED``, ``SETTLEMENT_PROCESSED`` and ``REFUND``
+        contribute to ``balance_after`` so the running tally matches what
+        the merchant actually owns on the Razorpay side.
+
+        ``PAYMENT_RECEIVED`` and ``COMMISSION_DEDUCTED`` are shown so the
+        statement explains *where* a transfer came from, but they don't
+        double-count into the running balance.
         """
         async with get_connection() as conn:
             payments = await conn.fetch(
                 """
-                SELECT razorpay_payment_id, razorpay_order_id, amount_paise,
-                       currency, captured_at, created_at
-                FROM rzp_payments
+                SELECT p.razorpay_payment_id, p.razorpay_order_id, p.amount_paise,
+                       p.currency, p.captured_at, p.created_at,
+                       t.transfer_id, t.amount_paise AS transfer_paise
+                FROM rzp_payments p
+                LEFT JOIN LATERAL (
+                    SELECT transfer_id, amount_paise
+                    FROM rzp_route_transfers
+                    WHERE razorpay_payment_id = p.razorpay_payment_id
+                      AND merchant_id         = p.merchant_id
+                      AND status              IN ('created', 'processed')
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ) t ON TRUE
+                WHERE p.merchant_id = $1::uuid
+                  AND p.status      = 'captured'
+                  AND ($2::date IS NULL OR (COALESCE(p.captured_at, p.created_at))::date >= $2::date)
+                  AND ($3::date IS NULL OR (COALESCE(p.captured_at, p.created_at))::date <= $3::date)
+                """,
+                merchant_id, from_date, to_date,
+            )
+            transfers = await conn.fetch(
+                """
+                SELECT transfer_id, razorpay_payment_id, amount_paise,
+                       currency, status::text AS status,
+                       processed_at, created_at
+                FROM rzp_route_transfers
                 WHERE merchant_id = $1::uuid
-                  AND status      = 'captured'
-                  AND ($2::date IS NULL OR (COALESCE(captured_at, created_at))::date >= $2::date)
-                  AND ($3::date IS NULL OR (COALESCE(captured_at, created_at))::date <= $3::date)
+                  AND status      IN ('created', 'processed')
+                  AND ($2::date IS NULL OR (COALESCE(processed_at, created_at))::date >= $2::date)
+                  AND ($3::date IS NULL OR (COALESCE(processed_at, created_at))::date <= $3::date)
                 """,
                 merchant_id, from_date, to_date,
             )
             settlements = await conn.fetch(
                 """
                 SELECT sp.settlement_id,
-                       SUM(CASE WHEN sp.type = 'payment'
-                                THEN sp.amount_paise ELSE 0 END)::bigint AS gross_paise,
-                       COALESCE(MAX(s.utr), '')                          AS utr,
-                       MAX(s.settled_at)                                 AS settled_at,
-                       MIN(sp.created_at)                                AS first_seen_at,
-                       COALESCE(MAX(s.status::text), 'processed')        AS status
+                       COALESCE(SUM(sp.credit_paise - sp.debit_paise), 0)::bigint AS merchant_paise,
+                       COALESCE(MAX(s.utr), '')                                   AS utr,
+                       MAX(s.settled_at)                                          AS settled_at,
+                       MIN(sp.created_at)                                         AS first_seen_at,
+                       COALESCE(MAX(s.status::text), 'processed')                 AS status
                 FROM rzp_settlement_payments sp
                 LEFT JOIN rzp_settlements s ON s.settlement_id = sp.settlement_id
                 WHERE sp.merchant_id = $1::uuid
@@ -725,68 +953,109 @@ class MerchantFinanceService:
 
         events: list[tuple[datetime, str, dict]] = []
 
+        # 1. PAYMENT_RECEIVED + COMMISSION_DEDUCTED (informational pair)
         for p in payments:
             at = p["captured_at"] or p["created_at"]
             gross = _money(p["amount_paise"])
-            _mer, commission = _split_gross(gross)
+            t_paise = p.get("transfer_paise")
+            if t_paise is not None:
+                merchant_amt = _money(t_paise)
+                commission = gross - merchant_amt
+                if commission < 0:
+                    commission = Decimal("0.00")
+            else:
+                merchant_amt = Decimal("0.00")
+                commission = Decimal("0.00")
+
             events.append((at, f"pay:{p['razorpay_payment_id']}", {
-                "entry_id": f"pay:{p['razorpay_payment_id']}",
-                "type": "CREDIT",
-                "source": "payment",
-                "amount": float(gross),
-                "reference": p["razorpay_payment_id"],
-                "order_id": p.get("razorpay_order_id"),
-                "at": _iso(at),
-                "description": f"Captured payment {p['razorpay_payment_id']}",
-                "currency": p["currency"] or "INR",
+                "entry_id":        f"pay:{p['razorpay_payment_id']}",
+                "entry_type":      ENTRY_PAYMENT_RECEIVED,
+                "type":            "CREDIT",
+                "source":          "payment",
+                "amount":          float(gross),
+                "reference":       p["razorpay_payment_id"],
+                "order_id":        p.get("razorpay_order_id"),
+                "at":              _iso(at),
+                "description":     f"Captured payment {p['razorpay_payment_id']}",
+                "currency":        p["currency"] or "INR",
+                "affects_balance": False,
             }))
             if commission > 0:
-                # Anchor 1µs after the credit so it always sorts immediately after.
                 at_com = at + timedelta(microseconds=1)
                 events.append((at_com, f"com:{p['razorpay_payment_id']}", {
-                    "entry_id": f"com:{p['razorpay_payment_id']}",
-                    "type": "DEBIT",
-                    "source": "commission",
-                    "amount": float(commission),
-                    "reference": p["razorpay_payment_id"],
-                    "order_id": p.get("razorpay_order_id"),
-                    "at": _iso(at),
-                    "description": "Bittu platform commission (5%)",
-                    "currency": p["currency"] or "INR",
+                    "entry_id":        f"com:{p['razorpay_payment_id']}",
+                    "entry_type":      ENTRY_COMMISSION_DEDUCTED,
+                    "type":            "DEBIT",
+                    "source":          "commission",
+                    "amount":          float(_q(commission)),
+                    "reference":       p["razorpay_payment_id"],
+                    "order_id":        p.get("razorpay_order_id"),
+                    "at":              _iso(at_com),
+                    "description":     "Platform commission",
+                    "currency":        p["currency"] or "INR",
+                    "affects_balance": False,
                 }))
 
-        for s in settlements:
-            at = s["settled_at"] or s["first_seen_at"]
-            gross = _money(s["gross_paise"])
-            merchant_share, _ = _split_gross(gross)
-            if merchant_share <= 0:
-                continue
-            events.append((at, f"setl:{s['settlement_id']}", {
-                "entry_id": f"setl:{s['settlement_id']}",
-                "type": "DEBIT",
-                "source": "settlement",
-                "amount": float(merchant_share),
-                "reference": s["settlement_id"],
-                "utr": s.get("utr") or None,
-                "status": s.get("status"),
-                "at": _iso(at),
-                "description": f"Settled to bank ({s.get('utr') or s['settlement_id']})",
-                "currency": "INR",
+        # 2. TRANSFER_CREATED — the credit that actually moves the merchant
+        #    balance.
+        for t in transfers:
+            at = t["processed_at"] or t["created_at"]
+            amt = _money(t["amount_paise"])
+            # Anchor +2µs so transfers sort after the matching commission
+            # entry (which is +1µs after the payment).
+            events.append((at + timedelta(microseconds=2), f"trf:{t['transfer_id']}", {
+                "entry_id":        f"trf:{t['transfer_id']}",
+                "entry_type":      ENTRY_TRANSFER_CREATED,
+                "type":            "CREDIT",
+                "source":          "transfer",
+                "amount":          float(amt),
+                "reference":       t["transfer_id"],
+                "payment_id":      t["razorpay_payment_id"],
+                "at":              _iso(at),
+                "description":     f"Route transfer {t['transfer_id']}",
+                "currency":        t["currency"] or "INR",
+                "status":          t.get("status"),
+                "affects_balance": True,
             }))
 
+        # 3. SETTLEMENT_PROCESSED — debit when Razorpay sweeps the linked
+        #    account balance to the merchant's bank.
+        for s in settlements:
+            at = s["settled_at"] or s["first_seen_at"]
+            amt = _money(s["merchant_paise"])
+            if amt <= 0:
+                continue
+            events.append((at, f"setl:{s['settlement_id']}", {
+                "entry_id":        f"setl:{s['settlement_id']}",
+                "entry_type":      ENTRY_SETTLEMENT_PROCESSED,
+                "type":            "DEBIT",
+                "source":          "settlement",
+                "amount":          float(amt),
+                "reference":       s["settlement_id"],
+                "utr":             s.get("utr") or None,
+                "status":          s.get("status"),
+                "at":              _iso(at),
+                "description":     f"Settled to bank ({s.get('utr') or s['settlement_id']})",
+                "currency":        "INR",
+                "affects_balance": True,
+            }))
+
+        # 4. REFUND — debit when a refund is initiated/processed.
         for r in refunds:
             at = r["processed_at"] or r["created_at"]
             amt = _money(r["amount_paise"])
             events.append((at, f"ref:{r['refund_id']}", {
-                "entry_id": f"ref:{r['refund_id']}",
-                "type": "DEBIT",
-                "source": "refund",
-                "amount": float(amt),
-                "reference": r["refund_id"],
-                "payment_id": r["razorpay_payment_id"],
-                "at": _iso(at),
-                "description": f"Refund {r['refund_id']} for payment {r['razorpay_payment_id']}",
-                "currency": r["currency"] or "INR",
+                "entry_id":        f"ref:{r['refund_id']}",
+                "entry_type":      ENTRY_REFUND,
+                "type":            "DEBIT",
+                "source":          "refund",
+                "amount":          float(amt),
+                "reference":       r["refund_id"],
+                "payment_id":      r["razorpay_payment_id"],
+                "at":              _iso(at),
+                "description":     f"Refund {r['refund_id']} for payment {r['razorpay_payment_id']}",
+                "currency":        r["currency"] or "INR",
+                "affects_balance": True,
             }))
 
         events.sort(key=lambda t: (t[0], t[1]))
@@ -794,8 +1063,9 @@ class MerchantFinanceService:
         running = Decimal("0.00")
         out: list[dict] = []
         for _at, _eid, payload in events:
-            sign = Decimal("1") if payload["type"] == "CREDIT" else Decimal("-1")
-            running = _q(running + sign * Decimal(str(payload["amount"])))
+            if payload.get("affects_balance"):
+                sign = Decimal("1") if payload["type"] == "CREDIT" else Decimal("-1")
+                running = _q(running + sign * Decimal(str(payload["amount"])))
             payload["balance_after"] = float(running)
             out.append(payload)
         return out
@@ -812,20 +1082,35 @@ class MerchantFinanceService:
         offset: int = 0,
     ) -> dict:
         merchant_id = _require_merchant(merchant_id)
+        linked = await self._linked_account(merchant_id)
+        if not self._is_active(linked):
+            return {
+                "items":         [],
+                "total":         0,
+                "limit":         limit,
+                "offset":        offset,
+                "has_more":      False,
+                "wallet_status": _wallet_status_for((linked or {}).get("status")),
+            }
+
         stream = await self._build_entries(merchant_id, from_date=from_date, to_date=to_date)
-        # API returns newest-first; balance_after was computed on the
-        # ascending stream so it remains correct for each row.
+        # Newest-first; balance_after computed on ascending stream so each
+        # row still carries the correct running tally.
         stream_desc = list(reversed(stream))
         if entry_type:
-            stream_desc = [e for e in stream_desc if e["type"] == entry_type.upper()]
+            wanted = entry_type.upper()
+            stream_desc = [
+                e for e in stream_desc
+                if e["type"] == wanted or e.get("entry_type") == wanted
+            ]
         if source:
             stream_desc = [e for e in stream_desc if e["source"] == source.lower()]
         total = len(stream_desc)
         return {
-            "items": stream_desc[offset: offset + limit],
-            "total": total,
-            "limit": limit,
-            "offset": offset,
+            "items":    stream_desc[offset: offset + limit],
+            "total":    total,
+            "limit":    limit,
+            "offset":   offset,
             "has_more": offset + limit < total,
         }
 
@@ -834,11 +1119,8 @@ class MerchantFinanceService:
         if ":" not in entry_id:
             raise ValidationError(
                 "entry_id must be of the form <prefix>:<razorpay_id> "
-                "where prefix is one of pay / com / setl / ref"
+                "where prefix is one of pay / com / trf / setl / ref"
             )
-        # The full stream is needed for an accurate running balance value
-        # on the returned entry. Cap the lookup window in case the merchant
-        # has years of history — we walk it all but it's a small payload.
         stream = await self._build_entries(merchant_id, from_date=None, to_date=None)
         for e in stream:
             if e["entry_id"] == entry_id:
@@ -852,11 +1134,13 @@ class MerchantFinanceService:
         entries = await self._build_entries(merchant_id, from_date=None, to_date=None)
 
         total_credit = sum(
-            (Decimal(str(e["amount"])) for e in entries if e["type"] == "CREDIT"),
+            (Decimal(str(e["amount"])) for e in entries
+             if e["type"] == "CREDIT" and e.get("affects_balance")),
             Decimal("0.00"),
         )
         total_debit = sum(
-            (Decimal(str(e["amount"])) for e in entries if e["type"] == "DEBIT"),
+            (Decimal(str(e["amount"])) for e in entries
+             if e["type"] == "DEBIT" and e.get("affects_balance")),
             Decimal("0.00"),
         )
         derived = total_credit - total_debit
@@ -866,15 +1150,15 @@ class MerchantFinanceService:
         expected = Decimal(str(balance["current_balance"]))
         delta = _q(derived - expected)
         return {
-            "merchant_id": merchant_id,
-            "consistent": delta == Decimal("0.00"),
+            "merchant_id":   merchant_id,
+            "consistent":    delta == Decimal("0.00"),
             "derived_balance": float(derived),
-            "live_balance": float(expected),
-            "delta": float(delta),
-            "total_credit": float(_q(total_credit)),
-            "total_debit": float(_q(total_debit)),
-            "entry_count": len(entries),
-            "source": "razorpay_local_mirror",
+            "live_balance":  float(expected),
+            "delta":         float(delta),
+            "total_credit":  float(_q(total_credit)),
+            "total_debit":   float(_q(total_debit)),
+            "entry_count":   len(entries),
+            "source":        "razorpay_route_mirror",
         }
 
 

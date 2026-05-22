@@ -204,14 +204,17 @@ class RzpSettlementService:
         month: int,
         day: Optional[int] = None,
         merchant_id: Optional[str] = None,
+        account_id: Optional[str] = None,
         page_size: int = 1000,
     ) -> dict:
         """
         Pull `/v1/settlements/recon/combined` and persist every row into
         `rzp_settlement_payments`. Returns counters.
 
-        ``merchant_id`` is forwarded to the client so the
-        ``X-Razorpay-Account`` header is set when Route is in play.
+        ``merchant_id`` is recorded on the audit trail. ``account_id`` is
+        the Razorpay linked-account id (``acc_xxx``); when supplied the
+        report is scoped to that linked account via ``X-Razorpay-Account``
+        instead of the platform's master account.
         """
         from app.services.razorpay import settlements as rzp_settlements_api
 
@@ -223,6 +226,7 @@ class RzpSettlementService:
                 year=year, month=month, day=day,
                 count=page_size, skip=skip,
                 merchant_id=merchant_id,
+                account_id=account_id,
             )
             items = (resp or {}).get("items") or []
             if not items:
