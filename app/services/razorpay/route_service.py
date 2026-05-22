@@ -548,8 +548,7 @@ class RzpRouteService:
 
         rzp_resp = await route_api.request_product_configuration(
             account_id,
-            product_name="route",
-            tnc_accepted=tnc_accepted,
+            body={"product_name": "route", "tnc_accepted": bool(tnc_accepted)},
             idempotency_key=f"rzp_route_product:{merchant_id}",
             merchant_id=merchant_id,
         )
