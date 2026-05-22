@@ -453,10 +453,19 @@ class RzpRouteService:
         if relationship_overrides:
             relationship.update(dict(relationship_overrides))
 
+        # Razorpay v2 stakeholders require `phone` as an object (and the
+        # SDK error surfaces it as "phone must be an array"). Strip any
+        # `+91`/`+`/whitespace so we send the bare 10-digit primary.
+        raw_phone = (owner.get("phone") or profile.get("contact_phone") or "").strip()
+        digits = re.sub(r"\D", "", raw_phone)
+        if digits.startswith("91") and len(digits) > 10:
+            digits = digits[-10:]
+        phone_obj = {"primary": digits} if digits else None
+
         body: dict[str, Any] = {
             "name": owner.get("full_name"),
             "email": owner.get("email") or profile.get("contact_email"),
-            "phone": owner.get("phone") or profile.get("contact_phone"),
+            "phone": phone_obj,
             "relationship": relationship,
         }
         if kyc_overrides:
