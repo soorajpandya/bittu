@@ -659,6 +659,7 @@ async def mark_paid_and_vacate(
             actor,
         )
         legacy_session_id: Optional[str] = None
+        orphan_table_id: Optional[str] = None
         if not dinein_exists:
             row = await conn.fetchrow(
                 "SELECT id FROM table_sessions WHERE id = $1 AND user_id = $2 AND is_active = true",
@@ -681,6 +682,25 @@ async def mark_paid_and_vacate(
                 )
             if row:
                 legacy_session_id = str(row["id"])
+            else:
+                # Orphan recovery: no active dine_in_session and no active
+                # legacy table_session, but the restaurant_tables row may still
+                # be flagged as occupied (ghost-occupied table). Detect this
+                # so we can clear the flags below and free the table.
+                orphan_row = await conn.fetchrow(
+                    """
+                    SELECT id
+                    FROM restaurant_tables
+                    WHERE id = $1 AND user_id = $2
+                      AND (is_occupied = true OR status = 'occupied'
+                           OR session_token IS NOT NULL
+                           OR current_order_id IS NOT NULL)
+                    """,
+                    session_id,
+                    actor,
+                )
+                if orphan_row:
+                    orphan_table_id = str(orphan_row["id"])
 
     if legacy_session_id is not None:
         result = await _svc.end_session(user=user, session_id=legacy_session_id)
@@ -693,6 +713,43 @@ async def mark_paid_and_vacate(
             metadata={"engine": "legacy"},
         )
         return result
+
+    if orphan_table_id is not None:
+        # Ghost-occupied table: no active session anywhere, but the
+        # restaurant_tables row is still marked occupied. Clear the flags
+        # directly so the table can be reused.
+        async with get_connection() as conn:
+            await conn.execute(
+                """
+                UPDATE restaurant_tables
+                SET status = 'available',
+                    is_occupied = false,
+                    occupied_since = NULL,
+                    session_token = NULL,
+                    current_order_id = NULL
+                WHERE id = $1 AND user_id = $2
+                """,
+                orphan_table_id,
+                actor,
+            )
+        try:
+            await cache_delete(f"tables_list:{actor}")
+        except Exception:
+            pass
+        await log_activity(
+            user_id=user.user_id,
+            branch_id=user.branch_id,
+            action="table.paid_and_vacated",
+            entity_type="restaurant_table",
+            entity_id=orphan_table_id,
+            metadata={"engine": "orphan_recovery"},
+        )
+        return {
+            "status": "vacated_orphan",
+            "session_id": None,
+            "table_id": orphan_table_id,
+            "remaining_amount": 0.0,
+        }
 
     result = await _dinein_svc.paid_and_vacate(session_id=resolved_session_id, closed_by=actor)
     await log_activity(
