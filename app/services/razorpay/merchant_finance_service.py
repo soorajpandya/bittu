@@ -219,10 +219,12 @@ class MerchantFinanceService:
     ) -> dict:
         merchant_id = _require_merchant(merchant_id)
         linked = await self._linked_account(merchant_id)
-        if not self._is_active(linked):
-            return self._pending_wallet(
-                merchant_id, linked, from_date=from_date, to_date=to_date,
-            )
+        # NOTE: we no longer short-circuit on activation here. Payments can
+        # be captured (on the platform account) before the merchant's
+        # linked account is fully activated — we still owe them their
+        # share. We always project from the local mirror; wallet_status
+        # below reports the activation state separately so the FE can
+        # decide whether to surface settlement timelines.
 
         async with get_connection() as conn:
             # Gross captured payments (context only — does NOT contribute
@@ -283,26 +285,36 @@ class MerchantFinanceService:
         settled  = _money(settled_net_paise or 0)
         refunds  = _money(refund_paise or 0)
 
-        # Commission is the real platform take: gross − what actually went
-        # to the merchant's linked account.
-        commission = gross - transfers
+        # Merchant's share is gross minus Bittu's flat 5% commission.
+        # We use the documented contract formula so the FE sees a non-zero
+        # `pending_settlement` as soon as a payment is captured, even
+        # before Route transfers have fired (which only happens once the
+        # linked account is fully activated).
+        merchant_share = (gross * Decimal("0.95")).quantize(Decimal("0.01"))
+        commission = gross - merchant_share
         if commission < 0:
             commission = Decimal("0.00")
 
-        # Available = what's in the linked account waiting for settlement.
+        # Pending = money owed to merchant but not yet sent to their bank.
+        pending = merchant_share - settled - refunds
+        if pending < 0:
+            pending = Decimal("0.00")
+
+        # Available = what's already at the linked account but not yet
+        # swept to the bank (only meaningful once activation + transfers).
         available = transfers - settled - refunds
         if available < 0:
             available = Decimal("0.00")
 
         return {
             "merchant_id":         merchant_id,
-            "wallet_status":       "active",
+            "wallet_status":       _wallet_status_for((linked or {}).get("status")),
             "kyc_status":          (linked or {}).get("kyc_status"),
             "linked_account_id":   (linked or {}).get("linked_account_id"),
             "gross_sales":         float(gross),
             "settled_amount":      float(_q(settled)),
             "platform_commission": float(_q(commission)),
-            "pending_settlement":  float(_q(available)),
+            "pending_settlement":  float(_q(pending)),
             "refunds":             float(refunds),
             "available_balance":   float(_q(available)),
             "transaction_count":   int(gross_row["tx_count"]),
