@@ -445,13 +445,19 @@ class RzpRouteService:
             )
 
         name_parts = (owner.get("full_name") or "").strip().split()
+        # Razorpay v2 stakeholder `relationship` only accepts a fixed set
+        # of boolean flags (e.g. director, executive). Sending an
+        # `owner` key gets rejected with:
+        #   "owner is/are not required and should not be sent"
         relationship = {
             "executive": True,
             "director":  False,
-            "owner":     True,
         }
         if relationship_overrides:
             relationship.update(dict(relationship_overrides))
+            # Defensively drop any keys Razorpay explicitly rejects so a
+            # caller-supplied override can't reintroduce the 400.
+            relationship.pop("owner", None)
 
         # Razorpay v2 stakeholders require `phone` as an object (and the
         # SDK error surfaces it as "phone must be an array"). Strip any
