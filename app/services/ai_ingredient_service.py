@@ -106,13 +106,37 @@ class AIIngredientService:
                 qty = s.get("quantity", 0)
                 unit = s.get("unit", "g")
 
-                # Try to find existing ingredient by name (case-insensitive)
+                # Try to find existing ingredient by name (case-insensitive).
+                # Scope to the caller's restaurant OR to legacy rows that have
+                # no restaurant_id yet (so we can heal them in-place below).
                 row = await conn.fetchrow(
-                    "SELECT id FROM ingredients WHERE user_id = $1 AND LOWER(name) = LOWER($2)",
-                    user_id, name,
+                    """
+                    SELECT id, restaurant_id, branch_id
+                      FROM ingredients
+                     WHERE user_id = $1
+                       AND LOWER(name) = LOWER($2)
+                       AND (restaurant_id = $3::uuid OR restaurant_id IS NULL)
+                     ORDER BY (restaurant_id IS NOT NULL) DESC, id ASC
+                     LIMIT 1
+                    """,
+                    user_id, name, restaurant_id,
                 )
                 if row:
                     ingredient_id = row["id"]
+                    # Heal orphan rows created by the pre-fix code: attach to
+                    # the caller's restaurant/branch so /inventory/balances
+                    # (which filters by restaurant_id) can finally see them.
+                    if restaurant_id and row["restaurant_id"] is None:
+                        await conn.execute(
+                            """
+                            UPDATE ingredients
+                               SET restaurant_id = $2::uuid,
+                                   branch_id    = COALESCE(branch_id, $3::uuid),
+                                   updated_at   = NOW()
+                             WHERE id = $1
+                            """,
+                            ingredient_id, restaurant_id, branch_id,
+                        )
                 else:
                     # Create the raw material — MUST include restaurant_id so the
                     # ingredient is visible to /inventory/balances (which filters
