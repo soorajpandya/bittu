@@ -12,7 +12,7 @@ from app.core.redis import cache_get, cache_set, cache_delete_pattern
 
 router = APIRouter(prefix="/menu", tags=["Menu"])
 
-_MENU_CACHE_TTL = 300  # 5 minutes
+_MENU_CACHE_TTL = 30  # 30 seconds
 
 
 def _menu_cache_key(uid: str) -> str:
@@ -29,7 +29,7 @@ async def get_full_menu(
     /item-variants, /item-addons, /item-extras, /modifier-groups,
     /modifiers/options, and /item-stations.
 
-    Cached per owner for 5 minutes. Call POST /menu/cache/invalidate
+    Cached per owner for 30 seconds. Call POST /menu/cache/invalidate
     after any menu write to clear it immediately.
     """
     uid = user.owner_id if user.is_branch_user else user.user_id
@@ -142,7 +142,7 @@ async def invalidate_menu_cache(
     """Manually invalidate the /menu/all cache for this restaurant.
 
     Call this after bulk menu edits to force fresh data on next request.
-    The cache auto-expires after 5 minutes regardless.
+    The cache auto-expires after 30 seconds regardless.
     """
     uid = user.owner_id if user.is_branch_user else user.user_id
     try:
