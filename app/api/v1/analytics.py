@@ -224,7 +224,7 @@ async def top_selling_items(
             LEFT JOIN items i ON i."Item_ID" = oi.item_id
             WHERE o.restaurant_id = $1::uuid
               AND ($2::uuid IS NULL OR o.branch_id = $2::uuid)
-              AND o.created_at >= NOW() - ($3 || ' days')::interval
+              AND o.created_at >= NOW() - make_interval(days => $3)
               AND {_REVENUE_ORDERS_FILTER.replace('status', 'o.status')}
               AND oi.item_id IS NOT NULL
             GROUP BY oi.item_id, COALESCE(oi.item_name, i."Item_Name")
@@ -277,7 +277,7 @@ async def ingredient_usage(
             JOIN ingredients i ON i.id = l.ingredient_id
             WHERE l.restaurant_id = $1::uuid
               AND ($2::uuid IS NULL OR l.branch_id = $2::uuid)
-              AND l.created_at >= NOW() - ($3 || ' days')::interval
+              AND l.created_at >= NOW() - make_interval(days => $3)
               AND l.quantity_out > 0
               AND l.transaction_type IN (
                     'consumption', 'wastage', 'adjustment_out', 'transfer_out'
