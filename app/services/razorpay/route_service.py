@@ -51,6 +51,26 @@ _TRANSFER_STATES: tuple[str, ...] = (
     "created", "processed", "reversed", "failed",
 )
 
+# Razorpay rejects accounts in `needs_clarification` with a generic
+# "contact support for Account Creation" banner in the hosted KYC flow
+# when stakeholder.relationship is just `{executive: true}` for a company
+# entity. For these business types Razorpay expects at least one director
+# stakeholder. The map below picks the right default flags.
+_COMPANY_BUSINESS_TYPES: frozenset[str] = frozenset({
+    "private_limited", "public_limited", "llp",
+})
+
+
+def _default_relationship_for(business_type: Optional[str]) -> dict[str, bool]:
+    """Return the default ``stakeholder.relationship`` flags Razorpay
+    expects for a given business type. Companies need ``director: True``;
+    everything else (proprietorship, partnership, individual, …) can use
+    ``executive: True``."""
+    bt = (business_type or "").strip().lower()
+    if bt in _COMPANY_BUSINESS_TYPES:
+        return {"director": True, "executive": True}
+    return {"executive": True, "director": False}
+
 
 def _coerce_account_state(value: Optional[str]) -> str:
     v = (value or "").lower().strip()
@@ -399,6 +419,127 @@ class RzpRouteService:
         )
         return await self.get_linked_account(merchant_id=merchant_id)
 
+    async def heal_linked_account_from_kyc(
+        self,
+        *,
+        merchant_id: str,
+        category: Optional[str] = None,
+        subcategory: Optional[str] = None,
+        addresses_override: Optional[Mapping[str, Any]] = None,
+    ) -> dict:
+        """PATCH an existing linked account with any ``legal_info`` /
+        ``profile`` fields we now have in KYC but Razorpay doesn't.
+
+        Razorpay returns ``needs_clarification`` on the Route product if
+        e.g. ``legal_info.pan`` (company PAN) or ``legal_info.gst`` are
+        missing for a registered entity. When the merchant submits the
+        onboard form a second time with these now filled in, we PATCH
+        the account so the new values reach Razorpay.
+
+        No-op (just resync) if there's nothing new to send."""
+        existing = await self._existing_account(merchant_id)
+        if not existing or not existing["linked_account_id"]:
+            raise LookupError("No linked account provisioned for this merchant")
+        account_id = existing["linked_account_id"]
+
+        # Pull the latest Razorpay view so we only PATCH genuinely missing
+        # fields (Razorpay rejects PATCHes that set fields back to the
+        # same value with the same correlation id occasionally).
+        rzp_current = await route_api.fetch_linked_account(
+            account_id, merchant_id=merchant_id,
+        )
+        snap = await self._kyc_snapshot(merchant_id)
+        profile = snap["profile"]
+        rzp_legal = (rzp_current.get("legal_info") or {}) if isinstance(
+            rzp_current.get("legal_info"), dict
+        ) else {}
+        rzp_profile = (rzp_current.get("profile") or {}) if isinstance(
+            rzp_current.get("profile"), dict
+        ) else {}
+
+        patch_body: dict[str, Any] = {}
+
+        # legal_info: company PAN + GST.
+        legal_patch: dict[str, Any] = {}
+        if profile.get("pan") and not rzp_legal.get("pan"):
+            legal_patch["pan"] = str(profile["pan"]).strip().upper()
+        if profile.get("gstin") and not rzp_legal.get("gst"):
+            legal_patch["gst"] = str(profile["gstin"]).strip().upper()
+        if legal_patch:
+            patch_body["legal_info"] = legal_patch
+
+        # profile.addresses / category / subcategory updates.
+        profile_patch: dict[str, Any] = {}
+        if category and category != rzp_profile.get("category"):
+            profile_patch["category"] = category
+        if subcategory and subcategory != rzp_profile.get("subcategory"):
+            profile_patch["subcategory"] = subcategory
+
+        if addresses_override is not None:
+            new_addresses = dict(addresses_override)
+        else:
+            reg_addr = profile.get("registered_address")
+            if isinstance(reg_addr, str):
+                try:
+                    reg_addr = json.loads(reg_addr)
+                except Exception:
+                    reg_addr = None
+            new_addresses = {"registered": reg_addr} if reg_addr else {}
+
+        rzp_addresses = rzp_profile.get("addresses") or {}
+        # Only send addresses if we have a non-empty value and Razorpay
+        # doesn't already have a registered address.
+        if (
+            new_addresses
+            and any(new_addresses.values())
+            and not rzp_addresses.get("registered")
+        ):
+            profile_patch["addresses"] = new_addresses
+
+        if profile_patch:
+            patch_body["profile"] = profile_patch
+
+        if not patch_body:
+            # Nothing to send — just resync local state.
+            await self.upsert_linked_account_from_razorpay(
+                rzp_entity=rzp_current, merchant_id_override=merchant_id,
+            )
+            return await self.get_linked_account(merchant_id=merchant_id)
+
+        try:
+            rzp_resp = await route_api.update_linked_account(
+                account_id, body=patch_body, merchant_id=merchant_id,
+            )
+        except RazorpayBadRequestError as exc:
+            logger.warning(
+                "rzp_route.account.patch_failed",
+                merchant_id=merchant_id,
+                account_id=account_id,
+                error=str(exc),
+                patch_body=patch_body,
+            )
+            # Don't fail the whole onboarding — fall back to resync.
+            rzp_resp = await route_api.fetch_linked_account(
+                account_id, merchant_id=merchant_id,
+            )
+
+        await self.upsert_linked_account_from_razorpay(
+            rzp_entity=rzp_resp, merchant_id_override=merchant_id,
+        )
+        await _safe_audit(
+            domain="razorpay_route",
+            action="rzp_route.linked_account.update",
+            entity_type="rzp_route_account",
+            entity_id=account_id,
+            payload={
+                "merchant_id": merchant_id,
+                "linked_account_id": account_id,
+                "patched_keys": sorted(patch_body.keys()),
+                "self_heal": True,
+            },
+        )
+        return await self.get_linked_account(merchant_id=merchant_id)
+
     async def get_linked_account(self, *, merchant_id: str) -> dict:
         row = await self._existing_account(merchant_id)
         return _row_to_account(row)
@@ -428,13 +569,8 @@ class RzpRouteService:
         account_id = existing["linked_account_id"]
         existing_stakeholder_id = existing["stakeholder_id"] if "stakeholder_id" in existing.keys() else None
 
-        if existing_stakeholder_id:
-            rzp_resp = await route_api.fetch_stakeholder(
-                account_id, existing_stakeholder_id, merchant_id=merchant_id,
-            )
-            await self._persist_stakeholder(merchant_id, rzp_resp)
-            return await self.get_linked_account(merchant_id=merchant_id)
-
+        # Build the desired stakeholder body up front so we can use it
+        # for both create and self-healing PATCH paths.
         snap = await self._kyc_snapshot(merchant_id)
         owner = snap["owner"]
         profile = snap["profile"]
@@ -444,19 +580,18 @@ class RzpRouteService:
                 "KYC owner missing — add a primary owner before creating a stakeholder"
             )
 
-        name_parts = (owner.get("full_name") or "").strip().split()
         # Razorpay v2 stakeholder `relationship` only accepts a fixed set
         # of boolean flags (e.g. director, executive). Sending an
         # `owner` key gets rejected with:
         #   "owner is/are not required and should not be sent"
-        relationship = {
-            "executive": True,
-            "director":  False,
-        }
+        # For company entities (private_limited / public_limited / llp)
+        # Razorpay requires at least one *director* — sending just
+        # `executive: true` flips the product to `needs_clarification`
+        # and the hosted KYC widget shows "contact support for Account
+        # Creation". Pick the default by business_type.
+        relationship = _default_relationship_for(profile.get("business_type"))
         if relationship_overrides:
             relationship.update(dict(relationship_overrides))
-            # Defensively drop any keys Razorpay explicitly rejects so a
-            # caller-supplied override can't reintroduce the 400.
             relationship.pop("owner", None)
 
         # Razorpay v2 stakeholders require `phone` as an object (and the
@@ -468,16 +603,69 @@ class RzpRouteService:
             digits = digits[-10:]
         phone_obj = {"primary": digits} if digits else None
 
+        # Auto-populate stakeholder.kyc.pan from the owner row when
+        # present — Razorpay's KYC engine needs a PAN on the signatory
+        # stakeholder before the product can leave `needs_clarification`.
+        kyc_block: dict[str, Any] = {}
+        if owner.get("pan"):
+            kyc_block["pan"] = str(owner["pan"]).strip().upper()
+        if kyc_overrides:
+            kyc_block.update(dict(kyc_overrides))
+
         body: dict[str, Any] = {
             "name": owner.get("full_name"),
             "email": owner.get("email") or profile.get("contact_email"),
             "phone": phone_obj,
             "relationship": relationship,
         }
-        if kyc_overrides:
-            body["kyc"] = dict(kyc_overrides)
+        if kyc_block:
+            body["kyc"] = kyc_block
         if addresses_overrides:
             body["addresses"] = dict(addresses_overrides)
+
+        if existing_stakeholder_id:
+            # Self-heal path: PATCH the existing stakeholder so legacy
+            # rows created before the director / kyc.pan defaults landed
+            # get upgraded automatically on the next onboard retry.
+            # PATCH only the keys Razorpay accepts on update.
+            patch_body = {
+                "name": body["name"],
+                "email": body["email"],
+                "phone": body["phone"],
+                "relationship": body["relationship"],
+            }
+            if body.get("kyc"):
+                patch_body["kyc"] = body["kyc"]
+            if body.get("addresses"):
+                patch_body["addresses"] = body["addresses"]
+            try:
+                rzp_resp = await route_api.update_stakeholder(
+                    account_id, existing_stakeholder_id,
+                    body=patch_body, merchant_id=merchant_id,
+                )
+            except RazorpayBadRequestError as exc:
+                logger.warning(
+                    "rzp_route.stakeholder.patch_failed_falling_back_to_fetch",
+                    merchant_id=merchant_id,
+                    stakeholder_id=existing_stakeholder_id,
+                    error=str(exc),
+                )
+                rzp_resp = await route_api.fetch_stakeholder(
+                    account_id, existing_stakeholder_id, merchant_id=merchant_id,
+                )
+            await self._persist_stakeholder(merchant_id, rzp_resp)
+            await _safe_audit(
+                domain="razorpay_route",
+                action="rzp_route.stakeholder.update",
+                entity_type="rzp_route_stakeholder",
+                entity_id=existing_stakeholder_id,
+                payload={
+                    "merchant_id": merchant_id,
+                    "linked_account_id": account_id,
+                    "self_heal": True,
+                },
+            )
+            return await self.get_linked_account(merchant_id=merchant_id)
 
         rzp_resp = await route_api.create_stakeholder(
             account_id,
@@ -725,7 +913,17 @@ class RzpRouteService:
             subcategory=subcategory,
             addresses_override=addresses_override,
         )
-        # Step 3 — stakeholder (idempotent).
+        # Step 2.5 — self-heal the linked account: if the caller filled
+        # in PAN/GSTIN/addresses on this retry but the account was
+        # created earlier without them, PATCH Razorpay so the product
+        # can leave `needs_clarification`.
+        await self.heal_linked_account_from_kyc(
+            merchant_id=merchant_id,
+            category=category,
+            subcategory=subcategory,
+            addresses_override=addresses_override,
+        )
+        # Step 3 — stakeholder (idempotent; PATCHes if one already exists).
         await self.create_stakeholder_for_merchant(merchant_id=merchant_id)
         # Step 4 — request product configuration (idempotent).
         await self.request_route_product(
