@@ -24,8 +24,16 @@ from app.core.database import get_connection, get_service_connection
 from app.core.logging import get_logger
 from app.core.audit_logger import audit_event
 from app.services.razorpay import route as route_api
+from app.services.razorpay.client import RazorpayBadRequestError
 
 logger = get_logger(__name__)
+
+# Razorpay surfaces a duplicate-email collision on POST /v2/accounts as
+# `BAD_REQUEST_ERROR: Merchant email already exists for account - <id>`.
+# When that happens we adopt the existing account rather than fail.
+_DUPLICATE_EMAIL_RE = re.compile(
+    r"already exists for account[^A-Za-z0-9]+([A-Za-z0-9]+)"
+)
 
 
 async def _safe_audit(**kwargs: Any) -> None:
@@ -306,19 +314,39 @@ class RzpRouteService:
         else:
             ref = "m_" + merchant_id.replace("-", "")[:16]
 
-        rzp_resp = await route_api.create_linked_account(
-            email=email,
-            phone=phone,
-            legal_business_name=profile["legal_name"],
-            business_type=str(profile.get("business_type") or "individual"),
-            contact_name=contact_name,
-            profile=rzp_profile,
-            legal_info=legal_info or None,
-            notes=notes,
-            reference_id=ref,
-            idempotency_key=f"rzp_route_account:{merchant_id}",
-            merchant_id=merchant_id,
-        )
+        try:
+            rzp_resp = await route_api.create_linked_account(
+                email=email,
+                phone=phone,
+                legal_business_name=profile["legal_name"],
+                business_type=str(profile.get("business_type") or "individual"),
+                contact_name=contact_name,
+                profile=rzp_profile,
+                legal_info=legal_info or None,
+                notes=notes,
+                reference_id=ref,
+                idempotency_key=f"rzp_route_account:{merchant_id}",
+                merchant_id=merchant_id,
+            )
+        except RazorpayBadRequestError as exc:
+            # Recover from "email already exists for account - <id>" by
+            # adopting the pre-existing Razorpay account. This happens
+            # when a previous attempt created the account on Razorpay
+            # but failed to persist locally (e.g. an earlier 400 on a
+            # later field), or when the merchant retried after a
+            # mid-flow error.
+            desc = (exc.error_description or str(exc) or "")
+            m = _DUPLICATE_EMAIL_RE.search(desc)
+            if not m:
+                raise
+            adopted_id = m.group(1)
+            logger.warning(
+                "rzp_route.adopt_existing_account merchant=%s account=%s reason=duplicate_email",
+                merchant_id, adopted_id,
+            )
+            rzp_resp = await route_api.fetch_linked_account(
+                adopted_id, merchant_id=merchant_id,
+            )
 
         # Persist via the single UPSERT path so the row binding lives in
         # exactly one place.
