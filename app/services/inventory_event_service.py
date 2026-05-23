@@ -432,7 +432,7 @@ class InventoryEventService:
               FROM item_ingredients ii
              WHERE ii.item_id = $1
             """,
-            str(item_id),
+            int(item_id),
         )
         return [
             {"ingredient_id": r["ingredient_id"],
