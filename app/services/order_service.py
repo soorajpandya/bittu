@@ -347,6 +347,29 @@ class OrderService:
             branch_id=user.branch_id,
         ))
 
+        # If the payment auto-confirmed the order (cash/upi/card at POS),
+        # the order row was flipped to 'Confirmed' inside the transaction.
+        # We must also emit ORDER_CONFIRMED so ERP handlers (inventory
+        # deduction, COGS journal, GST invoice, revenue journal) fire.
+        # Without this, cash/POS sales never deduct ingredient stock — the
+        # deduction handler is subscribed to ORDER_CONFIRMED, not
+        # ORDER_CREATED. Online (razorpay) orders stay pending and get
+        # ORDER_CONFIRMED later via update_status() on webhook.
+        if response.get("status") == "Confirmed":
+            await emit_and_publish(DomainEvent(
+                event_type=ORDER_CONFIRMED,
+                payload={
+                    "order_id": response["id"],
+                    "from_status": OrderStatus.PENDING.value,
+                    "to_status": "Confirmed",
+                    "total_amount": response.get("total_amount"),
+                    "source": source_value,
+                },
+                user_id=user.user_id,
+                restaurant_id=user.restaurant_id,
+                branch_id=user.branch_id,
+            ))
+
         return response
 
     async def _create_order_txn(
