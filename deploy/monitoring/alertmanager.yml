@@ -1,0 +1,45 @@
+global:
+  resolve_timeout: 5m
+
+# ─────────────────────────────────────────────────────────────────────
+# Replace the slack_api_url / email_configs with real values before
+# enabling notifications. Currently routes ALL alerts to a single
+# webhook receiver that you can point at Slack, PagerDuty, OpsGenie,
+# Discord, or a custom HTTP relay.
+# ─────────────────────────────────────────────────────────────────────
+
+route:
+  receiver: bittu-default
+  group_by: ["alertname", "severity"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - severity = "critical"
+      receiver: bittu-critical
+      group_wait: 10s
+      repeat_interval: 1h
+    - matchers:
+        - severity = "warning"
+      receiver: bittu-default
+
+receivers:
+  - name: bittu-default
+    webhook_configs:
+      - url: "http://host.docker.internal:5001/webhook/bittu-alerts"
+        send_resolved: true
+
+  - name: bittu-critical
+    webhook_configs:
+      - url: "http://host.docker.internal:5001/webhook/bittu-critical"
+        send_resolved: true
+    # Add slack_configs / pagerduty_configs / email_configs here.
+
+inhibit_rules:
+  # If the API is down, suppress everything else — it's all downstream noise.
+  - source_matchers:
+      - alertname = "BittuAPIDown"
+    target_matchers:
+      - severity =~ "warning|critical"
+    equal: ["service"]

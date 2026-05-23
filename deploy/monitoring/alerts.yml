@@ -1,0 +1,181 @@
+groups:
+  # ════════════════════════════════════════════════════════════════════
+  # GROUP A — LIVE TODAY (metrics actively recorded in app code)
+  # ════════════════════════════════════════════════════════════════════
+
+  - name: bittu_api_health
+    interval: 30s
+    rules:
+      - alert: BittuAPIDown
+        expr: up{job="bittu-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Bittu API target is DOWN"
+          description: "Prometheus cannot scrape {{ $labels.instance }} for 1 minute."
+          runbook: "systemctl status bittu.service ; journalctl -u bittu.service -n 200"
+
+  - name: bittu_database
+    interval: 30s
+    rules:
+      # asyncpg pool starvation — added May 2026 (perf hardening phase).
+      - alert: DBPoolAcquireSlow
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le, txn_kind) (rate(db_pool_acquire_wait_seconds_bucket[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "asyncpg pool acquire p99 > 50ms ({{ $labels.txn_kind }})"
+          description: |
+            Pool starvation. Bump DB_POOL_SIZE / DB_MAX_OVERFLOW, scale out
+            workers, or front Postgres with PgBouncer transaction mode.
+            Current p99 wait: {{ $value }}s.
+
+      - alert: DBPoolAcquireCritical
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le, txn_kind) (rate(db_pool_acquire_wait_seconds_bucket[2m]))
+          ) > 0.5
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "asyncpg pool acquire p99 > 500ms ({{ $labels.txn_kind }})"
+          description: "Customer-visible API timeouts likely. Investigate now."
+
+      # SERIALIZABLE retry storm — wired via @retry_on_serialization_failure.
+      - alert: SerializationRetryStorm
+        expr: sum(rate(db_txn_serialization_retries_total[1m])) > 10
+        for: 3m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "SERIALIZABLE txn retries > 10/s for 3m"
+          description: "Hot-row write contention. Top offenders: topk(5, sum by (function) (rate(db_txn_serialization_retries_total[5m])))"
+
+      - alert: SerializationRetryCritical
+        expr: sum(rate(db_txn_serialization_retries_total[1m])) > 50
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "SERIALIZABLE retries > 50/s — write path melting"
+          description: "Even with retries we're losing throughput. Consider partitioning the hot row or advisory locks."
+
+  # ════════════════════════════════════════════════════════════════════
+  # GROUP B — READY WHEN INSTRUMENTED
+  # Metric names declared in app/core/metrics.py but not yet recorded
+  # at call-sites. These alerts evaluate to NoData until middleware /
+  # payment service / webhook handlers start calling .inc() / .observe().
+  # ════════════════════════════════════════════════════════════════════
+
+  - name: bittu_api_traffic
+    interval: 30s
+    rules:
+      - alert: BittuAPIHigh5xxRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status_code=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "HTTP 5xx rate > 5% for 5 minutes"
+
+      - alert: BittuAPIHighLatencyP99
+        expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 2
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "p99 request latency > 2s"
+
+  - name: bittu_security
+    interval: 30s
+    rules:
+      - alert: AuthFailureSpike
+        expr: sum(rate(auth_failures_total[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Auth failures > 5/s for 5m"
+          description: "Break down: sum by (reason) (rate(auth_failures_total[5m]))"
+
+      - alert: RateLimitFloodgate
+        expr: sum(rate(rate_limit_hits_total[5m])) > 100
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Rate-limiter rejections > 100/s for 5m"
+
+  - name: bittu_external_api
+    interval: 30s
+    rules:
+      - alert: RazorpayDegraded
+        expr: |
+          (
+            sum(rate(external_api_calls_total{service="razorpay", status=~"error|failed|5.."}[5m]))
+            /
+            sum(rate(external_api_calls_total{service="razorpay"}[5m]))
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Razorpay error-rate > 10% for 5m"
+
+      - alert: RazorpaySlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(external_api_call_duration_seconds_bucket{service="razorpay"}[5m]))) > 5
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Razorpay p95 latency > 5s"
+
+  - name: bittu_business
+    interval: 60s
+    rules:
+      - alert: PaymentFailureSpike
+        expr: |
+          (
+            sum(rate(payments_processed_total{status="failed"}[10m]))
+            /
+            sum(rate(payments_processed_total[10m]))
+          ) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Payment failure rate > 20% for 10m"
+          description: "Break down: sum by (gateway) (rate(payments_processed_total{status=\"failed\"}[10m]))"
+
+      - alert: WebSocketsNearFDLimit
+        expr: active_websocket_connections > 50000
+        for: 2m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Active WebSockets > 50k (FD limit 65535)"
+          description: "Worker FD headroom shrinking. Bump LimitNOFILE or scale out."
