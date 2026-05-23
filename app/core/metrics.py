@@ -73,6 +73,25 @@ AUTH_FAILURES = Counter(
     ["reason"],
 )
 
+# ── DB pool / transaction observability ─────────────────────────────────────
+# Histogram of seconds spent waiting for a pool slot (NOT query duration).
+# Watch p95/p99 — anything > 0.05s sustained signals pool starvation; either
+# bump DB_POOL_SIZE or scale out workers / introduce PgBouncer.
+DB_POOL_ACQUIRE_WAIT_SECONDS = Histogram(
+    "db_pool_acquire_wait_seconds",
+    "Seconds spent waiting to acquire a connection from the asyncpg pool",
+    ["txn_kind"],  # connection | transaction | serializable
+    buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
+)
+
+# Counter of SERIALIZABLE-transaction retries due to SQLSTATE 40001/40P01.
+# Alert when rate > N/min — indicates hot-row write contention.
+DB_TXN_SERIALIZATION_RETRIES = Counter(
+    "db_txn_serialization_retries_total",
+    "Total SERIALIZABLE transaction retries (40001 / 40P01)",
+    ["sqlstate", "function"],
+)
+
 
 async def metrics_endpoint(request: Request) -> Response:
     """Prometheus metrics endpoint."""

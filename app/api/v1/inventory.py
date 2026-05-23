@@ -36,6 +36,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from app.core.auth import UserContext, require_permission
 from app.core.database import get_connection, get_serializable_transaction
+from app.core.retry import retry_on_serialization_failure
 from app.core.events import (
     INVENTORY_WASTED, INVENTORY_ADJUSTED,
     INVENTORY_TRANSFERRED_OUT, INVENTORY_TRANSFERRED_IN,
@@ -391,6 +392,7 @@ class TransferIn(BaseModel):
 
 
 @router.post("/transfers")
+@retry_on_serialization_failure()
 async def create_transfer(
     body: TransferIn,
     user: UserContext = Depends(require_permission("inventory.update")),

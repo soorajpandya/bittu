@@ -17,6 +17,7 @@ from uuid import UUID
 from app.core.database import get_connection, get_serializable_transaction
 from app.core.exceptions import ValidationError
 from app.core.logging import get_logger
+from app.core.retry import retry_on_serialization_failure
 
 logger = get_logger(__name__)
 

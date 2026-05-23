@@ -64,6 +64,7 @@ def _fire_and_forget(coro, *, name: str | None = None) -> None:
 from app.core.auth import UserContext
 from app.core.database import get_connection, get_serializable_transaction, get_transaction
 from app.core.redis import DistributedLock, LockError
+from app.core.retry import retry_on_serialization_failure
 from app.core.state_machines import OrderStatus, validate_order_transition
 from app.core.events import (
     DomainEvent, emit_and_publish,
@@ -869,6 +870,7 @@ class OrderService:
 
         return await self.get_order_detail(user=user, order_id=order_id)
 
+    @retry_on_serialization_failure()
     async def apply_discount(
         self,
         user: UserContext,
@@ -930,6 +932,7 @@ class OrderService:
 
     # ── UPDATE ORDER STATUS ──
 
+    @retry_on_serialization_failure()
     async def update_status(
         self,
         user: UserContext,

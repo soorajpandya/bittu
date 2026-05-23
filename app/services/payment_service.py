@@ -27,6 +27,7 @@ from typing import Optional
 from app.core.auth import UserContext
 from app.core.database import get_connection, get_serializable_transaction
 from app.core.redis import DistributedLock, check_idempotency, set_idempotency, LockError
+from app.core.retry import retry_on_serialization_failure
 from app.core.state_machines import PaymentStatus, validate_payment_transition
 from app.core.events import (
     DomainEvent, emit_and_publish,
@@ -52,6 +53,7 @@ class PaymentService:
 
     # ── INITIATE PAYMENT ──
 
+    @retry_on_serialization_failure()
     async def initiate_payment(
         self,
         user: UserContext,
@@ -198,6 +200,7 @@ class PaymentService:
 
     # ── VERIFY RAZORPAY PAYMENT ──
 
+    @retry_on_serialization_failure()
     async def verify_razorpay_payment(
         self,
         razorpay_order_id: str,
@@ -356,6 +359,7 @@ class PaymentService:
 
     # ── REFUND ──
 
+    @retry_on_serialization_failure()
     async def initiate_refund(
         self,
         user: UserContext,
@@ -474,6 +478,7 @@ class PaymentService:
             merchant_id=merchant_id,
         )
 
+    @retry_on_serialization_failure()
     async def _handle_payment_captured(self, payload: dict):
         """Handle Razorpay payment.captured webhook."""
         entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
@@ -504,6 +509,7 @@ class PaymentService:
                 str(payment["order_id"]),
             )
 
+    @retry_on_serialization_failure()
     async def _handle_payment_failed(self, payload: dict):
         entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
         rz_order_id = entity.get("order_id")
@@ -521,6 +527,7 @@ class PaymentService:
             payload={"razorpay_order_id": rz_order_id},
         ))
 
+    @retry_on_serialization_failure()
     async def _handle_refund_processed(self, payload: dict):
         entity = payload.get("payload", {}).get("refund", {}).get("entity", {})
         rz_payment_id = entity.get("payment_id")

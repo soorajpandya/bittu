@@ -2,6 +2,7 @@
 Database connection management with connection pooling.
 Uses asyncpg with SQLAlchemy async engine for production-grade pooling.
 """
+import time
 import asyncpg
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from contextlib import asynccontextmanager
@@ -165,11 +166,22 @@ async def _apply_tenant_guc(conn: asyncpg.Connection) -> None:
         await conn.execute("SELECT set_config('app.tenant_id', '', true)")
 
 
+def _observe_pool_wait(txn_kind: str, seconds: float) -> None:
+    """Record asyncpg pool-acquire wait time in Prometheus (best-effort)."""
+    try:
+        from app.core.metrics import DB_POOL_ACQUIRE_WAIT_SECONDS
+        DB_POOL_ACQUIRE_WAIT_SECONDS.labels(txn_kind=txn_kind).observe(seconds)
+    except Exception:  # noqa: BLE001 — metrics must never break the request path
+        pass
+
+
 @asynccontextmanager
 async def get_connection() -> AsyncGenerator[asyncpg.Connection, None]:
     """Dependency: yields a raw asyncpg connection from pool, RLS-stamped."""
     pool = get_pool()
+    t0 = time.perf_counter()
     async with pool.acquire() as conn:
+        _observe_pool_wait("connection", time.perf_counter() - t0)
         await _apply_tenant_guc(conn)
         yield conn
 
@@ -178,7 +190,9 @@ async def get_connection() -> AsyncGenerator[asyncpg.Connection, None]:
 async def get_transaction() -> AsyncGenerator[asyncpg.Connection, None]:
     """Dependency: yields a connection inside a transaction, RLS-stamped."""
     pool = get_pool()
+    t0 = time.perf_counter()
     async with pool.acquire() as conn:
+        _observe_pool_wait("transaction", time.perf_counter() - t0)
         await _apply_tenant_guc(conn)
         async with conn.transaction():
             yield conn
@@ -189,9 +203,15 @@ async def get_serializable_transaction() -> AsyncGenerator[asyncpg.Connection, N
     """
     SERIALIZABLE isolation transaction for critical operations
     (payments, inventory deductions, order state changes).
+
+    Callers should wrap their entire function with
+    ``@retry_on_serialization_failure`` (see ``app.core.retry``) so that
+    SQLSTATE 40001 / 40P01 conflicts are retried transparently.
     """
     pool = get_pool()
+    t0 = time.perf_counter()
     async with pool.acquire() as conn:
+        _observe_pool_wait("serializable", time.perf_counter() - t0)
         await _apply_tenant_guc(conn)
         async with conn.transaction(isolation="serializable"):
             yield conn
