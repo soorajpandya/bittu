@@ -228,3 +228,8 @@ class DeprecationHeaderMiddleware(BaseHTTPMiddleware):
                 response.headers["Link"] = f'<{successor}>; rel="successor-version"'
                 break
         return response
+
+# Re-export the request signing middleware so main.py can import it from
+# the package directly.
+from app.middleware.request_security import RequestSecurityMiddleware  # noqa: E402,F401
+

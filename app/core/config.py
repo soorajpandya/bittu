@@ -123,6 +123,15 @@ class Settings(BaseSettings):
     RATE_LIMIT_PER_MINUTE: int = 1200  # Backend fallback; nginx enforces 300r/m at edge
     RATE_LIMIT_AUTH_PER_MINUTE: int = 60  # Stricter for auth endpoints
 
+    # ── Request signing (HMAC) ──
+    # off     — middleware disabled (legacy / smoke)
+    # monitor — verify + log failures, never reject (safe rollout default)
+    # enforce — reject unsigned / tampered / replayed requests with 401
+    REQUEST_SIGNING_MODE: str = "monitor"
+    # TTL for per-(user,device) HMAC keys cached in Redis. Rotated on every
+    # refresh; expiry is a defence-in-depth fallback only.
+    SESSION_SIGNING_KEY_TTL_SECONDS: int = 30 * 24 * 3600
+
     # ── Deployment ──
     WORKERS: int = 4
     GRACEFUL_SHUTDOWN_TIMEOUT: int = 30  # seconds

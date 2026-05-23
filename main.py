@@ -22,6 +22,7 @@ from app.middleware import (
     ErrorHandlerMiddleware,
     SecurityHeadersMiddleware,
     DeprecationHeaderMiddleware,
+    RequestSecurityMiddleware,
 )
 from app.api import router as api_router
 from app.realtime import ws_endpoint, ws_session_endpoint, redis_subscriber
@@ -276,6 +277,10 @@ def create_app() -> FastAPI:
     app.add_middleware(DeprecationHeaderMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RateLimitMiddleware)
+    # HMAC signature verification — must run AFTER RequestId (so failures
+    # carry a request_id) and BEFORE any business handler. Mode is governed
+    # by REQUEST_SIGNING_MODE (off / monitor / enforce).
+    app.add_middleware(RequestSecurityMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(RequestIdMiddleware)
 
@@ -285,7 +290,17 @@ def create_app() -> FastAPI:
         allow_origins=settings.CORS_ORIGINS,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Idempotency-Key"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-Request-ID",
+            "X-Idempotency-Key",
+            # HMAC request signing headers (RequestSecurityMiddleware)
+            "X-Device-Id",
+            "X-Timestamp",
+            "X-Nonce",
+            "X-Signature",
+        ],
     )
 
     # -- Structured exception handlers --
