@@ -106,6 +106,7 @@ class InventoryEventService:
         ledger_type: Optional[str] = None,        # override for adjust_in/out
         publish: bool = True,
         mirror_master: bool = True,               # also mutate ingredients.current_stock
+        conn=None,                                # reuse an outer transaction if provided
     ) -> str:
         """
         Append a single inventory event to `inventory_ledger` via the
@@ -121,7 +122,17 @@ class InventoryEventService:
             raise ValidationError(f"unknown inventory event_type: {event_type}")
 
         import json
-        async with get_connection() as conn:
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _conn_ctx():
+            if conn is not None:
+                yield conn
+            else:
+                async with get_connection() as c:
+                    yield c
+
+        async with _conn_ctx() as conn:
             event_id = await conn.fetchval(
                 """
                 SELECT fn_inventory_append_event(
@@ -511,6 +522,9 @@ class InventoryEventService:
                     )
 
             # 3. Append one CONSUMED event per ingredient (idempotent)
+            #    Reuse the same `conn` so the FK lock acquired by inventory_ledger
+            #    INSERT (FOR KEY SHARE on ingredients) sees the outer FOR UPDATE
+            #    lock as its own and doesn't block.
             for ing_id, need in required.items():
                 meta = ing_meta.get(ing_id, {})
                 dedup = f"order:{order_id}:ing:{ing_id}"
@@ -530,6 +544,7 @@ class InventoryEventService:
                     created_by=user_id,
                     publish=False,  # one batched fan-out below
                     mirror_master=mirror_master,
+                    conn=conn,
                 )
                 new_bal = await self.get_balance(ing_id, branch_id=branch_id)
                 consumed.append({
