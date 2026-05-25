@@ -47,41 +47,95 @@ _REFERENCE_ID_FEATURE_RE = re.compile(
 _PAN_RE = re.compile(r"^[A-Z]{5}\d{4}[A-Z]$")
 _GST_RE = re.compile(r"^[0-3][0-9][A-Z]{5}[0-9]{4}[A-Z][0-9][A-Z0-9]{2}$")
 
-# Indian state normalisation — accepts the full name in any case, common
-# alternate spellings, or the 2-letter Razorpay code; emits the
-# 2-letter code Razorpay accepts (shorter, unambiguous, well within the
-# `state` field's 2..32 char limit).
-_STATE_NAME_TO_CODE: dict[str, str] = {
-    "ANDAMAN & NICOBAR ISLANDS": "AN", "ANDAMAN AND NICOBAR ISLANDS": "AN",
-    "ANDHRA PRADESH": "AP", "ARUNACHAL PRADESH": "AR",
-    "ASSAM": "AS", "BIHAR": "BI", "CHANDIGARH": "CH", "CHHATTISGARH": "CT",
-    "DADRA & NAGAR HAVELI": "DN", "DADRA AND NAGAR HAVELI": "DN",
-    "DAMAN & DIU": "DD", "DAMAN AND DIU": "DD",
-    "DELHI": "DL", "GOA": "GO", "GUJARAT": "GJ", "HARYANA": "HA",
-    "HIMACHAL PRADESH": "HP",
-    "JAMMU & KASHMIR": "JK", "JAMMU AND KASHMIR": "JK",
-    "JHARKHAND": "JH", "KARNATAKA": "KA", "KERALA": "KE",
-    "LAKSHADWEEP": "LD", "MADHYA PRADESH": "MP", "MAHARASHTRA": "MH",
-    "MANIPUR": "MA", "MEGHALAYA": "ME", "MIZORAM": "MI", "NAGALAND": "NA",
-    "ODISHA": "OR", "ORISSA": "OR",
-    "PONDICHERRY": "PO", "PUDUCHERRY": "PO",
-    "PUNJAB": "PB", "RAJASTHAN": "RJ", "SIKKIM": "SK",
-    "TAMIL NADU": "TN", "TAMILNADU": "TN",
-    "TRIPURA": "TR", "TELANGANA": "TG",
-    "UTTAR PRADESH": "UP", "UTTARAKHAND": "UT", "UTTARANCHAL": "UT",
-    "WEST BENGAL": "WB",
+# Indian state normalisation.
+#
+# Razorpay's /v2/accounts API documents that it accepts either the
+# 2-letter code (e.g. "GJ") OR the full uppercase name ("GUJARAT"),
+# but in practice the codes are REJECTED with:
+#   "State name entered is incorrect. Please provide correct state name."
+# So we always emit the canonical UPPERCASE FULL NAME.
+#
+# Inputs we accept (case-insensitive):
+#   • full name / common alternate spellings (e.g. "Tamil Nadu", "Tamilnadu")
+#   • Razorpay's 2-letter codes (e.g. "GJ", "TG", "OR")
+#   • ISO 3166-2:IN codes where they differ from Razorpay's (e.g. "TS"→Telangana,
+#     "OD"→Odisha, "BR"→Bihar, "HR"→Haryana, "KL"→Kerala, "GA"→Goa,
+#     "MN"→Manipur, "ML"→Meghalaya, "MZ"→Mizoram, "NL"→Nagaland, "PY"→Puducherry)
+_STATE_CANONICAL: dict[str, str] = {
+    # full names / spellings → canonical name
+    "ANDAMAN & NICOBAR ISLANDS": "ANDAMAN AND NICOBAR ISLANDS",
+    "ANDAMAN AND NICOBAR ISLANDS": "ANDAMAN AND NICOBAR ISLANDS",
+    "ANDHRA PRADESH": "ANDHRA PRADESH",
+    "ARUNACHAL PRADESH": "ARUNACHAL PRADESH",
+    "ASSAM": "ASSAM",
+    "BIHAR": "BIHAR",
+    "CHANDIGARH": "CHANDIGARH",
+    "CHHATTISGARH": "CHHATTISGARH",
+    "DADRA & NAGAR HAVELI": "DADRA AND NAGAR HAVELI",
+    "DADRA AND NAGAR HAVELI": "DADRA AND NAGAR HAVELI",
+    "DAMAN & DIU": "DAMAN AND DIU",
+    "DAMAN AND DIU": "DAMAN AND DIU",
+    "DELHI": "DELHI",
+    "GOA": "GOA",
+    "GUJARAT": "GUJARAT",
+    "HARYANA": "HARYANA",
+    "HIMACHAL PRADESH": "HIMACHAL PRADESH",
+    "JAMMU & KASHMIR": "JAMMU AND KASHMIR",
+    "JAMMU AND KASHMIR": "JAMMU AND KASHMIR",
+    "JHARKHAND": "JHARKHAND",
+    "KARNATAKA": "KARNATAKA",
+    "KERALA": "KERALA",
+    "LAKSHADWEEP": "LAKSHADWEEP",
+    "MADHYA PRADESH": "MADHYA PRADESH",
+    "MAHARASHTRA": "MAHARASHTRA",
+    "MANIPUR": "MANIPUR",
+    "MEGHALAYA": "MEGHALAYA",
+    "MIZORAM": "MIZORAM",
+    "NAGALAND": "NAGALAND",
+    "ODISHA": "ODISHA",
+    "ORISSA": "ODISHA",
+    "PONDICHERRY": "PUDUCHERRY",
+    "PUDUCHERRY": "PUDUCHERRY",
+    "PUNJAB": "PUNJAB",
+    "RAJASTHAN": "RAJASTHAN",
+    "SIKKIM": "SIKKIM",
+    "TAMIL NADU": "TAMIL NADU",
+    "TAMILNADU": "TAMIL NADU",
+    "TELANGANA": "TELANGANA",
+    "TRIPURA": "TRIPURA",
+    "UTTAR PRADESH": "UTTAR PRADESH",
+    "UTTARAKHAND": "UTTARAKHAND",
+    "UTTARANCHAL": "UTTARAKHAND",
+    "WEST BENGAL": "WEST BENGAL",
+    # Razorpay 2-letter codes → canonical name
+    "AN": "ANDAMAN AND NICOBAR ISLANDS", "AP": "ANDHRA PRADESH",
+    "AR": "ARUNACHAL PRADESH", "AS": "ASSAM", "BI": "BIHAR",
+    "CH": "CHANDIGARH", "CT": "CHHATTISGARH",
+    "DN": "DADRA AND NAGAR HAVELI", "DD": "DAMAN AND DIU",
+    "DL": "DELHI", "GO": "GOA", "GJ": "GUJARAT", "HA": "HARYANA",
+    "HP": "HIMACHAL PRADESH", "JK": "JAMMU AND KASHMIR",
+    "JH": "JHARKHAND", "KA": "KARNATAKA", "KE": "KERALA",
+    "LD": "LAKSHADWEEP", "MP": "MADHYA PRADESH", "MH": "MAHARASHTRA",
+    "MA": "MANIPUR", "ME": "MEGHALAYA", "MI": "MIZORAM",
+    "NA": "NAGALAND", "OR": "ODISHA", "PO": "PUDUCHERRY",
+    "PB": "PUNJAB", "RJ": "RAJASTHAN", "SK": "SIKKIM",
+    "TN": "TAMIL NADU", "TG": "TELANGANA", "TR": "TRIPURA",
+    "UP": "UTTAR PRADESH", "UT": "UTTARAKHAND", "WB": "WEST BENGAL",
+    # ISO 3166-2:IN codes that diverge from Razorpay's codes
+    "BR": "BIHAR", "GA": "GOA", "HR": "HARYANA", "KL": "KERALA",
+    "MN": "MANIPUR", "ML": "MEGHALAYA", "MZ": "MIZORAM",
+    "NL": "NAGALAND", "OD": "ODISHA", "PY": "PUDUCHERRY",
+    "TS": "TELANGANA",
 }
-_STATE_CODES: frozenset[str] = frozenset(_STATE_NAME_TO_CODE.values())
 
 
 def _normalize_state(value: Any) -> Optional[str]:
-    """Map a user-supplied state value to a Razorpay-accepted form.
+    """Map a user-supplied state value to Razorpay's canonical
+    uppercase full name (e.g. "GUJARAT", "TAMIL NADU").
 
-    Returns ``None`` if the value is empty. Returns the uppercase
-    2-letter Razorpay state code when the input matches a known state
-    (full name, alternate spelling, or code). Falls back to the original
-    uppercased value (trimmed) when nothing matches — the gateway will
-    400 with a clear error rather than us silently dropping it.
+    Returns ``None`` for empty input. For unknown inputs, returns the
+    raw uppercased trimmed value so Razorpay surfaces a clear error
+    rather than us silently dropping the field.
     """
     if value is None:
         return None
@@ -89,9 +143,7 @@ def _normalize_state(value: Any) -> Optional[str]:
     if not s:
         return None
     up = s.upper()
-    if up in _STATE_CODES:
-        return up
-    return _STATE_NAME_TO_CODE.get(up, up)
+    return _STATE_CANONICAL.get(up, up)
 
 
 def _normalize_country(value: Any) -> Optional[str]:
