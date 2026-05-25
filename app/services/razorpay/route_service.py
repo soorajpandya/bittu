@@ -868,6 +868,32 @@ class RzpRouteService:
 
     async def get_linked_account(self, *, merchant_id: str) -> dict:
         row = await self._existing_account(merchant_id)
+        # Opportunistic refresh: while the merchant is in a non-terminal
+        # onboarding state, the FE polls this endpoint every few seconds
+        # waiting for ``activated``. The background polling scheduler only
+        # runs every 12h, so without this the local mirror can stay stuck
+        # at e.g. ``needs_clarification`` long after Razorpay has flipped
+        # the product to ``activated``. Throttle to once every 8s per
+        # merchant so we don't hammer Razorpay during tight polling.
+        if row and row["linked_account_id"] and row["route_product_id"]:
+            prod_status = (row["route_product_status"] or "").lower()
+            if prod_status not in {"activated", "rejected"}:
+                updated_at = row["updated_at"] if "updated_at" in row.keys() else None
+                stale = True
+                if updated_at is not None:
+                    from datetime import datetime, timezone
+                    age = (datetime.now(timezone.utc) - updated_at).total_seconds()
+                    stale = age >= 8.0
+                if stale:
+                    try:
+                        await self.sync_route_product(merchant_id=merchant_id)
+                        row = await self._existing_account(merchant_id)
+                    except Exception as exc:
+                        logger.warning(
+                            "rzp_route.get.product_refresh_failed",
+                            merchant_id=merchant_id,
+                            error=str(exc),
+                        )
         return _row_to_account(row)
 
     async def fetch_linked_account_details(self, *, merchant_id: str) -> dict:
