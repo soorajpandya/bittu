@@ -39,9 +39,38 @@ class ProvisionLinkedAccountIn(BaseModel):
         description="Full account number — used in-memory only. Stored as last4+sha256.",
     )
     ifsc: Optional[str] = None
-    beneficiary_name: Optional[str] = None
-    reference_id: Optional[str] = None
+    beneficiary_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    reference_id: Optional[str] = Field(
+        None,
+        min_length=3,
+        max_length=20,
+        pattern=r"^[A-Za-z0-9_-]+$",
+        description="3..20 chars of [A-Za-z0-9_-]. Requires the `route_code_support` feature on the platform account; ignored automatically if the feature is disabled.",
+    )
     notes: Optional[dict[str, Any]] = None
+
+    # Razorpay /v2/accounts profile fields — forwarded verbatim.
+    category: Optional[str] = Field(
+        None, description="Razorpay profile.category (defaults to 'food')"
+    )
+    subcategory: Optional[str] = Field(
+        None, description="Razorpay profile.subcategory (defaults to 'restaurant')"
+    )
+    addresses: Optional[dict[str, Any]] = None
+
+    # Razorpay /v2/accounts optional top-level fields.
+    customer_facing_business_name: Optional[str] = Field(
+        None, min_length=1, max_length=255,
+        description="DBA name shown to customers. Defaults to legal_business_name on Razorpay's side if omitted.",
+    )
+    contact_info: Optional[dict[str, Any]] = Field(
+        None,
+        description="Contact details by type: {chargeback: {email, phone, policy_url}, refund: {...}, support: {...}}.",
+    )
+    apps: Optional[dict[str, Any]] = Field(
+        None,
+        description="Account apps; typically {websites: [\"https://example.com\"]}.",
+    )
 
 
 class CreateTransferIn(BaseModel):
@@ -78,8 +107,14 @@ class UpdateProductBankIn(BaseModel):
 class OnboardIn(BaseModel):
     bank_account_number: str = Field(..., min_length=4)
     ifsc: Optional[str] = None
-    beneficiary_name: Optional[str] = None
-    reference_id: Optional[str] = None
+    beneficiary_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    reference_id: Optional[str] = Field(
+        None,
+        min_length=3,
+        max_length=20,
+        pattern=r"^[A-Za-z0-9_-]+$",
+        description="3..20 chars of [A-Za-z0-9_-]. Requires the `route_code_support` feature on the platform account; ignored automatically if the feature is disabled.",
+    )
     tnc_accepted: bool = True
     notes: Optional[dict[str, Any]] = None
 
@@ -88,15 +123,18 @@ class OnboardIn(BaseModel):
     # tables before provisioning, so FE doesn't have to call a separate
     # KYC endpoint. All fields are optional; the handler only writes
     # the ones the caller provided.
-    legal_name: Optional[str] = None
+    legal_name: Optional[str] = Field(None, min_length=4, max_length=200)
     business_type: Optional[str] = Field(
         None,
         description="proprietorship|partnership|llp|private_limited|public_limited|huf|trust|society|individual|other",
     )
-    pan: Optional[str] = None
-    gstin: Optional[str] = None
-    contact_email: Optional[str] = None
-    contact_phone: Optional[str] = None
+    pan: Optional[str] = Field(None, pattern=r"^[A-Za-z]{5}\d{4}[A-Za-z]$")
+    gstin: Optional[str] = Field(
+        None,
+        pattern=r"^[0-3][0-9][A-Za-z]{5}[0-9]{4}[A-Za-z][0-9][A-Za-z0-9]{2}$",
+    )
+    contact_email: Optional[str] = Field(None, min_length=3, max_length=254)
+    contact_phone: Optional[str] = Field(None, min_length=8, max_length=15)
     registered_address: Optional[dict[str, Any]] = None
 
     owner_name: Optional[str] = None
@@ -106,7 +144,7 @@ class OnboardIn(BaseModel):
     )
     owner_email: Optional[str] = None
     owner_phone: Optional[str] = None
-    owner_pan: Optional[str] = None
+    owner_pan: Optional[str] = Field(None, pattern=r"^[A-Za-z]{5}\d{4}[A-Za-z]$")
     owner_dob: Optional[str] = Field(None, description="YYYY-MM-DD")
     owner_ownership_pct: Optional[float] = Field(None, ge=0, le=100)
 
@@ -127,6 +165,20 @@ class OnboardIn(BaseModel):
         None, description="Razorpay profile.subcategory (defaults to 'restaurant')"
     )
     addresses: Optional[dict[str, Any]] = None
+
+    # Razorpay /v2/accounts optional top-level fields (forwarded verbatim).
+    customer_facing_business_name: Optional[str] = Field(
+        None, min_length=1, max_length=255,
+        description="DBA name shown to customers. Defaults to legal_business_name on Razorpay's side if omitted.",
+    )
+    contact_info: Optional[dict[str, Any]] = Field(
+        None,
+        description="Contact details by type: {chargeback: {email, phone, policy_url}, refund: {...}, support: {...}}.",
+    )
+    apps: Optional[dict[str, Any]] = Field(
+        None,
+        description="Account apps; typically {websites: [\"https://example.com\"]}.",
+    )
 
 
 # ── Linked account ────────────────────────────────────────────────────────
@@ -156,6 +208,12 @@ async def provision_linked_account(
             beneficiary_name_override=body.beneficiary_name,
             reference_id=body.reference_id,
             extra_notes=body.notes,
+            category=body.category,
+            subcategory=body.subcategory,
+            addresses_override=body.addresses,
+            customer_facing_business_name=body.customer_facing_business_name,
+            contact_info=body.contact_info,
+            apps=body.apps,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -268,6 +326,9 @@ async def onboard_route_merchant(
             category=body.category,
             subcategory=body.subcategory,
             addresses_override=body.addresses,
+            customer_facing_business_name=body.customer_facing_business_name,
+            contact_info=body.contact_info,
+            apps=body.apps,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

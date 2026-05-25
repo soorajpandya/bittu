@@ -26,9 +26,17 @@ async def create_linked_account(
     brand: Optional[Mapping[str, Any]] = None,
     notes: Optional[Mapping[str, Any]] = None,
     reference_id: Optional[str] = None,
+    customer_facing_business_name: Optional[str] = None,
+    contact_info: Optional[Mapping[str, Any]] = None,
+    apps: Optional[Mapping[str, Any]] = None,
     idempotency_key: Optional[str] = None,
     merchant_id: Optional[str] = None,
 ) -> dict:
+    """Wraps ``POST /v2/accounts``. See Razorpay Route docs for the full
+    field reference. All optional pass-throughs are sent only if the
+    caller supplied a truthy value; the service layer is responsible for
+    validating/normalising values before they reach us.
+    """
     body: dict[str, Any] = {
         "email": email,
         "phone": phone,
@@ -38,6 +46,8 @@ async def create_linked_account(
         "profile": dict(profile),
         "type": "route",
     }
+    if customer_facing_business_name:
+        body["customer_facing_business_name"] = customer_facing_business_name
     if legal_info:
         body["legal_info"] = dict(legal_info)
     if brand:
@@ -46,6 +56,10 @@ async def create_linked_account(
         body["notes"] = dict(notes)
     if reference_id:
         body["reference_id"] = reference_id
+    if contact_info:
+        body["contact_info"] = dict(contact_info)
+    if apps:
+        body["apps"] = dict(apps)
 
     client = await get_razorpay_client()
     return await client.post(

@@ -35,6 +35,174 @@ _DUPLICATE_EMAIL_RE = re.compile(
     r"already exists for account[^A-Za-z0-9]+([A-Za-z0-9]+)"
 )
 
+# Razorpay rejects `reference_id` when the merchant doesn't have the
+# `route_code_support` / `account_code` feature flag. We retry the create
+# call without `reference_id` in that case.
+_REFERENCE_ID_FEATURE_RE = re.compile(
+    r"(route\s*code\s*support|account_code\s*is\s*not\s*allowed)",
+    re.IGNORECASE,
+)
+
+# Spec regexes (PAN/GST) per Razorpay create-linked-account docs.
+_PAN_RE = re.compile(r"^[A-Z]{5}\d{4}[A-Z]$")
+_GST_RE = re.compile(r"^[0-3][0-9][A-Z]{5}[0-9]{4}[A-Z][0-9][A-Z0-9]{2}$")
+
+# Indian state normalisation — accepts the full name in any case, common
+# alternate spellings, or the 2-letter Razorpay code; emits the
+# 2-letter code Razorpay accepts (shorter, unambiguous, well within the
+# `state` field's 2..32 char limit).
+_STATE_NAME_TO_CODE: dict[str, str] = {
+    "ANDAMAN & NICOBAR ISLANDS": "AN", "ANDAMAN AND NICOBAR ISLANDS": "AN",
+    "ANDHRA PRADESH": "AP", "ARUNACHAL PRADESH": "AR",
+    "ASSAM": "AS", "BIHAR": "BI", "CHANDIGARH": "CH", "CHHATTISGARH": "CT",
+    "DADRA & NAGAR HAVELI": "DN", "DADRA AND NAGAR HAVELI": "DN",
+    "DAMAN & DIU": "DD", "DAMAN AND DIU": "DD",
+    "DELHI": "DL", "GOA": "GO", "GUJARAT": "GJ", "HARYANA": "HA",
+    "HIMACHAL PRADESH": "HP",
+    "JAMMU & KASHMIR": "JK", "JAMMU AND KASHMIR": "JK",
+    "JHARKHAND": "JH", "KARNATAKA": "KA", "KERALA": "KE",
+    "LAKSHADWEEP": "LD", "MADHYA PRADESH": "MP", "MAHARASHTRA": "MH",
+    "MANIPUR": "MA", "MEGHALAYA": "ME", "MIZORAM": "MI", "NAGALAND": "NA",
+    "ODISHA": "OR", "ORISSA": "OR",
+    "PONDICHERRY": "PO", "PUDUCHERRY": "PO",
+    "PUNJAB": "PB", "RAJASTHAN": "RJ", "SIKKIM": "SK",
+    "TAMIL NADU": "TN", "TAMILNADU": "TN",
+    "TRIPURA": "TR", "TELANGANA": "TG",
+    "UTTAR PRADESH": "UP", "UTTARAKHAND": "UT", "UTTARANCHAL": "UT",
+    "WEST BENGAL": "WB",
+}
+_STATE_CODES: frozenset[str] = frozenset(_STATE_NAME_TO_CODE.values())
+
+
+def _normalize_state(value: Any) -> Optional[str]:
+    """Map a user-supplied state value to a Razorpay-accepted form.
+
+    Returns ``None`` if the value is empty. Returns the uppercase
+    2-letter Razorpay state code when the input matches a known state
+    (full name, alternate spelling, or code). Falls back to the original
+    uppercased value (trimmed) when nothing matches — the gateway will
+    400 with a clear error rather than us silently dropping it.
+    """
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    up = s.upper()
+    if up in _STATE_CODES:
+        return up
+    return _STATE_NAME_TO_CODE.get(up, up)
+
+
+def _normalize_country(value: Any) -> Optional[str]:
+    """Razorpay accepts a 2-letter uppercase ISO code (`IN`) or the
+    lowercase full name (`india`). We canonicalise to the uppercase
+    2-letter code when input is 2 chars, else lowercase the full name.
+    Unknown inputs are passed through (trimmed) for Razorpay to validate.
+    """
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    if len(s) == 2:
+        return s.upper()
+    # Common-case shortcut so "India"/"INDIA"/"india" all work.
+    if s.lower() == "india":
+        return "IN"
+    return s.lower()
+
+
+_CONTACT_NAME_ALLOWED = re.compile(r"[^A-Za-z0-9 ]")
+
+
+def _sanitize_contact_name(value: Any) -> Optional[str]:
+    """Razorpay rejects names containing anything other than letters,
+    digits and spaces (also rejects URLs/HTML/emails embedded in names).
+    We strip disallowed characters and collapse whitespace. Returns
+    ``None`` if the cleaned value is empty.
+    """
+    if value is None:
+        return None
+    cleaned = _CONTACT_NAME_ALLOWED.sub(" ", str(value))
+    cleaned = " ".join(cleaned.split())
+    return cleaned or None
+
+
+def _normalize_phone(value: Any) -> Optional[str]:
+    """Strip non-digits and a leading country prefix so we land in the
+    8-15 char window Razorpay accepts."""
+    if value is None:
+        return None
+    digits = re.sub(r"\D", "", str(value))
+    if not digits:
+        return None
+    # Drop a leading `91` for IN numbers when the remaining digits are a
+    # plausible national number (>= 8 chars).
+    if len(digits) > 10 and digits.startswith("91"):
+        rest = digits[2:]
+        if 8 <= len(rest) <= 15:
+            digits = rest
+    return digits
+
+
+def _normalize_address(addr: Any) -> Optional[dict[str, Any]]:
+    """Trim values, normalise state/country, ensure postal_code is a
+    string of digits. Returns ``None`` for empty input.
+    """
+    if not addr or not isinstance(addr, Mapping):
+        return None
+    out: dict[str, Any] = {}
+    for key in ("street1", "street2", "city"):
+        v = addr.get(key)
+        if v is None:
+            continue
+        sv = str(v).strip()
+        if sv:
+            out[key] = sv[:100]
+    state = _normalize_state(addr.get("state"))
+    if state:
+        out["state"] = state
+    pc = addr.get("postal_code")
+    if pc is not None:
+        pc_str = re.sub(r"\D", "", str(pc))
+        if pc_str:
+            out["postal_code"] = pc_str
+    country = _normalize_country(addr.get("country"))
+    if country:
+        out["country"] = country
+    return out or None
+
+
+def _normalize_addresses_map(addresses: Any) -> dict[str, Any]:
+    """Apply :func:`_normalize_address` to each address slot
+    (`registered`, `operation`). Drops empty slots entirely."""
+    if not addresses or not isinstance(addresses, Mapping):
+        return {}
+    out: dict[str, Any] = {}
+    for slot in ("registered", "operation"):
+        norm = _normalize_address(addresses.get(slot))
+        if norm:
+            out[slot] = norm
+    return out
+
+
+def _validate_pan(value: Any) -> Optional[str]:
+    """Return upper-cased PAN if it matches the Razorpay regex, else
+    ``None`` (so we omit ``legal_info.pan`` rather than 400-ing).
+    """
+    if value is None:
+        return None
+    s = str(value).strip().upper()
+    return s if _PAN_RE.match(s) else None
+
+
+def _validate_gst(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    s = str(value).strip().upper()
+    return s if _GST_RE.match(s) else None
+
 
 async def _safe_audit(**kwargs: Any) -> None:
     """Fire-and-forget audit wrapper — never raises out of business code."""
@@ -258,6 +426,9 @@ class RzpRouteService:
         category: Optional[str] = None,
         subcategory: Optional[str] = None,
         addresses_override: Optional[Mapping[str, Any]] = None,
+        customer_facing_business_name: Optional[str] = None,
+        contact_info: Optional[Mapping[str, Any]] = None,
+        apps: Optional[Mapping[str, Any]] = None,
     ) -> dict:
         """
         Create a Razorpay linked account for this merchant if one doesn't
@@ -283,9 +454,19 @@ class RzpRouteService:
         if not (profile.get("contact_phone") or owner.get("phone")):
             raise ValueError("KYC profile missing contact phone")
 
-        contact_name = beneficiary_name_override or owner.get("full_name") or profile.get("legal_name")
+        raw_contact = beneficiary_name_override or owner.get("full_name") or profile.get("legal_name")
+        contact_name = _sanitize_contact_name(raw_contact)
+        if not contact_name or len(contact_name) < 4:
+            raise ValueError(
+                "contact_name must be 4..255 chars of letters/digits/spaces "
+                "after sanitisation (got: %r)" % (raw_contact,)
+            )
+        contact_name = contact_name[:255]
+
         email = profile.get("contact_email") or owner.get("email")
-        phone = profile.get("contact_phone") or owner.get("phone")
+        phone = _normalize_phone(profile.get("contact_phone") or owner.get("phone"))
+        if not phone or not (8 <= len(phone) <= 15):
+            raise ValueError("contact phone must be 8..15 digits after normalisation")
 
         notes = {"merchant_id": merchant_id}
         if extra_notes:
@@ -306,7 +487,8 @@ class RzpRouteService:
                     reg_addr = None
             addresses = {"registered": reg_addr} if reg_addr else {}
 
-        if not addresses or not any(addresses.values()):
+        addresses = _normalize_addresses_map(addresses)
+        if not addresses.get("registered"):
             raise ValueError(
                 "registered address required — send `addresses` "
                 "(e.g. {\"registered\": {street1, city, state, postal_code, country}}) "
@@ -320,53 +502,88 @@ class RzpRouteService:
         }
 
         legal_info: dict[str, Any] = {}
-        if profile.get("pan"):
-            legal_info["pan"] = profile["pan"]
-        if profile.get("gstin"):
-            legal_info["gst"] = profile["gstin"]
+        pan = _validate_pan(profile.get("pan"))
+        if pan:
+            legal_info["pan"] = pan
+        elif profile.get("pan"):
+            logger.warning(
+                "rzp_route.pan_dropped merchant=%s reason=invalid_format value=%s",
+                merchant_id, profile.get("pan"),
+            )
+        gst = _validate_gst(profile.get("gstin"))
+        if gst:
+            legal_info["gst"] = gst
+        elif profile.get("gstin"):
+            logger.warning(
+                "rzp_route.gst_dropped merchant=%s reason=invalid_format value=%s",
+                merchant_id, profile.get("gstin"),
+            )
 
-        # Razorpay caps reference_id at 20 chars. UUID-based fallback
-        # (`merchant:<uuid>` = 45 chars) would 400. Use a short prefix +
-        # first 16 hex chars of the merchant UUID (= 18 chars total),
-        # and clamp any caller-supplied value to 20.
+        # Razorpay's `reference_id` spec is internally inconsistent
+        # (1..512 in the request schema, but errors complain about
+        # 3..20 with `[A-Za-z0-9_-]`). Stay safely inside the strict
+        # window. The default `m_<16 hex>` is 18 chars by construction.
         if reference_id:
-            ref = str(reference_id)[:20]
+            ref = re.sub(r"[^A-Za-z0-9_-]", "", str(reference_id))[:20] or None
+            if ref and len(ref) < 3:
+                ref = None
         else:
             ref = "m_" + merchant_id.replace("-", "")[:16]
 
-        try:
-            rzp_resp = await route_api.create_linked_account(
+        cfb_name = customer_facing_business_name
+        if cfb_name is not None:
+            cfb_name = str(cfb_name).strip()[:255] or None
+
+        async def _post_create(*, with_ref: Optional[str]) -> dict:
+            return await route_api.create_linked_account(
                 email=email,
                 phone=phone,
-                legal_business_name=profile["legal_name"],
+                legal_business_name=str(profile["legal_name"])[:200],
                 business_type=str(profile.get("business_type") or "individual"),
                 contact_name=contact_name,
                 profile=rzp_profile,
                 legal_info=legal_info or None,
                 notes=notes,
-                reference_id=ref,
+                reference_id=with_ref,
+                customer_facing_business_name=cfb_name,
+                contact_info=dict(contact_info) if contact_info else None,
+                apps=dict(apps) if apps else None,
                 idempotency_key=f"rzp_route_account:{merchant_id}",
                 merchant_id=merchant_id,
             )
+
+        try:
+            rzp_resp = await _post_create(with_ref=ref)
         except RazorpayBadRequestError as exc:
-            # Recover from "email already exists for account - <id>" by
-            # adopting the pre-existing Razorpay account. This happens
-            # when a previous attempt created the account on Razorpay
-            # but failed to persist locally (e.g. an earlier 400 on a
-            # later field), or when the merchant retried after a
-            # mid-flow error.
             desc = (exc.error_description or str(exc) or "")
+            # 1. Account already exists for this email — adopt it.
             m = _DUPLICATE_EMAIL_RE.search(desc)
-            if not m:
+            if m:
+                adopted_id = m.group(1)
+                logger.warning(
+                    "rzp_route.adopt_existing_account merchant=%s account=%s reason=duplicate_email",
+                    merchant_id, adopted_id,
+                )
+                rzp_resp = await route_api.fetch_linked_account(
+                    adopted_id, merchant_id=merchant_id,
+                )
+            # 2. Merchant doesn't have the route_code_support feature —
+            # retry once without reference_id.
+            elif ref and _REFERENCE_ID_FEATURE_RE.search(desc):
+                logger.warning(
+                    "rzp_route.retry_without_reference_id merchant=%s reason=%s",
+                    merchant_id, desc[:200],
+                )
+                await _safe_audit(
+                    domain="razorpay_route",
+                    action="rzp_route.linked_account.reference_id_dropped",
+                    entity_type="rzp_route_account",
+                    entity_id=None,
+                    payload={"merchant_id": merchant_id, "reason": desc[:200]},
+                )
+                rzp_resp = await _post_create(with_ref=None)
+            else:
                 raise
-            adopted_id = m.group(1)
-            logger.warning(
-                "rzp_route.adopt_existing_account merchant=%s account=%s reason=duplicate_email",
-                merchant_id, adopted_id,
-            )
-            rzp_resp = await route_api.fetch_linked_account(
-                adopted_id, merchant_id=merchant_id,
-            )
 
         # Persist via the single UPSERT path so the row binding lives in
         # exactly one place.
@@ -895,6 +1112,9 @@ class RzpRouteService:
         category: Optional[str] = None,
         subcategory: Optional[str] = None,
         addresses_override: Optional[Mapping[str, Any]] = None,
+        customer_facing_business_name: Optional[str] = None,
+        contact_info: Optional[Mapping[str, Any]] = None,
+        apps: Optional[Mapping[str, Any]] = None,
     ) -> dict:
         """
         End-to-end Route onboarding orchestrator (steps 2-5 of the
@@ -912,6 +1132,9 @@ class RzpRouteService:
             category=category,
             subcategory=subcategory,
             addresses_override=addresses_override,
+            customer_facing_business_name=customer_facing_business_name,
+            contact_info=contact_info,
+            apps=apps,
         )
         # Step 2.5 — self-heal the linked account: if the caller filled
         # in PAN/GSTIN/addresses on this retry but the account was
