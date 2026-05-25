@@ -653,9 +653,29 @@ class RzpRouteService:
                     "rzp_route.adopt_existing_account merchant=%s account=%s reason=duplicate_email",
                     merchant_id, adopted_id,
                 )
-                rzp_resp = await route_api.fetch_linked_account(
-                    adopted_id, merchant_id=merchant_id,
-                )
+                try:
+                    rzp_resp = await route_api.fetch_linked_account(
+                        adopted_id, merchant_id=merchant_id,
+                    )
+                except RazorpayBadRequestError as fetch_exc:
+                    # The existing account belongs to a different Razorpay
+                    # platform (different API key owner) — we can't adopt
+                    # it. Surface a clear, actionable error instead of the
+                    # opaque "Access Denied" from the fetch attempt.
+                    fdesc = (fetch_exc.error_description or str(fetch_exc) or "").lower()
+                    if "access denied" in fdesc or "does not exist" in fdesc:
+                        logger.warning(
+                            "rzp_route.adopt_failed merchant=%s account=%s reason=%s",
+                            merchant_id, adopted_id, fdesc[:200],
+                        )
+                        raise ValueError(
+                            f"The contact email '{email}' is already registered with a "
+                            "Razorpay linked account that is not managed by this platform "
+                            f"(account id: {adopted_id}). Please use a different contact "
+                            "email for this merchant, or contact Razorpay support to release "
+                            "the existing account."
+                        ) from fetch_exc
+                    raise
             # 2. Merchant doesn't have the route_code_support feature —
             # retry once without reference_id.
             elif ref and _REFERENCE_ID_FEATURE_RE.search(desc):
