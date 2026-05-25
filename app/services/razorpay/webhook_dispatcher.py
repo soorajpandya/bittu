@@ -621,6 +621,14 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
                     route_product_status=_prod,
                 )
             else:
+                # Flat 5% platform commission, mirroring the order-level
+                # transfers[] split in payment_intent.py. The DB-driven
+                # ``fee_service.compute_fee`` resolves to a much smaller
+                # Razorpay-style fee (~0.3%) which is gateway-fee math, not
+                # our platform commission — using it here under-charged the
+                # platform (₹0.03 instead of ₹0.50 on a ₹10 capture).
+                # Keep ``fee_service.compute_fee`` invocation for audit /
+                # ledger metadata but do NOT use its number for the split.
                 fee_payload = await fee_service.compute_fee(
                     merchant_id,
                     gross=amount_decimal,
@@ -628,16 +636,17 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
                     currency=(entity.get("currency") or "INR"),
                     record=False,
                 )
-                total_deduction = Decimal(str(fee_payload.get("total_deduction") or 0))
-                net_rupees = (amount_decimal - total_deduction)
-                net_paise = int((net_rupees * Decimal("100")).to_integral_value())
-                if net_paise <= 0:
+                merchant_share_paise = (amount_paise * 95) // 100
+                commission_paise = amount_paise - merchant_share_paise
+                net_paise = int(merchant_share_paise)
+                if net_paise < 100:
+                    # Razorpay rejects transfers under ₹1.
                     logger.warning(
-                        "rzp_auto_split_skipped_non_positive_net",
+                        "rzp_auto_split_skipped_below_min",
                         merchant_id=merchant_id,
                         razorpay_payment_id=rzp_payment_id,
-                        gross=str(amount_decimal),
-                        total_deduction=str(total_deduction),
+                        gross_paise=amount_paise,
+                        merchant_share_paise=net_paise,
                     )
                 else:
                     await _route.create_transfer(
@@ -646,10 +655,11 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
                         amount_paise=net_paise,
                         currency=(entity.get("currency") or "INR"),
                         notes={
-                            "source":        "auto_split_on_capture",
-                            "bittu_fee":     str(fee_payload.get("fee") or 0),
-                            "bittu_gst":     str(fee_payload.get("gst") or 0),
-                            "bittu_net":     str(net_rupees),
+                            "source":            "auto_split_on_capture",
+                            "commission_paise":  str(commission_paise),
+                            "merchant_share":    str(net_paise),
+                            "rzp_gateway_fee":   str(fee_payload.get("fee") or 0),
+                            "rzp_gateway_gst":   str(fee_payload.get("gst") or 0),
                             "internal_order_id": str(internal_order_id or ""),
                         },
                     )
@@ -657,6 +667,8 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
                         "rzp_auto_split_ok",
                         merchant_id=merchant_id,
                         razorpay_payment_id=rzp_payment_id,
+                        gross_paise=amount_paise,
+                        commission_paise=commission_paise,
                         net_paise=net_paise,
                     )
         except Exception:  # noqa: BLE001
