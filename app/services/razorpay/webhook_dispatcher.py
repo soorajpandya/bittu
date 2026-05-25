@@ -459,6 +459,28 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
     amount_paise = int(entity.get("amount") or 0)
 
     ctx = await _resolve_order_context_by_rzp_order(rzp_order_id) or {}
+    # QR-driven captures arrive with order_id=None. Razorpay does NOT echo a
+    # qr_id on the standalone payment.captured envelope either, so fall back
+    # to the payment notes we stamped at QR creation (merchant_id,
+    # internal_order_id, branch_id) to recover context. Without this the
+    # entire money pipeline (ledger credit, escrow, auto-split transfer)
+    # silently skips and the merchant's payout is stranded on Bittu's
+    # master account.
+    if not ctx:
+        _notes = entity.get("notes") or {}
+        if isinstance(_notes, dict) and _notes.get("merchant_id"):
+            ctx = {
+                "merchant_id":       _notes.get("merchant_id"),
+                "branch_id":         _notes.get("branch_id"),
+                "internal_order_id": _notes.get("internal_order_id"),
+                "rzp_order_uuid":    None,
+            }
+            logger.info(
+                "rzp_webhook_captured_ctx_from_notes",
+                razorpay_payment_id=rzp_payment_id,
+                merchant_id=ctx["merchant_id"],
+                internal_order_id=ctx["internal_order_id"],
+            )
     merchant_id = ctx.get("merchant_id")
     branch_id = ctx.get("branch_id")
     internal_order_id = ctx.get("internal_order_id")
@@ -580,12 +602,23 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
             from app.services.fee_service import fee_service
 
             linked = await _route.get_linked_account(merchant_id=merchant_id)
-            if not linked or linked.get("status") != "activated":
+            # Razorpay V2 keeps account-level ``status`` at 'created' for the
+            # entire happy-path lifetime — activation flows through the
+            # *product*. Match the gate used by assert_settlement_ready /
+            # get_active_linked_account_id: product activated AND account
+            # not suspended.
+            _eff = (linked or {}).get("effective_status")
+            _prod = (linked or {}).get("route_product_status")
+            _acc_status = (linked or {}).get("status")
+            _is_ready = bool(linked) and _eff == "activated"
+            if not _is_ready:
                 logger.info(
                     "rzp_auto_split_skipped_no_linked_account",
                     merchant_id=merchant_id,
                     razorpay_payment_id=rzp_payment_id,
-                    linked_status=(linked or {}).get("status"),
+                    linked_status=_acc_status,
+                    effective_status=_eff,
+                    route_product_status=_prod,
                 )
             else:
                 fee_payload = await fee_service.compute_fee(

@@ -1753,9 +1753,18 @@ class RzpRouteService:
         acct = await self._existing_account(merchant_id)
         if not acct or not acct["linked_account_id"]:
             raise LookupError("Merchant has no Razorpay linked account")
-        if acct["status"] != "activated":
+        # Razorpay V2 keeps account-level ``status`` at 'created' on the
+        # happy path; activation flows through the route product. Mirror the
+        # gate used by ``assert_settlement_ready``.
+        _acc_status = (acct["status"] or "").lower()
+        _prod_status = (
+            acct["route_product_status"]
+            if "route_product_status" in acct.keys() else None
+        )
+        if _acc_status in {"suspended", "rejected"} or (_prod_status or "").lower() != "activated":
             raise PermissionError(
-                f"Linked account not activated (status={acct['status']!r})"
+                f"Linked account not settlement-ready (status={acct['status']!r} "
+                f"product_status={_prod_status!r})"
             )
 
         transfer_body: dict[str, Any] = {
