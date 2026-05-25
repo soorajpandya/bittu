@@ -157,6 +157,52 @@ async def create_intent_for_order(
         note_payload.update({k: _s(v) for k, v in notes.items()})
 
     order_idem = f"rzp_order:{merchant_id}:{internal_order_id}"
+
+    # ── 1a. build Route transfers[] split if merchant is activated ──
+    # When the merchant's linked account + product are both activated, ask
+    # Razorpay to atomically split the captured payment into the merchant's
+    # linked account at capture time. Bittu keeps a flat 5% commission;
+    # merchant_share is floored to whole paise so the sum never exceeds
+    # the gross amount.
+    #
+    # If the merchant share would be below Razorpay's per-transfer minimum
+    # (₹1 = 100 paise) we skip the split — the payment still lands on the
+    # platform account and the merchant ledger projection will surface it
+    # as "pending" until an out-of-band reconciler creates a transfer.
+    transfers_payload: Optional[list[dict]] = None
+    linked_account_id = await _route_gate.get_active_linked_account_id(merchant_id)
+    if linked_account_id:
+        merchant_share_paise = (amount_paise * 95) // 100
+        if merchant_share_paise >= 100:
+            transfers_payload = [{
+                "account":  linked_account_id,
+                "amount":   int(merchant_share_paise),
+                "currency": currency,
+                "notes": {
+                    "merchant_id":       merchant_id,
+                    "internal_order_id": internal_order_id,
+                    "razorpay_payment_id_for": "auto_route_at_capture",
+                },
+                "linked_account_notes": ["merchant_id", "internal_order_id"],
+                "on_hold": False,
+            }]
+            logger.info(
+                "rzp_intent_with_transfers",
+                merchant_id=merchant_id,
+                internal_order_id=internal_order_id,
+                linked_account_id=linked_account_id,
+                gross_paise=amount_paise,
+                merchant_share_paise=int(merchant_share_paise),
+                commission_paise=int(amount_paise - merchant_share_paise),
+            )
+        else:
+            logger.warning(
+                "rzp_intent_transfer_skipped_too_small",
+                merchant_id=merchant_id,
+                gross_paise=amount_paise,
+                merchant_share_paise=int(merchant_share_paise),
+            )
+
     try:
         rzp_order = await rzp_orders_api.create_order(
             amount_paise=amount_paise,
@@ -165,6 +211,7 @@ async def create_intent_for_order(
             notes=note_payload,
             idempotency_key=order_idem,
             merchant_id=merchant_id,
+            transfers=transfers_payload,
         )
     except RazorpayError as exc:
         logger.error(

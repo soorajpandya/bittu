@@ -21,6 +21,7 @@ async def create_order(
     partial_payment: bool = False,
     idempotency_key: Optional[str] = None,
     merchant_id: Optional[str] = None,
+    transfers: Optional[list[dict]] = None,
 ) -> dict:
     client = await get_razorpay_client()
     body: dict[str, Any] = {
@@ -32,6 +33,8 @@ async def create_order(
         body["receipt"] = receipt
     if notes:
         body["notes"] = dict(notes)
+    if transfers:
+        body["transfers"] = list(transfers)
     return await client.post(
         "/v1/orders",
         operation="orders.create",

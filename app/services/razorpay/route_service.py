@@ -406,6 +406,38 @@ class RzpRouteService:
                 merchant_id,
             )
 
+    async def get_active_linked_account_id(
+        self, merchant_id: Optional[str]
+    ) -> Optional[str]:
+        """Return the merchant's ``linked_account_id`` iff the Route product
+        is activated and the account is not suspended.
+
+        Used by the payment-intent flow to decide whether to attach a
+        ``transfers[]`` split to the new order so funds auto-route to the
+        merchant's linked account at capture time (instead of sitting on
+        Bittu's master account until an out-of-band worker creates the
+        transfer).
+        """
+        if not merchant_id:
+            return None
+        async with get_service_connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT linked_account_id, status::text AS status, "
+                "       route_product_status "
+                "FROM rzp_route_accounts WHERE merchant_id = $1::uuid",
+                merchant_id,
+            )
+        if not row:
+            return None
+        linked_account_id = row["linked_account_id"]
+        if not linked_account_id:
+            return None
+        if (row["status"] or "").lower() == "suspended":
+            return None
+        if (row["route_product_status"] or "").lower() != "activated":
+            return None
+        return linked_account_id
+
     # ── Linked account UPSERT (single write path) ───────────────────────
 
     async def upsert_linked_account_from_razorpay(
