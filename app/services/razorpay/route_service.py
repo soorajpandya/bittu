@@ -1565,7 +1565,11 @@ class RzpRouteService:
             return
         status = row["status"]
         product_status = row["route_product_status"] if "route_product_status" in row.keys() else None
-        if status != "activated" or (product_status and product_status != "activated"):
+        # Route linked accounts stay status='created' for their entire
+        # happy-path lifetime; activation flows through the *product*. So
+        # the gate is: product must be activated, and the account must
+        # not be in a terminal-negative gateway state.
+        if (status or "").lower() in {"suspended", "rejected"} or (product_status or "").lower() != "activated":
             raise PermissionError(
                 "merchant_not_settlement_ready: linked_account_status="
                 f"{status!r} product_status={product_status!r}"
