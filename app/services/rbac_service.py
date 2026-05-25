@@ -83,6 +83,8 @@ class RBACService:
                 "payout.*": {}, "refunds.*": {}, "disputes.*": {}, "escrow.*": {},
                 # Tax & Finance dashboards
                 "tax.*": {}, "finance.*": {},
+                # Razorpay Route (linked-account onboarding, KYC, transfers)
+                "razorpay.*": {},
             },
             "manager": {
                 "order.create": {}, "order.edit": {}, "order.cancel": {}, "order.read": {},
