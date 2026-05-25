@@ -90,6 +90,9 @@ Returns the local `rzp_route_accounts` row (or the freshly-created/adopted one):
   "linked_account_id": "acc_SruqmpCeoXIesu",
   "status": "created",                  // local enum: created | activated | suspended | rejected | deleted
   "razorpay_status": "under_review",    // raw gateway status, may be needs_clarification etc.
+  "route_product_id": "acc_prd_StZ8yQRr7W8xDM",
+  "route_product_status": "activated",  // requested | under_review | needs_clarification | activated | rejected
+  "effective_status": "activated",      // ⭐ SINGLE SOURCE OF TRUTH for FE UI branching — see below
   "reference_id": "m_751c6d1d15594…",
   "bank_account_last4": "1234",
   "bank_ifsc": "HDFC0001234",
@@ -99,6 +102,22 @@ Returns the local `rzp_route_accounts` row (or the freshly-created/adopted one):
 ```
 
 `bank_account_hash` is **never** exposed.
+
+### `effective_status` — the only field the FE should branch on
+
+Razorpay splits onboarding state across two independent fields (`status` on the account, `activation_status` on the route product). To avoid every client re-implementing that composition (and getting it wrong — accounts stay `status: created` forever even after activation, the green badge actually comes from `route_product_status: activated`), the backend now returns a derived `effective_status`:
+
+| `effective_status`       | When                                                              | FE should show                                              |
+| ------------------------ | ----------------------------------------------------------------- | ----------------------------------------------------------- |
+| `pending`                | `linked_account_id == null`                                       | Onboarding form (collect KYC, call `POST /provision`).      |
+| `submitted`              | Account exists, no `route_product_id` yet                         | "Submitted — finishing setup" + auto-call `POST /onboard`. |
+| `under_review`           | `route_product_status` ∈ {requested, under_review, created}       | "Razorpay is reviewing your settlement details" + poll.    |
+| `needs_clarification`    | `route_product_status == needs_clarification`                     | Banner with Razorpay's `requirements[]` + dashboard CTA.    |
+| `activated`              | `route_product_status == activated`                               | ✅ Green success screen. Settlements are live.              |
+| `rejected`               | `route_product_status == rejected`                                | Failure screen + support link.                              |
+| `suspended`              | `status == suspended` (gateway suspended the account)             | Suspended banner + support link.                            |
+
+Do **not** branch off `status` alone — it remains `created` for the entire happy-path lifetime of an account.
 
 ---
 
@@ -142,8 +161,10 @@ Response (200) — Razorpay payload **as-is** plus two convenience keys:
   "brand": { "color": null },
 
   // ── Bittu convenience keys (NOT from Razorpay) ───────────────────
-  "merchant_id":  "751c6d1d-…",
-  "local_status": "created"            // our enum: created | activated | suspended | rejected | deleted
+  "merchant_id":      "751c6d1d-…",
+  "local_status":     "created",       // our enum: created | activated | suspended | rejected | deleted
+  "route_product_status": "activated", // mirror of the local row's product status
+  "effective_status": "activated"      // same derived value as GET /linked-account — see §2 table
 }
 ```
 
@@ -285,7 +306,7 @@ Hand back **422 details** verbatim — they already include the exact field path
 ```text
 1. Owner fills: legal_name, business_type, pan, gstin, address, owner_*, bank_*
 2. FE POST /linked-account/onboard with the full body
-3. Poll GET /linked-account every ~15s until status == "activated"
+3. Poll GET /linked-account every ~15s until effective_status == "activated"
    (or subscribe to the linked_account WS push if your client wires that channel)
 4. Once activated, transfers can be created via POST /transfers (separate spec)
 ```

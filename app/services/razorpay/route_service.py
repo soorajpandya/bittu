@@ -263,12 +263,49 @@ def _hash_account(account_number: Optional[str]) -> Optional[str]:
     return hashlib.sha256(account_number.encode("utf-8")).hexdigest()
 
 
+def _derive_effective_status(d: dict) -> str:
+    """Single value the FE can branch on without composing two fields.
+
+    Maps the (account.status, route_product_status) pair into the user-
+    facing onboarding state:
+
+    - ``pending``             — no linked account on the merchant yet.
+    - ``submitted``           — account exists, no route product requested yet.
+    - ``under_review``        — product requested, awaiting Razorpay review.
+    - ``needs_clarification`` — Razorpay wants more info on the product.
+    - ``activated``           — product activated, settlements live.
+    - ``suspended``           — account suspended on the gateway.
+    - ``rejected``            — product activation rejected.
+
+    The FE should branch off this and never re-derive from ``status`` /
+    ``route_product_status`` directly.
+    """
+    if not d.get("linked_account_id"):
+        return "pending"
+    acc_status = (d.get("status") or "").lower()
+    prod_status = (d.get("route_product_status") or "").lower()
+    if acc_status == "suspended":
+        return "suspended"
+    if prod_status == "activated":
+        return "activated"
+    if prod_status == "rejected":
+        return "rejected"
+    if prod_status == "needs_clarification":
+        return "needs_clarification"
+    if prod_status in ("requested", "under_review", "created"):
+        return "under_review"
+    # Account exists but no product has been requested yet.
+    return "submitted"
+
+
 def _row_to_account(r) -> dict:
     if r is None:
         return {}
     d = dict(r)
     # NEVER expose bank_account_hash via API.
     d.pop("bank_account_hash", None)
+    # FE convenience: a single onboarding state to branch UI off of.
+    d["effective_status"] = _derive_effective_status(d)
     return d
 
 
@@ -801,8 +838,15 @@ class RzpRouteService:
         refreshed = await self._existing_account(merchant_id)
         out = dict(rzp_resp)
         out["merchant_id"] = merchant_id
-        if refreshed and "status" in refreshed.keys():
-            out["local_status"] = refreshed["status"]
+        if refreshed:
+            row_dict = dict(refreshed)
+            if "status" in row_dict:
+                out["local_status"] = row_dict["status"]
+            # Same single-value onboarding state exposed by GET /linked-account,
+            # so callers of /details don't need to issue a second request.
+            out["effective_status"] = _derive_effective_status(row_dict)
+            if "route_product_status" in row_dict:
+                out["route_product_status"] = row_dict["route_product_status"]
         return out
 
     # ── Merchant-driven update (PATCH /v2/accounts/:id) ─────────────────
