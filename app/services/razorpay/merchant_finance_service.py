@@ -955,6 +955,11 @@ class MerchantFinanceService:
                 "pending_settlement": 0.0,
                 "settled_amount":     0.0,
                 "refunded_amount":    0.0,
+                "gross_sales":        0.0,
+                "merchant_earned":    0.0,
+                "platform_commission": 0.0,
+                "transferred_to_linked": 0.0,
+                "available_balance":  0.0,
                 "currency":           "INR",
             }
 
@@ -1008,6 +1013,7 @@ class MerchantFinanceService:
 
         # Merchant share of captured payments, net of commission.
         merchant_share = (online_gross * Decimal("0.95")).quantize(Decimal("0.01"))
+        commission     = (online_gross - merchant_share).quantize(Decimal("0.01"))
 
         # Owed to merchant but not yet paid out to their bank.
         pending = merchant_share - settled_r - refunds_r
@@ -1021,14 +1027,35 @@ class MerchantFinanceService:
             available = Decimal("0.00")
 
         return {
-            "merchant_id":        merchant_id,
-            "wallet_status":      "active",
-            "current_balance":    float(_q(pending)),
-            "pending_settlement": float(_q(pending)),
-            "available_balance":  float(_q(available)),
-            "settled_amount":     float(_q(settled_r)),
-            "refunded_amount":    float(refunds_r),
-            "currency":           "INR",
+            "merchant_id":           merchant_id,
+            "wallet_status":         "active",
+            "currency":              "INR",
+
+            # ── headline / back-compat ─────────────────────────────────
+            # `current_balance` and `pending_settlement` are the same number
+            # (what the merchant is owed, not yet in their bank).
+            "current_balance":       float(_q(pending)),
+            "pending_settlement":    float(_q(pending)),
+
+            # ── full bifurcation (lifetime, in rupees) ─────────────────
+            # gross_sales         = ∑ captured payments (what the customer paid)
+            # platform_commission = 5 % kept by Bittu (gross - merchant_earned)
+            # merchant_earned     = 95 % of gross — what the merchant has ever earned
+            # transferred_to_linked = ∑ Route transfers that have been created
+            # settled_amount      = ∑ amounts already paid out to merchant's bank
+            # refunded_amount     = ∑ refunds the merchant has issued (or are pending)
+            # pending_settlement  = merchant_earned − settled_amount − refunded_amount
+            # available_balance   = transferred_to_linked − settled_amount − refunded_amount
+            #                       (money already on the linked account, not yet bank-settled)
+            #
+            # Invariant: merchant_earned == pending_settlement + settled_amount + refunded_amount
+            "gross_sales":           float(_q(online_gross)),
+            "platform_commission":   float(_q(commission)),
+            "merchant_earned":       float(_q(merchant_share)),
+            "transferred_to_linked": float(_q(transfers_r)),
+            "settled_amount":        float(_q(settled_r)),
+            "refunded_amount":       float(_q(refunds_r)),
+            "available_balance":     float(_q(available)),
         }
 
     # ── ledger entries (statement projection) ────────────────────────────
