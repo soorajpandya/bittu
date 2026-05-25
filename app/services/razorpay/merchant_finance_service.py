@@ -959,6 +959,20 @@ class MerchantFinanceService:
             }
 
         async with get_connection() as conn:
+            # Gross captured payments. The merchant's share is gross × 0.95
+            # (Bittu's flat 5 % commission). We use captured payments (not
+            # rzp_route_transfers) because the Route transfer worker runs
+            # out-of-band and a freshly-captured payment may not yet have
+            # a transfer row — but the money IS owed to the merchant, so
+            # it must surface in the ledger balance immediately.
+            online_gross_paise = await conn.fetchval(
+                """
+                SELECT COALESCE(SUM(amount_paise), 0)::bigint
+                FROM rzp_payments
+                WHERE merchant_id = $1::uuid AND status = 'captured'
+                """,
+                merchant_id,
+            )
             transfers = await conn.fetchval(
                 """
                 SELECT COALESCE(SUM(amount_paise), 0)::bigint
@@ -987,10 +1001,21 @@ class MerchantFinanceService:
                 merchant_id,
             )
 
-        transfers_r = _money(transfers or 0)
-        settled_r   = _money(settled_net or 0)
-        refunds_r   = _money(refunded or 0)
+        online_gross = _money(online_gross_paise or 0)
+        transfers_r  = _money(transfers or 0)
+        settled_r    = _money(settled_net or 0)
+        refunds_r    = _money(refunded or 0)
 
+        # Merchant share of captured payments, net of commission.
+        merchant_share = (online_gross * Decimal("0.95")).quantize(Decimal("0.01"))
+
+        # Owed to merchant but not yet paid out to their bank.
+        pending = merchant_share - settled_r - refunds_r
+        if pending < 0:
+            pending = Decimal("0.00")
+
+        # Already sitting in the linked account (transferred) but not yet
+        # settled to the bank. Surfaced separately for diagnostics.
         available = transfers_r - settled_r - refunds_r
         if available < 0:
             available = Decimal("0.00")
@@ -998,8 +1023,9 @@ class MerchantFinanceService:
         return {
             "merchant_id":        merchant_id,
             "wallet_status":      "active",
-            "current_balance":    float(_q(available)),
-            "pending_settlement": float(_q(available)),
+            "current_balance":    float(_q(pending)),
+            "pending_settlement": float(_q(pending)),
+            "available_balance":  float(_q(available)),
             "settled_amount":     float(_q(settled_r)),
             "refunded_amount":    float(refunds_r),
             "currency":           "INR",
