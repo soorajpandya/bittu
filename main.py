@@ -333,6 +333,20 @@ def create_app() -> FastAPI:
     @app.exception_handler(_RVE)
     async def validation_exception_handler(request: _Req, exc: _RVE) -> _JSONResp:
         request_id = getattr(request.state, "request_id", None)
+        # Pydantic v2 stuffs the raw exception (e.g. ValueError) into
+        # ``errors[].ctx.error``. That object is not JSON-serializable, so
+        # JSONResponse.render() raises ``TypeError: Object of type ValueError
+        # is not JSON serializable`` and the merchant sees a 500 instead of a
+        # 422. Sanitize with jsonable_encoder so every value is a primitive.
+        from fastapi.encoders import jsonable_encoder as _je
+        try:
+            _raw_errors = exc.errors()
+        except Exception:
+            _raw_errors = []
+        try:
+            _safe_errors = _je(_raw_errors, custom_encoder={Exception: lambda e: str(e)})
+        except Exception:
+            _safe_errors = [{"msg": "validation failed", "type": "unknown"}]
         try:
             from app.core.logging import get_logger as _get_logger
             _vlog = _get_logger("app.validation")
@@ -342,7 +356,7 @@ def create_app() -> FastAPI:
                     "path": str(request.url.path),
                     "method": request.method,
                     "request_id": request_id,
-                    "errors": exc.errors(),
+                    "errors": _safe_errors,
                     "body_preview": (str(exc.body)[:500] if getattr(exc, "body", None) is not None else None),
                 },
             )
@@ -354,7 +368,7 @@ def create_app() -> FastAPI:
                 "error": {
                     "code": "VALIDATION_ERROR",
                     "message": "Request validation failed",
-                    "details": {"errors": exc.errors()},
+                    "details": {"errors": _safe_errors},
                     "retryable": False,
                 },
                 "request_id": request_id,
