@@ -11,6 +11,7 @@ from typing import Optional
 
 from app.core.auth import UserContext, get_current_user
 from app.core.database import get_connection
+from app.core.redis import cache_delete
 from app.services.auth_service import (
     get_google_oauth_url,
     exchange_google_code,
@@ -227,6 +228,15 @@ async def get_me(
                 user.restaurant_id = init.get("restaurant_id")
                 user.owner_id = user.user_id
                 user.is_branch_user = False
+                # Bust the 5-minute UserContext cache that get_current_user wrote
+                # with restaurant_id=None on the very first authenticated request.
+                # Without this, every subsequent endpoint (merchant-wallet,
+                # merchant-ledger, etc.) keeps seeing the stale `None` until the
+                # cache TTL expires and returns 422 "No restaurant is bound".
+                try:
+                    await cache_delete(f"user_ctx:{user.user_id}")
+                except Exception:
+                    pass
 
         # Get Supabase user profile
         supabase_user = await get_user(credentials.credentials)
@@ -263,6 +273,12 @@ async def initialize_restaurant(
     """Initialize restaurant and primary branch for the current user (idempotent)."""
     try:
         result = await _initialize_restaurant_and_branch(user.user_id, email=user.email)
+        # Same cache-bust as /me: the cached UserContext was written before the
+        # restaurant existed, so it still says restaurant_id=None.
+        try:
+            await cache_delete(f"user_ctx:{user.user_id}")
+        except Exception:
+            pass
         return result
     except Exception as e:
         logger.error("initialize_restaurant_failed", user_id=user.user_id, error=str(e))
