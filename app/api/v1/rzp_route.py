@@ -229,6 +229,26 @@ async def get_linked_account(
     return await rzp_route_service.get_linked_account(merchant_id=_mid(user))
 
 
+@router.get("/linked-account/details")
+async def fetch_linked_account_details(
+    user: UserContext = Depends(require_permission("razorpay.route.read")),
+):
+    """Full Razorpay account payload (mirrors ``GET /v2/accounts/:id``).
+
+    Returns the gateway's view of the linked account — profile,
+    addresses, legal_info, contact_info, apps, brand, etc. — plus
+    ``merchant_id`` and ``local_status`` for FE convenience. Also
+    re-syncs the local row as a side-effect so the lighter
+    ``GET /linked-account`` endpoint stays consistent.
+    """
+    try:
+        return await rzp_route_service.fetch_linked_account_details(
+            merchant_id=_mid(user),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
 @router.post("/linked-account/provision")
 async def provision_linked_account(
     body: ProvisionLinkedAccountIn = Body(default_factory=ProvisionLinkedAccountIn),

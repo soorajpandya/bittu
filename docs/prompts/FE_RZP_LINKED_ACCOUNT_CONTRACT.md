@@ -12,7 +12,8 @@ Base URL: `https://<host>/api/v1/razorpay-route`
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET`   | `/linked-account` | Current local row (status, gateway id, KYC mirror). |
+| `GET`   | `/linked-account` | Current local row (status, gateway id, KYC mirror). Cheap, no gateway call. |
+| `GET`   | `/linked-account/details` | **Full Razorpay payload** (mirrors `GET /v2/accounts/:id`). Re-syncs local row. |
 | `POST`  | `/linked-account/provision` | Idempotent — create on Razorpay if missing, else resync. |
 | `PATCH` | `/linked-account` | Merchant-driven update (mirrors Razorpay `PATCH /v2/accounts/:id`). |
 | `POST`  | `/linked-account/sync` | Pull latest state from Razorpay → local row. |
@@ -98,6 +99,58 @@ Returns the local `rzp_route_accounts` row (or the freshly-created/adopted one):
 ```
 
 `bank_account_hash` is **never** exposed.
+
+---
+
+## 2a. `GET /linked-account/details` — full Razorpay payload
+
+Mirrors Razorpay's `GET /v2/accounts/:account_id` end-to-end. Use this when you need the full account view (profile, all addresses, legal_info, contact_info, apps, brand) rather than the lightweight local row from `GET /linked-account`. Side-effect: re-syncs the local row, so the cheap endpoint stays consistent.
+
+Response (200) — Razorpay payload **as-is** plus two convenience keys:
+
+```jsonc
+{
+  // ── Razorpay /v2/accounts/:id passthrough ────────────────────────
+  "id": "acc_GLGeLkU2JUeyDZ",
+  "type": "route",
+  "status": "created",                  // gateway enum: created | suspended
+  "email": "owner@acme.com",
+  "phone": "9876543210",
+  "reference_id": "123123",
+  "business_type": "partnership",
+  "legal_business_name": "Acme Corp",
+  "customer_facing_business_name": "Acme Diner",
+  "contact_name": "Gaurav Kumar",
+  "created_at": 1611136837,            // unix epoch seconds (gateway)
+  "notes": {},
+  "profile": {
+    "category": "food",
+    "subcategory": "restaurant",
+    "business_model": null,
+    "addresses": {
+      "registered": { "street1": "...", "city": "Bengaluru", "state": "KARNATAKA", "postal_code": 560034, "country": "IN" },
+      "operation":  { "street1": "...", "city": "Bengaluru", "state": "KARNATAKA", "country": "IN" }
+    }
+  },
+  "legal_info":   { "pan": "AAACL1234C", "gst": "18AABCU9603R1ZM" },
+  "contact_info": {
+    "chargeback": { "email": null, "phone": null, "policy_url": null },
+    "refund":     { "email": null, "phone": null, "policy_url": null },
+    "support":    { "email": null, "phone": null, "policy_url": null }
+  },
+  "apps":  { "websites": [], "android": [{ "url": null, "name": null }], "ios": [{ "url": null, "name": null }] },
+  "brand": { "color": null },
+
+  // ── Bittu convenience keys (NOT from Razorpay) ───────────────────
+  "merchant_id":  "751c6d1d-…",
+  "local_status": "created"            // our enum: created | activated | suspended | rejected | deleted
+}
+```
+
+Errors:
+- **404** `{detail: "No linked account provisioned for this merchant"}` — call `/provision` first.
+- **404** `{detail: "Linked account does not exist"}` — gateway returned BAD_REQUEST with `linked_account_id_does_not_exist` (deleted on dashboard / wrong env).
+- **502 / 503** — upstream Razorpay 5xx after retries.
 
 ---
 

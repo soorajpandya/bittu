@@ -761,6 +761,50 @@ class RzpRouteService:
         row = await self._existing_account(merchant_id)
         return _row_to_account(row)
 
+    async def fetch_linked_account_details(self, *, merchant_id: str) -> dict:
+        """Mirror of Razorpay ``GET /v2/accounts/:account_id``.
+
+        Returns the **full gateway payload** (id, type, status, email,
+        phone, profile.{category,subcategory,addresses,business_model},
+        legal_info, notes, contact_name, contact_info, apps, brand,
+        business_type, legal_business_name, customer_facing_business_name,
+        created_at, reference_id). Also re-syncs the local row so the
+        cheap ``GET /linked-account`` stays consistent.
+
+        Adds two convenience keys for the caller:
+        ``merchant_id`` (string) and ``local_status`` (our enum).
+        """
+        existing = await self._existing_account(merchant_id)
+        if not existing or not existing["linked_account_id"]:
+            raise LookupError("No linked account provisioned for this merchant")
+        account_id = existing["linked_account_id"]
+
+        try:
+            rzp_resp = await route_api.fetch_linked_account(
+                account_id, merchant_id=merchant_id,
+            )
+        except RazorpayBadRequestError as exc:
+            desc = exc.error_description or str(exc)
+            # Razorpay returns 400 with "Linked account does not exist"
+            # when the id is gone (deleted on dashboard, wrong env, …).
+            # Surface as a 404 to the caller since the LookupError path
+            # is the same UX.
+            if "does not exist" in desc.lower():
+                raise LookupError(desc)
+            raise
+
+        await self.upsert_linked_account_from_razorpay(
+            rzp_entity=rzp_resp, merchant_id_override=merchant_id,
+        )
+        # Refresh local row to pick up the new status / razorpay_status
+        # post-upsert before we annotate the response.
+        refreshed = await self._existing_account(merchant_id)
+        out = dict(rzp_resp)
+        out["merchant_id"] = merchant_id
+        if refreshed and "status" in refreshed.keys():
+            out["local_status"] = refreshed["status"]
+        return out
+
     # ── Merchant-driven update (PATCH /v2/accounts/:id) ─────────────────
 
     async def update_linked_account_details(
