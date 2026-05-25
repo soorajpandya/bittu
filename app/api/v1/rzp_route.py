@@ -104,6 +104,44 @@ class UpdateProductBankIn(BaseModel):
     tnc_accepted: bool = True
 
 
+class UpdateLinkedAccountIn(BaseModel):
+    """Razorpay ``PATCH /v2/accounts/:account_id`` — every field
+    optional. ``business_type`` and ``email`` cannot be updated per
+    Razorpay spec and are deliberately absent here."""
+
+    phone: Optional[str] = Field(None, min_length=8, max_length=15)
+    legal_business_name: Optional[str] = Field(None, min_length=4, max_length=200)
+    customer_facing_business_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    reference_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=512,
+        pattern=r"^[A-Za-z0-9_-]+$",
+        description="1..512 chars of [A-Za-z0-9_-] per update spec. Dropped automatically if the platform lacks `route_code_support`.",
+    )
+    contact_name: Optional[str] = Field(None, min_length=4, max_length=255)
+    notes: Optional[dict[str, Any]] = None
+
+    # profile.*
+    category: Optional[str] = None
+    subcategory: Optional[str] = None
+    business_model: Optional[str] = Field(None, min_length=1, max_length=255)
+    addresses: Optional[dict[str, Any]] = Field(
+        None,
+        description="{registered: {...}, operation: {...}} — both slots optional.",
+    )
+
+    # legal_info.* — silently dropped server-side if regex fails.
+    pan: Optional[str] = Field(None, pattern=r"^[A-Za-z]{5}\d{4}[A-Za-z]$")
+    gst: Optional[str] = Field(
+        None,
+        pattern=r"^[0-3][0-9][A-Za-z]{5}[0-9]{4}[A-Za-z][0-9][A-Za-z0-9]{2}$",
+    )
+
+    contact_info: Optional[dict[str, Any]] = None
+    apps: Optional[dict[str, Any]] = None
+
+
 class OnboardIn(BaseModel):
     bank_account_number: str = Field(..., min_length=4)
     ifsc: Optional[str] = None
@@ -227,6 +265,41 @@ async def sync_linked_account(
         return await rzp_route_service.sync_linked_account(merchant_id=_mid(user))
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.patch("/linked-account")
+async def update_linked_account(
+    body: UpdateLinkedAccountIn = Body(...),
+    user: UserContext = Depends(require_permission("razorpay.route.write")),
+):
+    """Merchant-driven PATCH of the Razorpay linked account.
+
+    Mirrors ``PATCH /v2/accounts/:account_id``. Send only the fields you
+    want to change; omitted fields are left untouched on the gateway.
+    ``business_type`` and ``email`` cannot be updated.
+    """
+    try:
+        return await rzp_route_service.update_linked_account_details(
+            merchant_id=_mid(user),
+            phone=body.phone,
+            legal_business_name=body.legal_business_name,
+            customer_facing_business_name=body.customer_facing_business_name,
+            reference_id=body.reference_id,
+            contact_name=body.contact_name,
+            notes=body.notes,
+            category=body.category,
+            subcategory=body.subcategory,
+            business_model=body.business_model,
+            addresses=body.addresses,
+            pan=body.pan,
+            gst=body.gst,
+            contact_info=body.contact_info,
+            apps=body.apps,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 # ── Stakeholder (Route onboarding step 3) ─────────────────────────────────

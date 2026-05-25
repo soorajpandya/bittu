@@ -761,6 +761,163 @@ class RzpRouteService:
         row = await self._existing_account(merchant_id)
         return _row_to_account(row)
 
+    # ── Merchant-driven update (PATCH /v2/accounts/:id) ─────────────────
+
+    async def update_linked_account_details(
+        self,
+        *,
+        merchant_id: str,
+        phone: Optional[str] = None,
+        legal_business_name: Optional[str] = None,
+        customer_facing_business_name: Optional[str] = None,
+        reference_id: Optional[str] = None,
+        contact_name: Optional[str] = None,
+        notes: Optional[Mapping[str, Any]] = None,
+        category: Optional[str] = None,
+        subcategory: Optional[str] = None,
+        business_model: Optional[str] = None,
+        addresses: Optional[Mapping[str, Any]] = None,
+        pan: Optional[str] = None,
+        gst: Optional[str] = None,
+        contact_info: Optional[Mapping[str, Any]] = None,
+        apps: Optional[Mapping[str, Any]] = None,
+    ) -> dict:
+        """Apply a merchant-driven PATCH to the Razorpay linked account.
+
+        Mirrors the Razorpay ``PATCH /v2/accounts/:account_id`` spec:
+        all fields are optional, ``business_type`` and ``email`` cannot
+        be updated and are not accepted here. Values are normalised
+        (state/country/phone/contact_name) and invalid PAN/GST is
+        silently dropped, consistent with ``provision_linked_account``.
+        Returns the local row after upserting the gateway response.
+        """
+        existing = await self._existing_account(merchant_id)
+        if not existing or not existing["linked_account_id"]:
+            raise LookupError("No linked account provisioned for this merchant")
+        account_id = existing["linked_account_id"]
+
+        patch_body: dict[str, Any] = {}
+
+        phone_norm = _normalize_phone(phone)
+        if phone_norm:
+            if not (8 <= len(phone_norm) <= 15):
+                raise ValueError("phone must be 8..15 digits after normalisation")
+            patch_body["phone"] = phone_norm
+
+        if legal_business_name is not None:
+            lbn = str(legal_business_name).strip()
+            if lbn and not (4 <= len(lbn) <= 200):
+                raise ValueError("legal_business_name must be 4..200 chars")
+            if lbn:
+                patch_body["legal_business_name"] = lbn
+
+        if customer_facing_business_name is not None:
+            cfbn = str(customer_facing_business_name).strip()
+            if cfbn:
+                patch_body["customer_facing_business_name"] = cfbn[:255]
+
+        if reference_id is not None:
+            ref_clean = re.sub(r"[^A-Za-z0-9_-]", "", str(reference_id))[:512]
+            if ref_clean:
+                patch_body["reference_id"] = ref_clean
+
+        if contact_name is not None:
+            cn = _sanitize_contact_name(contact_name)
+            if cn and len(cn) < 4:
+                raise ValueError("contact_name must be >= 4 chars after sanitisation")
+            if cn:
+                patch_body["contact_name"] = cn[:255]
+
+        if notes:
+            patch_body["notes"] = dict(notes)
+
+        # profile.{category, subcategory, business_model, addresses}
+        profile_patch: dict[str, Any] = {}
+        if category:
+            profile_patch["category"] = str(category).strip()
+        if subcategory:
+            profile_patch["subcategory"] = str(subcategory).strip()
+        if business_model:
+            bm = str(business_model).strip()
+            if bm:
+                profile_patch["business_model"] = bm[:255]
+        norm_addresses = _normalize_addresses_map(addresses) if addresses else {}
+        if norm_addresses:
+            profile_patch["addresses"] = norm_addresses
+        if profile_patch:
+            patch_body["profile"] = profile_patch
+
+        # legal_info.{pan, gst} — silently drop invalid values.
+        legal_patch: dict[str, Any] = {}
+        if pan is not None:
+            pan_v = _validate_pan(pan)
+            if pan_v:
+                legal_patch["pan"] = pan_v
+            else:
+                logger.warning(
+                    "rzp_route.pan_dropped",
+                    merchant_id=merchant_id, account_id=account_id,
+                )
+        if gst is not None:
+            gst_v = _validate_gst(gst)
+            if gst_v:
+                legal_patch["gst"] = gst_v
+            else:
+                logger.warning(
+                    "rzp_route.gst_dropped",
+                    merchant_id=merchant_id, account_id=account_id,
+                )
+        if legal_patch:
+            patch_body["legal_info"] = legal_patch
+
+        if contact_info:
+            patch_body["contact_info"] = dict(contact_info)
+        if apps:
+            patch_body["apps"] = dict(apps)
+
+        if not patch_body:
+            return await self.get_linked_account(merchant_id=merchant_id)
+
+        try:
+            rzp_resp = await route_api.update_linked_account(
+                account_id, body=patch_body, merchant_id=merchant_id,
+            )
+        except RazorpayBadRequestError as exc:
+            desc = exc.error_description or str(exc)
+            # Retry without reference_id if the platform lacks the feature.
+            if "reference_id" in patch_body and _REFERENCE_ID_FEATURE_RE.search(desc):
+                retry_body = {k: v for k, v in patch_body.items() if k != "reference_id"}
+                await _safe_audit(
+                    domain="razorpay_route",
+                    action="rzp_route.linked_account.reference_id_dropped",
+                    entity_type="rzp_route_account",
+                    entity_id=account_id,
+                    payload={"merchant_id": merchant_id, "reason": desc[:200]},
+                )
+                if not retry_body:
+                    return await self.get_linked_account(merchant_id=merchant_id)
+                rzp_resp = await route_api.update_linked_account(
+                    account_id, body=retry_body, merchant_id=merchant_id,
+                )
+            else:
+                raise
+
+        await self.upsert_linked_account_from_razorpay(
+            rzp_entity=rzp_resp, merchant_id_override=merchant_id,
+        )
+        await _safe_audit(
+            domain="razorpay_route",
+            action="rzp_route.linked_account.update",
+            entity_type="rzp_route_account",
+            entity_id=account_id,
+            payload={
+                "merchant_id": merchant_id,
+                "linked_account_id": account_id,
+                "patched_keys": sorted(patch_body.keys()),
+            },
+        )
+        return await self.get_linked_account(merchant_id=merchant_id)
+
     # ── Stakeholder (Route onboarding step 3) ────────────────────────────
 
     async def create_stakeholder_for_merchant(
