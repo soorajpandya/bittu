@@ -138,17 +138,28 @@ def _as_dict(value: Any) -> dict:
     return {}
 
 
-def _wallet_status_for(account_status: Optional[str]) -> str:
-    """Map an rzp_route_accounts.status value to a wallet_status code."""
+def _wallet_status_for(
+    account_status: Optional[str],
+    product_status: Optional[str] = None,
+) -> str:
+    """Map (rzp_route_accounts.status, route_product_status) → wallet_status.
+
+    Route linked accounts stay at ``status='created'`` for their entire
+    happy-path lifetime — activation is signalled by the **product**
+    flipping to ``activated``. So we must check product status first, and
+    only fall back to the account-level status for terminal/negative
+    states (suspended/rejected).
+    """
+    acc = (account_status or "").lower()
+    prod = (product_status or "").lower()
+    if acc == "suspended":
+        return "suspended"
+    if prod == "activated":
+        return "active"
+    if prod == "rejected" or acc == "rejected":
+        return "kyc_rejected"
     if not account_status:
         return "pending_kyc"
-    s = account_status.lower()
-    if s == "activated":
-        return "active"
-    if s == "rejected":
-        return "kyc_rejected"
-    if s == "suspended":
-        return "suspended"
     return "pending_kyc"
 
 
@@ -169,7 +180,7 @@ class MerchantFinanceService:
         async with get_service_connection() as conn:
             row = await conn.fetchrow(
                 "SELECT linked_account_id, status::text AS status, "
-                "       kyc_status, activation_status "
+                "       kyc_status, activation_status, route_product_status "
                 "FROM rzp_route_accounts "
                 "WHERE merchant_id = $1::uuid",
                 merchant_id,
@@ -178,12 +189,15 @@ class MerchantFinanceService:
 
     @staticmethod
     def _is_active(linked: Optional[dict]) -> bool:
-        if not linked:
+        # Route accounts stay status='created' forever; activation comes
+        # from the route product flipping to 'activated'. Account is
+        # active iff: gateway id present, account not suspended, and
+        # product activated.
+        if not linked or not linked.get("linked_account_id"):
             return False
-        return (
-            (linked.get("status") or "").lower() == "activated"
-            and bool(linked.get("linked_account_id"))
-        )
+        if (linked.get("status") or "").lower() == "suspended":
+            return False
+        return (linked.get("route_product_status") or "").lower() == "activated"
 
     def _pending_wallet(
         self, merchant_id: str, linked: Optional[dict],
@@ -196,7 +210,7 @@ class MerchantFinanceService:
         """
         return {
             "merchant_id":         merchant_id,
-            "wallet_status":       _wallet_status_for((linked or {}).get("status")),
+            "wallet_status":       _wallet_status_for((linked or {}).get("status"), (linked or {}).get("route_product_status")),
             "kyc_status":          (linked or {}).get("kyc_status"),
             "linked_account_id":   (linked or {}).get("linked_account_id"),
             "gross_sales":         0.0,
@@ -330,7 +344,7 @@ class MerchantFinanceService:
 
         return {
             "merchant_id":         merchant_id,
-            "wallet_status":       _wallet_status_for((linked or {}).get("status")),
+            "wallet_status":       _wallet_status_for((linked or {}).get("status"), (linked or {}).get("route_product_status")),
             "kyc_status":          (linked or {}).get("kyc_status"),
             "linked_account_id":   (linked or {}).get("linked_account_id"),
             "gross_sales":         float(gross),
@@ -936,7 +950,7 @@ class MerchantFinanceService:
         if not self._is_active(linked):
             return {
                 "merchant_id":        merchant_id,
-                "wallet_status":      _wallet_status_for((linked or {}).get("status")),
+                "wallet_status":      _wallet_status_for((linked or {}).get("status"), (linked or {}).get("route_product_status")),
                 "current_balance":    0.0,
                 "pending_settlement": 0.0,
                 "settled_amount":     0.0,
@@ -1222,7 +1236,7 @@ class MerchantFinanceService:
                 "limit":         limit,
                 "offset":        offset,
                 "has_more":      False,
-                "wallet_status": _wallet_status_for((linked or {}).get("status")),
+                "wallet_status": _wallet_status_for((linked or {}).get("status"), (linked or {}).get("route_product_status")),
             }
 
         stream = await self._build_entries(merchant_id, from_date=from_date, to_date=to_date)
