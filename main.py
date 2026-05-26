@@ -165,6 +165,16 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("rzp_reconciliation_scheduler_start_failed", error=str(exc))
 
+    # Razorpay KYC batch scheduler (30-min CSV generation for manual dashboard upload)
+    rzp_kyc_batch_task = None
+    try:
+        from app.services.razorpay.kyc_batch_scheduler import (
+            start_rzp_kyc_batch_scheduler,
+        )
+        rzp_kyc_batch_task = start_rzp_kyc_batch_scheduler()
+    except Exception as exc:
+        logger.error("rzp_kyc_batch_scheduler_start_failed", error=str(exc))
+
     logger.info("startup_complete", db=db_ok, redis=redis_ok)
     yield
 
@@ -222,6 +232,13 @@ async def lifespan(app: FastAPI):
         rzp_reconciliation_task.cancel()
         try:
             await rzp_reconciliation_task
+        except asyncio.CancelledError:
+            pass
+
+    if rzp_kyc_batch_task is not None:
+        rzp_kyc_batch_task.cancel()
+        try:
+            await rzp_kyc_batch_task
         except asyncio.CancelledError:
             pass
 

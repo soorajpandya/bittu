@@ -122,6 +122,9 @@ router.include_router(_rzp_smart_collect.router)
 # ── Razorpay Invoices — hosted invoices (Phase 9) ──
 from app.api.v1 import rzp_invoices as _rzp_invoices
 router.include_router(_rzp_invoices.router)
+# ── Razorpay Linked-Account batch KYC (manual Dashboard upload flow) ──
+from app.api.v1 import bankkyc_razorpay as _bankkyc_razorpay
+router.include_router(_bankkyc_razorpay.router)
 router.include_router(phonepe.router)
 router.include_router(payu.router)
 router.include_router(paytm.router)
