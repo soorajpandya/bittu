@@ -719,8 +719,22 @@ def _render_xlsx(rows: list[dict]) -> bytes:
     ws = wb.active
     ws.title = "linked_accounts"
     ws.append(CSV_COLUMNS)
+    # account_number must be written as text so Excel doesn't render long
+    # values like 918010036353168 as "9.1801E+14" and doesn't strip any
+    # leading zeros. ifsc_code is also forced text for safety.
+    text_cols = {"account_number", "ifsc_code"}
     for r in rows:
-        ws.append([_csv_value(r, c) for c in CSV_COLUMNS])
+        values = []
+        for c in CSV_COLUMNS:
+            v = _csv_value(r, c)
+            if c in text_cols and v != "":
+                v = str(v)
+            values.append(v)
+        ws.append(values)
+        last_row = ws.max_row
+        for c in text_cols:
+            col_idx = CSV_COLUMNS.index(c) + 1
+            ws.cell(row=last_row, column=col_idx).number_format = "@"
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
