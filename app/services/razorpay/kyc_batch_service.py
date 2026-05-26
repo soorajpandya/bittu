@@ -49,19 +49,22 @@ CSV_COLUMNS: list[str] = [
 ]
 
 # Razorpay accepts these business_type values for Route linked accounts.
+# Source: Razorpay Batch Upload docs - Linked Account Batch Fields.
+# Keep in sync with Razorpay's official list — values outside this set are
+# silently rejected by their batch processor with "values mismatching
+# allowed headers".
 ALLOWED_BUSINESS_TYPES = {
-    "individual",
-    "proprietorship",
-    "partnership",
-    "private_limited",
-    "public_limited",
     "llp",
     "ngo",
+    "individual",
+    "partnership",
+    "proprietorship",
+    "public_limited",
+    "private_limited",
     "trust",
     "society",
-    "huf",
     "not_yet_registered",
-    "other",
+    "educational_institutes",
 }
 
 
