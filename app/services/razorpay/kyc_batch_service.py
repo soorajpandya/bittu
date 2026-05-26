@@ -421,6 +421,25 @@ class RzpKycBatchService:
                             """,
                             int(sub_id), str(acc_id),
                         )
+        # Bridge each approved submission with an account_id into
+        # rzp_route_accounts so merchants' apps see the linked account.
+        async with get_connection() as c:
+            subs = await c.fetch(
+                """
+                SELECT id, merchant_id::text AS merchant_id, razorpay_account_id
+                  FROM rzp_kyc_submissions
+                 WHERE batch_id = $1
+                   AND status = 'APPROVED'
+                   AND razorpay_account_id IS NOT NULL
+                """,
+                batch_id,
+            )
+        for s in subs:
+            await self._bridge_to_route_account(
+                submission_id=s["id"],
+                merchant_id=s["merchant_id"],
+                account_id=s["razorpay_account_id"],
+            )
         return _batch_row(b)
 
     async def mark_batch_rejected(
@@ -458,6 +477,44 @@ class RzpKycBatchService:
                 )
         return _batch_row(b)
 
+    async def _bridge_to_route_account(
+        self, *, submission_id: int, merchant_id: str, account_id: str,
+    ) -> None:
+        """Fetch the live account from Razorpay and mirror it into
+        ``rzp_route_accounts`` so the merchant's app immediately sees
+        the linked account via the existing ``GET /linked-account``
+        endpoint. Best-effort: logs and swallows on failure.
+        """
+        try:
+            # Late import to avoid circular import at module load time
+            from app.services.razorpay.route_service import rzp_route_service
+            rzp_entity = await route_api.fetch_linked_account(
+                account_id, merchant_id=str(merchant_id),
+            )
+            await rzp_route_service.upsert_linked_account_from_razorpay(
+                rzp_entity=rzp_entity, merchant_id_override=str(merchant_id),
+            )
+            # Mirror the Razorpay status onto the submission for visibility
+            rzp_status = (rzp_entity.get("status") or "").lower() or None
+            if rzp_status:
+                async with get_connection() as c:
+                    await c.execute(
+                        """
+                        UPDATE rzp_kyc_submissions
+                           SET razorpay_account_status = $2
+                         WHERE id = $1
+                        """,
+                        submission_id, rzp_status,
+                    )
+        except Exception as exc:
+            logger.warning(
+                "rzp_kyc.bridge_to_route_account.failed",
+                submission_id=submission_id,
+                merchant_id=str(merchant_id),
+                account_id=account_id,
+                error=str(exc),
+            )
+
     async def mark_submission_approved(
         self,
         submission_id: int,
@@ -478,7 +535,16 @@ class RzpKycBatchService:
             )
         if not r:
             raise NotFoundError("submission not found")
-        return _submission_row(r)
+        sub = _submission_row(r)
+        acc_id = sub.get("razorpay_account_id")
+        mid = sub.get("merchant_id")
+        if acc_id and mid:
+            await self._bridge_to_route_account(
+                submission_id=submission_id,
+                merchant_id=mid,
+                account_id=acc_id,
+            )
+        return sub
 
     async def mark_submission_rejected(
         self,
@@ -531,6 +597,20 @@ class RzpKycBatchService:
                 RETURNING *
                 """,
                 submission_id, rzp_status or None, new_status,
+            )
+        # Always mirror the live entity into rzp_route_accounts so the
+        # merchant's app sees the linked account (even pre-activation).
+        try:
+            from app.services.razorpay.route_service import rzp_route_service
+            await rzp_route_service.upsert_linked_account_from_razorpay(
+                rzp_entity=resp, merchant_id_override=str(sub["merchant_id"]),
+            )
+        except Exception as exc:
+            logger.warning(
+                "rzp_kyc.check_account.bridge_failed",
+                submission_id=submission_id,
+                account_id=acc_id,
+                error=str(exc),
             )
         return {"submission": _submission_row(r), "razorpay": resp}
 
