@@ -105,6 +105,60 @@ def _coerce_idempotency_payload(value) -> dict:
     return dict(value)
 
 
+# ── Payment summary helper ────────────────────────────────────────────────
+# Reduces the many-to-one `payments` rows of an order into a single canonical
+# shape the FE can render directly (cash | online | mixed | unpaid + collected).
+_CAPTURED_PAYMENT_STATUSES = ("completed", "settled", "reconciled")
+
+
+def _summarize_payments(rows: list[dict], order_total: Decimal) -> dict:
+    """Collapse N payment rows for an order into one badge-ready summary.
+
+    Returns:
+        klass            : 'cash' | 'online' | 'mixed' | 'unpaid'
+        collected        : True when captured - refunded covers order_total
+        paid_amount      : sum of captured rows (rupees)
+        refunded_amount  : sum of refunded rows (rupees)
+        primary_method   : method of the largest captured row, or None
+        has_gateway_record: any row has razorpay_payment_id
+        latest_paid_at   : ISO-8601 of latest captured paid_at, or None
+    """
+    if not rows:
+        return {
+            "klass": "unpaid", "collected": False,
+            "paid_amount": 0, "refunded_amount": 0,
+            "primary_method": None, "has_gateway_record": False,
+            "latest_paid_at": None,
+        }
+    captured = [r for r in rows if (r.get("status") or "") in _CAPTURED_PAYMENT_STATUSES]
+    refunded = [r for r in rows if (r.get("status") or "") == "refunded"]
+    paid_amount = sum((Decimal(str(r.get("amount") or 0)) for r in captured), Decimal("0"))
+    refunded_amount = sum((Decimal(str(r.get("amount") or 0)) for r in refunded), Decimal("0"))
+    methods = {r.get("method") for r in captured if r.get("method")}
+    has_online = "online" in methods
+    has_cash_like = any(m != "online" for m in methods)
+    if not methods:
+        klass = "unpaid"
+    elif has_online and has_cash_like:
+        klass = "mixed"
+    elif has_online:
+        klass = "online"
+    else:
+        klass = "cash"
+    primary = max(captured, key=lambda r: Decimal(str(r.get("amount") or 0)), default=None)
+    paid_ats = [r.get("paid_at") for r in captured if r.get("paid_at")]
+    latest_paid_at = max(paid_ats) if paid_ats else None
+    return {
+        "klass": klass,
+        "collected": (paid_amount - refunded_amount) >= (order_total - Decimal("0.01")),
+        "paid_amount": float(paid_amount),
+        "refunded_amount": float(refunded_amount),
+        "primary_method": primary.get("method") if primary else None,
+        "has_gateway_record": any(r.get("razorpay_payment_id") for r in rows),
+        "latest_paid_at": latest_paid_at.isoformat() if hasattr(latest_paid_at, "isoformat") else latest_paid_at,
+    }
+
+
 class OrderService:
 
     # ── Item lookup helper ──
@@ -1204,7 +1258,7 @@ class OrderService:
         }
 
     async def get_order_detail(self, user: UserContext, order_id: str) -> dict:
-        """Fetch order with items[]. Tenant-scoped. Returns 404 if unauthorized/missing."""
+        """Fetch order with items[] + payments[] + payment_summary. Tenant-scoped. Returns 404 if unauthorized/missing."""
         async with get_connection() as conn:
             order = await conn.fetchrow(
                 """
@@ -1228,10 +1282,29 @@ class OrderService:
                 """,
                 order_id,
             )
+            # Embed payments[] so FE can show cash/online without an extra round-trip.
+            # `orders` has no payment_method column — truth lives here (one order may
+            # have many rows: split tender, retries).
+            payments = await conn.fetch(
+                """
+                SELECT id, order_id, method, status, amount, currency,
+                       razorpay_order_id, razorpay_payment_id, paid_at,
+                       gateway, settlement_id, invoice_id,
+                       created_at, updated_at
+                FROM payments
+                WHERE order_id = $1
+                ORDER BY created_at ASC
+                """,
+                order_id,
+            )
             result = dict(order)
             result["items"] = [dict(i) for i in items]
             # Keep order_items alias for backward compat
             result["order_items"] = result["items"]
+            result["payments"] = [dict(p) for p in payments]
+            result["payment_summary"] = _summarize_payments(
+                result["payments"], Decimal(str(result.get("total_amount") or 0))
+            )
             # Normalise order_number
             if not result.get("order_number"):
                 result["order_number"] = result.get("metadata", {}).get("order_number", order_id[:8].upper()) if isinstance(result.get("metadata"), dict) else order_id[:8].upper()

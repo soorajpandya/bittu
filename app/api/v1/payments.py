@@ -79,11 +79,12 @@ class PaymentVoiceIn(BaseModel):
 @router.get("")
 async def list_payments(
     order_by: Optional[str] = Query(None),
+    order_id: Optional[str] = Query(None, description="Filter to one order's payments"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: UserContext = Depends(require_permission("payment.create")),
 ):
-    """List payments for the current user's restaurant."""
+    """List payments for the current user's restaurant. Optional ?order_id= filter."""
     try:
         owner_id = user.owner_id if user.is_branch_user else user.user_id
         order_col = "created_at"
@@ -97,27 +98,51 @@ async def list_payments(
                 order_dir = "ASC"
         async with get_connection() as conn:
             if user.is_branch_user and user.branch_id:
-                rows = await conn.fetch(
-                    f"""
-                    SELECT p.* FROM payments p
-                    JOIN orders o ON o.id = p.order_id
-                    WHERE o.user_id = $1 AND o.branch_id = $2
-                    ORDER BY p.{order_col} {order_dir}
-                    LIMIT $3 OFFSET $4
-                    """,
-                    owner_id, user.branch_id, limit, offset,
-                )
+                if order_id:
+                    rows = await conn.fetch(
+                        f"""
+                        SELECT p.* FROM payments p
+                        JOIN orders o ON o.id = p.order_id
+                        WHERE o.user_id = $1 AND o.branch_id = $2 AND p.order_id = $3
+                        ORDER BY p.{order_col} {order_dir}
+                        LIMIT $4 OFFSET $5
+                        """,
+                        owner_id, user.branch_id, order_id, limit, offset,
+                    )
+                else:
+                    rows = await conn.fetch(
+                        f"""
+                        SELECT p.* FROM payments p
+                        JOIN orders o ON o.id = p.order_id
+                        WHERE o.user_id = $1 AND o.branch_id = $2
+                        ORDER BY p.{order_col} {order_dir}
+                        LIMIT $3 OFFSET $4
+                        """,
+                        owner_id, user.branch_id, limit, offset,
+                    )
             else:
-                rows = await conn.fetch(
-                    f"""
-                    SELECT p.* FROM payments p
-                    JOIN orders o ON o.id = p.order_id
-                    WHERE o.user_id = $1
-                    ORDER BY p.{order_col} {order_dir}
-                    LIMIT $2 OFFSET $3
-                    """,
-                    owner_id, limit, offset,
-                )
+                if order_id:
+                    rows = await conn.fetch(
+                        f"""
+                        SELECT p.* FROM payments p
+                        JOIN orders o ON o.id = p.order_id
+                        WHERE o.user_id = $1 AND p.order_id = $2
+                        ORDER BY p.{order_col} {order_dir}
+                        LIMIT $3 OFFSET $4
+                        """,
+                        owner_id, order_id, limit, offset,
+                    )
+                else:
+                    rows = await conn.fetch(
+                        f"""
+                        SELECT p.* FROM payments p
+                        JOIN orders o ON o.id = p.order_id
+                        WHERE o.user_id = $1
+                        ORDER BY p.{order_col} {order_dir}
+                        LIMIT $2 OFFSET $3
+                        """,
+                        owner_id, limit, offset,
+                    )
             return [dict(r) for r in rows]
     except Exception as e:
         logger.warning("list_payments_failed", error=str(e), user_id=user.user_id)
