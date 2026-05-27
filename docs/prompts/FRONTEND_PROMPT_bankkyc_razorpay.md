@@ -95,6 +95,32 @@ Returns the merchant's latest submission. Render based on `status`:
 Show the ETA strip below the card whenever status is not terminal:
 *"Estimated approval window: 4–8 hours · Next batch upload: <next_batch_slot_utc local time>"*
 
+### 2.3 Bank details panel (read-only summary of what they submitted)
+
+The `GET /api/v1/bankkyc_razorpay/status` response includes the full
+fields the merchant typed on the form so they can verify what's
+queued / under review. Render this below the status card on every
+non-`NOT_SUBMITTED` state.
+
+| Field on response | Label | Display |
+|---|---|---|
+| `business_name` | "Business name" | Plain text |
+| `business_type` | "Business type" | Plain text (humanize: `private_limited` → "Private Limited") |
+| `account_name` | "Linked-account display name" | Plain text |
+| `account_email` | "Contact email" | Plain text + copy button |
+| `beneficiary_name` | "Beneficiary (as on passbook)" | Plain text |
+| `ifsc_code` | "IFSC code" | Monospace uppercase + copy button |
+| `account_number` | "Bank account number" | **Masked by default** as `•••• •••• <last4>`. Eye-icon toggle reveals the full number (no extra API call — it's already in the response). Copy button copies the full number. |
+
+Footer line on the panel:
+*"These are the details we'll send to Razorpay. To correct anything,
+wait for the current submission to be processed and resubmit if
+rejected, or contact support."*
+
+Do not show this panel when `status = APPROVED` — at that point §8
+hands off to the legacy linked-account card, which shows only last4
++ IFSC (full number is no longer retained in the live record).
+
 ---
 
 ## 3. Admin Console — "Razorpay Batch Uploads"
@@ -346,3 +372,174 @@ bridge logs a warning and the 12h background poller will retry. Admin
 UI should show a toast "Approved — linked account mirror pending" if
 the response includes any warning field (currently it doesn't — treat
 a 200 as full success).
+
+---
+
+## 10. Example responses (live, sanitized)
+
+### 10.1 `POST /api/v1/bankkyc_razorpay` — success
+
+Status: `200 OK`
+
+```json
+{
+  "success": true,
+  "message": "Your details have been submitted successfully. Bittu POS will update your KYC status within 4 to 8 hours.",
+  "submission_id": 1,
+  "status": "PENDING_BATCH_UPLOAD",
+  "estimated_processing_window": "4-8 hours",
+  "next_batch_slot_utc": "2026-05-26T11:00:00+00:00"
+}
+```
+
+### 10.2 `POST /api/v1/bankkyc_razorpay` — duplicate
+
+Status: `409 Conflict`
+
+```json
+{ "detail": "You already have an active KYC submission (status: IN_BATCH_FILE). Wait for it to complete." }
+```
+
+FE: silently call `/status` and show the status card.
+
+### 10.3 `GET /api/v1/bankkyc_razorpay/status` — approved submission
+
+Status: `200 OK`. All form fields the merchant typed are echoed back —
+this is the source of truth for the §2.3 bank-details panel.
+
+```json
+{
+  "id": 1,
+  "merchant_id": "3fa3adeb-fbfa-44c2-82bd-d8b818707571",
+  "status": "APPROVED",
+  "batch_id": 13,
+  "batch_no": "BATCH-20260526-1000",
+  "batch_slot_at": "2026-05-26T10:00:00+00:00",
+  "batch_status": "APPROVED",
+  "batch_assigned_at": "2026-05-26T10:00:09.617319+00:00",
+  "account_name": "Burptech Private Limited",
+  "account_email": "soorajpandya11@gmail.com",
+  "business_name": "Burptech Private Limited",
+  "business_type": "private_limited",
+  "beneficiary_name": "Burptech Private Limited",
+  "ifsc_code": "IDFB0040313",
+  "account_number": "10257141036",
+  "dashboard_access": 0,
+  "customer_refunds": 0,
+  "razorpay_account_id": "acc_Stx6Jvw17Q1lXF",
+  "razorpay_account_status": "created",
+  "rejection_reason": null,
+  "approved_at": "2026-05-26T10:06:27.783887+00:00",
+  "rejected_at": null,
+  "created_at": "2026-05-26T09:31:02.644191+00:00",
+  "updated_at": "2026-05-26T10:06:28.388162+00:00",
+  "estimated_processing_window": "4-8 hours"
+}
+```
+
+§2.3 bank-details panel reads:
+
+- `account_number` → `"10257141036"` (mask by default → `•••• •••• 1036`, eye-toggle reveals)
+- `ifsc_code` → `"IDFB0040313"`
+- `beneficiary_name` → `"Burptech Private Limited"`
+- `business_name` / `business_type` / `account_name` / `account_email` per the table.
+
+### 10.4 `GET /api/v1/bankkyc_razorpay/status` — never submitted
+
+Status: `200 OK`
+
+```json
+{
+  "status": "NOT_SUBMITTED",
+  "estimated_processing_window": "4-8 hours",
+  "next_batch_slot_utc": "2026-05-26T11:00:00+00:00"
+}
+```
+
+FE: show the empty form.
+
+### 10.5 `GET /api/v1/bankkyc_razorpay/status` — pending batch
+
+Status: `200 OK`
+
+```json
+{
+  "id": 7,
+  "merchant_id": "3fa3adeb-fbfa-44c2-82bd-d8b818707571",
+  "status": "PENDING_BATCH_UPLOAD",
+  "batch_id": null,
+  "account_name": "Acme Foods LLP",
+  "account_email": "ops@acme.example",
+  "business_name": "Acme Foods LLP",
+  "business_type": "llp",
+  "beneficiary_name": "Acme Foods LLP",
+  "ifsc_code": "HDFC0001234",
+  "account_number": "5012003456789",
+  "razorpay_account_id": null,
+  "razorpay_account_status": null,
+  "rejection_reason": null,
+  "created_at": "2026-05-26T10:42:11.000000+00:00",
+  "updated_at": "2026-05-26T10:42:11.000000+00:00",
+  "estimated_processing_window": "4-8 hours",
+  "next_batch_slot_utc": "2026-05-26T11:00:00+00:00"
+}
+```
+
+### 10.6 `GET /api/v1/bankkyc_razorpay/admin/stats`
+
+Status: `200 OK`
+
+```json
+{
+  "submissions": { "pending": 3, "in_flight": 5, "approved_24h": 12, "rejected_24h": 1 },
+  "batches":     { "total": 48, "in_flight": 2, "generated_today": 8 },
+  "alerts": [
+    { "level": "WARN", "message": "Batch BATCH-20260526-0900 uploaded 35 min ago, no approvals yet", "age_hours": 0.58 }
+  ]
+}
+```
+
+### 10.7 `POST /admin/submissions/{id}/mark-approved` — success
+
+Status: `200 OK`
+
+```json
+{
+  "id": 1,
+  "status": "APPROVED",
+  "razorpay_account_id": "acc_Stx6Jvw17Q1lXF",
+  "razorpay_account_status": "created",
+  "approved_at": "2026-05-26T10:06:27.783887+00:00",
+  "bridge": {
+    "ok": true,
+    "linked_account_id": "acc_Stx6Jvw17Q1lXF",
+    "merchant_id": "3fa3adeb-fbfa-44c2-82bd-d8b818707571"
+  }
+}
+```
+
+### 10.8 `POST /admin/submissions/{id}/check-account` — reconcile
+
+Status: `200 OK`. Backend hit `GET /v2/accounts/{id}` on Razorpay.
+
+```json
+{
+  "submission": {
+    "id": 1,
+    "status": "APPROVED",
+    "razorpay_account_id": "acc_Stx6Jvw17Q1lXF",
+    "razorpay_account_status": "activated",
+    "updated_at": "2026-05-26T11:30:02.123456+00:00"
+  },
+  "razorpay": {
+    "id": "acc_Stx6Jvw17Q1lXF",
+    "status": "activated",
+    "type": "route",
+    "email": "soorajpandya11@gmail.com",
+    "legal_business_name": "Burptech Private Limited",
+    "business_type": "private_limited"
+  }
+}
+```
+
+Admin UI toast: *"Razorpay status: activated"*.

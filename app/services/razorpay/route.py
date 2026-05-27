@@ -468,3 +468,60 @@ async def fetch_product_configuration(
         operation="route.product.fetch",
         merchant_id=merchant_id,
     )
+
+
+# ── Balance probe (activation liveness check) ──────────────────────────
+#
+# Razorpay exposes two parallel onboarding flows for Route linked
+# accounts:
+#
+# 1. Direct V2 API (POST /v2/accounts → stakeholders → products → bank).
+#    Activation state is observable via GET /v2/accounts/{id}.status.
+#
+# 2. Dashboard-managed batch CSV upload. The accounts created via this
+#    flow are FULLY ACTIVATED by Razorpay's internal review process,
+#    but the V2 introspection endpoints are SEALED for them: GET
+#    /v2/accounts/{id}.status stays ``created`` forever, /products
+#    returns 404 "no Route matched", and PATCH/POST return
+#    ``BAD_REQUEST_ERROR: Merchant activation form has been locked for
+#    editing by admin.``
+#
+# The ONLY API-visible signal that a batch-flow account is actually
+# transfer-ready is the shape of ``GET /v1/balance`` with the
+# ``X-Razorpay-Account`` header set:
+#
+#   Activated:     {"id":..,"merchant_id":..,"type":"primary","currency":..,"balance":..,"updated_at":..}
+#   Not activated: {"id":..,"balance":0,"credits":0,"fee_credits":0,"refund_credits":0}
+#
+# We use the presence of the ``type`` field as the activation
+# discriminator (verified May 26, 2026 against 7 live accounts —
+# 5 batch-CSV activated returned full shape, 2 direct-V2 pending
+# returned the 4-field stub).
+
+
+async def fetch_account_balance(
+    account_id: str, *, merchant_id: Optional[str] = None
+) -> dict:
+    """GET /v1/balance with ``X-Razorpay-Account: <account_id>``.
+
+    Returns the raw response body. Use ``balance_indicates_activated``
+    to interpret the shape.
+    """
+    client = await get_razorpay_client()
+    return await client.get(
+        "/v1/balance",
+        operation="route.account.balance",
+        merchant_id=merchant_id,
+        account_id=account_id,
+    )
+
+
+def balance_indicates_activated(balance_body: Mapping[str, Any]) -> bool:
+    """True when the /v1/balance response shape matches an activated
+    Route linked account (has a ``type`` field — stub responses for
+    not-yet-activated accounts omit it)."""
+    if not isinstance(balance_body, Mapping):
+        return False
+    # ``type`` is the most distinctive field; ``merchant_id`` and
+    # ``updated_at`` correlate but ``type`` is the cleanest signal.
+    return bool(balance_body.get("type"))

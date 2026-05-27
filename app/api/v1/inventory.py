@@ -391,17 +391,8 @@ class TransferIn(BaseModel):
     notes: Optional[str] = None
 
 
-@router.post("/transfers")
 @retry_on_serialization_failure()
-async def create_transfer(
-    body: TransferIn,
-    user: UserContext = Depends(require_permission("inventory.update")),
-):
-    if not user.restaurant_id:
-        raise ValidationError("restaurant context required")
-    if body.from_branch_id == body.to_branch_id:
-        raise ValidationError("from_branch and to_branch must differ")
-
+async def _create_transfer_txn(body: "TransferIn", user: "UserContext"):
     async with get_serializable_transaction() as conn:
         transfer_id = await conn.fetchval(
             """
@@ -424,6 +415,20 @@ async def create_transfer(
                 transfer_id, line.ingredient_id,
                 float(line.quantity_sent), line.unit,
             )
+    return transfer_id
+
+
+@router.post("/transfers")
+async def create_transfer(
+    body: TransferIn,
+    user: UserContext = Depends(require_permission("inventory.update")),
+):
+    if not user.restaurant_id:
+        raise ValidationError("restaurant context required")
+    if body.from_branch_id == body.to_branch_id:
+        raise ValidationError("from_branch and to_branch must differ")
+
+    transfer_id = await _create_transfer_txn(body, user)
     return {"transfer_id": str(transfer_id), "status": "draft"}
 
 

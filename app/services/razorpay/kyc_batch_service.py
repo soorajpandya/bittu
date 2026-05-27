@@ -484,6 +484,14 @@ class RzpKycBatchService:
         ``rzp_route_accounts`` so the merchant's app immediately sees
         the linked account via the existing ``GET /linked-account``
         endpoint. Best-effort: logs and swallows on failure.
+
+        Also finishes the onboarding steps that the CSV batch upload
+        does NOT perform on Razorpay's side (profile PATCH, stakeholder
+        create, product request, product bank update). Without this the
+        ``rzp_route_accounts`` row is left at ``status=created`` with
+        no ``route_product_id`` forever, and the FE shows "Verification
+        in progress" indefinitely even after Razorpay activates the
+        underlying account.
         """
         try:
             # Late import to avoid circular import at module load time
@@ -512,6 +520,251 @@ class RzpKycBatchService:
                 submission_id=submission_id,
                 merchant_id=str(merchant_id),
                 account_id=account_id,
+                error=str(exc),
+            )
+            return
+
+        # Finish onboarding (best-effort, idempotent).
+        try:
+            sub = await self._get_submission(submission_id)
+            await self._finish_onboarding(
+                submission=sub, account_entity=rzp_entity,
+            )
+        except Exception as exc:
+            logger.warning(
+                "rzp_kyc.bridge.finish_onboarding_failed",
+                submission_id=submission_id,
+                merchant_id=str(merchant_id),
+                account_id=account_id,
+                error=str(exc),
+            )
+
+    async def _finish_onboarding(
+        self,
+        *,
+        submission: dict,
+        account_entity: dict,
+    ) -> None:
+        """Complete Razorpay onboarding steps the CSV batch upload omits.
+
+        Razorpay's bulk linked-account CSV only creates the bare account
+        shell (``POST /v2/accounts`` equivalent). To make the account
+        actually receive split-settlement transfers we additionally need:
+
+        1. PATCH ``/v2/accounts/{id}`` with ``profile.category`` and
+           ``profile.subcategory`` (Bittu is restaurant-only → default
+           ``food/restaurant`` when absent).
+        2. POST ``/v2/accounts/{id}/stakeholders`` with at least one
+           stakeholder (name + email + executive=true).
+        3. POST ``/v2/accounts/{id}/products`` with
+           ``product_name=route, tnc_accepted=true``.
+        4. PATCH the returned product config with the merchant's
+           settlement bank details (account_number, ifsc, beneficiary).
+
+        Each step is wrapped in try/except so partial progress is
+        preserved across retries — repeated calls are safe (Razorpay
+        treats duplicate stakeholders and duplicate product requests as
+        idempotent given the same idempotency key, and the PATCH steps
+        are naturally idempotent).
+        """
+        from app.services.razorpay.route_service import (
+            rzp_route_service, _last4, _hash_account,
+        )
+        merchant_id = str(submission["merchant_id"])
+        account_id = submission.get("razorpay_account_id")
+        if not account_id:
+            return
+
+        # ── Step 0: dashboard-activation liveness probe.
+        #
+        # Razorpay's batch-CSV onboarding path activates accounts
+        # through dashboard review, NOT through the V2 API. For that
+        # cohort GET /v2/accounts/{id}.status stays ``created`` forever
+        # and every V2 mutation (profile PATCH, stakeholder create,
+        # product request) returns ``BAD_REQUEST_ERROR: Merchant
+        # activation form has been locked for editing by admin.``
+        #
+        # The only API-visible activation signal for these accounts is
+        # the shape of GET /v1/balance with X-Razorpay-Account header
+        # set — activated accounts return a full balance object
+        # (has ``type`` field), pending stubs return a 4-field shell.
+        # When the probe confirms activation we promote the local row
+        # directly and skip the V2 steps below (they would all fail).
+        try:
+            balance = await route_api.fetch_account_balance(
+                account_id, merchant_id=merchant_id,
+            )
+            if route_api.balance_indicates_activated(balance):
+                await self._promote_dashboard_activated(
+                    submission_id=submission["id"],
+                    merchant_id=merchant_id,
+                    account_id=account_id,
+                    balance_body=balance,
+                    submission_row=submission,
+                )
+                return
+        except Exception as exc:
+            logger.warning(
+                "rzp_kyc.bridge.balance_probe_failed",
+                submission_id=submission["id"], account_id=account_id,
+                error=str(exc),
+            )
+
+        # ── Step 1: profile patch (only if Razorpay reports no category)
+        profile = account_entity.get("profile") or {}
+        if not (isinstance(profile, dict) and profile.get("category")):
+            try:
+                patched = await route_api.update_linked_account(
+                    account_id,
+                    body={
+                        "profile": {
+                            "category": "food",
+                            "subcategory": "restaurant",
+                        },
+                    },
+                    merchant_id=merchant_id,
+                )
+                await rzp_route_service.upsert_linked_account_from_razorpay(
+                    rzp_entity=patched, merchant_id_override=merchant_id,
+                )
+                account_entity = patched
+            except Exception as exc:
+                logger.warning(
+                    "rzp_kyc.bridge.profile_patch_failed",
+                    submission_id=submission["id"], account_id=account_id,
+                    error=str(exc),
+                )
+
+        # ── Step 2: stakeholder create (skip if any already exist)
+        existing_row = await rzp_route_service._existing_account(merchant_id)
+        sth_id = existing_row["stakeholder_id"] if existing_row else None
+        if not sth_id:
+            try:
+                listing = await route_api.fetch_all_stakeholders(
+                    account_id, merchant_id=merchant_id,
+                )
+                items = listing.get("items") if isinstance(listing, dict) else None
+                if items:
+                    sth_id = items[0].get("id")
+                    await rzp_route_service._persist_stakeholder(
+                        merchant_id, items[0],
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "rzp_kyc.bridge.stakeholder_list_failed",
+                    submission_id=submission["id"], account_id=account_id,
+                    error=str(exc),
+                )
+
+        if not sth_id:
+            sth_name = (
+                submission.get("beneficiary_name")
+                or submission.get("account_name")
+                or submission.get("business_name")
+            )
+            sth_email = submission.get("account_email")
+            if not sth_name or not sth_email:
+                logger.warning(
+                    "rzp_kyc.bridge.stakeholder_skipped_missing_fields",
+                    submission_id=submission["id"], account_id=account_id,
+                )
+                return
+            try:
+                sth_resp = await route_api.create_stakeholder(
+                    account_id,
+                    body={
+                        "name": sth_name,
+                        "email": sth_email,
+                        "relationship": {"executive": True},
+                    },
+                    idempotency_key=f"rzp_kyc_bridge_sth:{merchant_id}",
+                    merchant_id=merchant_id,
+                )
+                await rzp_route_service._persist_stakeholder(
+                    merchant_id, sth_resp,
+                )
+                sth_id = sth_resp.get("id")
+            except Exception as exc:
+                logger.warning(
+                    "rzp_kyc.bridge.stakeholder_create_failed",
+                    submission_id=submission["id"], account_id=account_id,
+                    error=str(exc),
+                )
+                return  # cannot request product without a stakeholder
+
+        # ── Step 3: request route product (if not already present)
+        existing_row = await rzp_route_service._existing_account(merchant_id)
+        product_id = existing_row["route_product_id"] if existing_row else None
+        if not product_id:
+            try:
+                prod_resp = await route_api.request_product_configuration(
+                    account_id,
+                    body={"product_name": "route", "tnc_accepted": True},
+                    idempotency_key=f"rzp_kyc_bridge_prod:{merchant_id}",
+                    merchant_id=merchant_id,
+                )
+                await rzp_route_service._persist_product(
+                    merchant_id, prod_resp,
+                    tnc_accepted=True, mark_requested=True,
+                )
+                product_id = prod_resp.get("id")
+            except Exception as exc:
+                logger.warning(
+                    "rzp_kyc.bridge.product_request_failed",
+                    submission_id=submission["id"], account_id=account_id,
+                    error=str(exc),
+                )
+                return
+
+        # ── Step 4: update product with settlement bank details
+        acct_number = submission.get("account_number")
+        ifsc = submission.get("ifsc_code")
+        beneficiary = (
+            submission.get("beneficiary_name")
+            or submission.get("business_name")
+            or submission.get("account_name")
+        )
+        if not (product_id and acct_number and ifsc and beneficiary):
+            logger.info(
+                "rzp_kyc.bridge.product_bank_skipped",
+                submission_id=submission["id"], account_id=account_id,
+                has_product=bool(product_id), has_account=bool(acct_number),
+                has_ifsc=bool(ifsc), has_beneficiary=bool(beneficiary),
+            )
+            return
+        try:
+            bank_resp = await route_api.update_product_configuration(
+                account_id, product_id,
+                body={
+                    "settlements": {
+                        "account_number":   acct_number,
+                        "ifsc_code":        ifsc,
+                        "beneficiary_name": beneficiary,
+                    },
+                    "tnc_accepted": True,
+                },
+                merchant_id=merchant_id,
+            )
+            await rzp_route_service._persist_product(
+                merchant_id, bank_resp, tnc_accepted=True,
+            )
+            async with get_connection() as c:
+                await c.execute(
+                    """
+                    UPDATE rzp_route_accounts
+                       SET bank_account_ifsc  = $2,
+                           bank_account_last4 = $3,
+                           bank_account_hash  = $4,
+                           updated_at         = NOW()
+                     WHERE merchant_id = $1::uuid
+                    """,
+                    merchant_id, ifsc,
+                    _last4(acct_number), _hash_account(acct_number),
+                )
+        except Exception as exc:
+            logger.warning(
+                "rzp_kyc.bridge.product_bank_update_failed",
+                submission_id=submission["id"], account_id=account_id,
                 error=str(exc),
             )
 
@@ -612,6 +865,21 @@ class RzpKycBatchService:
                 account_id=acc_id,
                 error=str(exc),
             )
+        # If the account is still incomplete (no Route product), try to
+        # finish the onboarding steps the batch upload skipped. This is
+        # how a legacy batch-onboarded account that's stuck at status=
+        # ``created`` gets healed without re-marking it approved.
+        try:
+            await self._finish_onboarding(
+                submission=_submission_row(r), account_entity=resp,
+            )
+        except Exception as exc:
+            logger.warning(
+                "rzp_kyc.check_account.finish_onboarding_failed",
+                submission_id=submission_id,
+                account_id=acc_id,
+                error=str(exc),
+            )
         return {"submission": _submission_row(r), "razorpay": resp}
 
     async def _get_submission(self, submission_id: int) -> dict:
@@ -622,6 +890,96 @@ class RzpKycBatchService:
         if not r:
             raise NotFoundError("submission not found")
         return _submission_row(r)
+
+    async def _promote_dashboard_activated(
+        self,
+        *,
+        submission_id: int,
+        merchant_id: str,
+        account_id: str,
+        balance_body: dict,
+        submission_row: dict,
+    ) -> None:
+        """Mark a batch-CSV-onboarded account as ``activated`` locally
+        based on the /v1/balance liveness probe.
+
+        Razorpay's V2 introspection is sealed for these accounts (no
+        Route product object will ever exist on their side) so we have
+        to author the local state ourselves. We also mirror the bank
+        details from the submission row into ``rzp_route_accounts``
+        so the FE bank-details panel renders correctly, and we flip
+        the submission to ``APPROVED`` if it isn't already.
+
+        ``_derive_effective_status`` returns ``activated`` when
+        ``route_product_status='activated'``, which unblocks both the
+        FE Linked-Account card and the ``assert_settlement_ready``
+        payment gate.
+        """
+        import hashlib
+        acct_number = submission_row.get("account_number") or ""
+        ifsc = submission_row.get("ifsc_code")
+        last4 = acct_number[-4:].rjust(4, "0") if acct_number else None
+        bhash = (
+            hashlib.sha256(acct_number.encode()).hexdigest()
+            if acct_number else None
+        )
+        # Synthetic "dashboard-activated" marker product. We never use
+        # this id against Razorpay's API (it would 404) — it only
+        # exists locally so ``_derive_effective_status`` and downstream
+        # gates know the merchant is settlement-ready.
+        synthetic_product_id = f"dashboard:{account_id}"
+        synthetic_product_raw = {
+            "_source": "razorpay_dashboard_batch_csv",
+            "_detected_at": datetime.now(timezone.utc).isoformat(),
+            "_via": "balance_probe",
+            "balance_snapshot": balance_body,
+            "note": (
+                "Synthetic record: Razorpay's batch-CSV onboarding "
+                "activates accounts through dashboard review and seals "
+                "the V2 product endpoints for them. This record is "
+                "authored locally from the /v1/balance liveness probe."
+            ),
+        }
+        async with get_connection() as c:
+            await c.execute(
+                """
+                UPDATE rzp_route_accounts
+                   SET status                      = 'activated',
+                       kyc_status                  = 'activated',
+                       activation_status           = COALESCE(activation_status, 'activated'),
+                       route_product_id            = COALESCE(route_product_id, $2),
+                       route_product_status        = 'activated',
+                       route_product_activated_at  = COALESCE(route_product_activated_at, NOW()),
+                       route_product_requested_at  = COALESCE(route_product_requested_at, NOW()),
+                       route_product_raw           = COALESCE(route_product_raw, $3::jsonb),
+                       tnc_accepted_at             = COALESCE(tnc_accepted_at, NOW()),
+                       bank_account_ifsc           = COALESCE(bank_account_ifsc, $4),
+                       bank_account_last4          = COALESCE(bank_account_last4, $5),
+                       bank_account_hash           = COALESCE(bank_account_hash, $6),
+                       updated_at                  = NOW()
+                 WHERE merchant_id = $1::uuid
+                """,
+                merchant_id,
+                synthetic_product_id,
+                json.dumps(synthetic_product_raw),
+                ifsc, last4, bhash,
+            )
+            await c.execute(
+                """
+                UPDATE rzp_kyc_submissions
+                   SET razorpay_account_status = 'activated',
+                       status      = CASE WHEN status IN ('APPROVED','REJECTED') THEN status ELSE 'APPROVED' END,
+                       approved_at = COALESCE(approved_at, NOW())
+                 WHERE id = $1
+                """,
+                submission_id,
+            )
+        logger.info(
+            "rzp_kyc.bridge.promoted_dashboard_activated",
+            submission_id=submission_id,
+            merchant_id=merchant_id,
+            account_id=account_id,
+        )
 
     # ── admin lists / metrics ──────────────────────────────────────────
     async def list_batches(self, *, limit: int = 50, offset: int = 0) -> list[dict]:

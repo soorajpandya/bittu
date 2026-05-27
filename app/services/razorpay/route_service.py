@@ -322,15 +322,23 @@ def _derive_effective_status(d: dict) -> str:
     facing onboarding state:
 
     - ``pending``             — no linked account on the merchant yet.
-    - ``submitted``           — account exists, no route product requested yet.
-    - ``under_review``        — product requested, awaiting Razorpay review.
+    - ``under_review``        — account exists, awaiting Razorpay activation
+      (covers both "no product requested yet" and "product requested but
+      not yet activated" — from the merchant's POV these are the same
+      "awaiting activation" state and the FE renders the Linked-Account
+      card with a blue pill for both).
     - ``needs_clarification`` — Razorpay wants more info on the product.
     - ``activated``           — product activated, settlements live.
     - ``suspended``           — account suspended on the gateway.
     - ``rejected``            — product activation rejected.
 
     The FE should branch off this and never re-derive from ``status`` /
-    ``route_product_status`` directly.
+    ``route_product_status`` directly. Per
+    ``docs/prompts/FRONTEND_PROMPT_legacy_linked_accounts.md`` §2 row 1,
+    a row with a ``linked_account_id`` MUST render the Linked-Account
+    card regardless of which non-terminal effective_status it carries —
+    the value here only drives the status pill color, never a full-
+    screen takeover.
     """
     if not d.get("linked_account_id"):
         return "pending"
@@ -344,10 +352,13 @@ def _derive_effective_status(d: dict) -> str:
         return "rejected"
     if prod_status == "needs_clarification":
         return "needs_clarification"
-    if prod_status in ("requested", "under_review", "created"):
-        return "under_review"
-    # Account exists but no product has been requested yet.
-    return "submitted"
+    # Account exists; either a product is awaiting Razorpay review or no
+    # product has been requested yet. Both are "awaiting activation" to
+    # the merchant — collapse to a single bucket so the FE never sees
+    # the legacy ``"submitted"`` value (which older Flutter builds
+    # mis-rendered as a "Verification in progress" full-screen takeover
+    # that hid the Linked-Account card).
+    return "under_review"
 
 
 def _row_to_account(r) -> dict:
