@@ -1970,7 +1970,7 @@ async def seed_chart_of_accounts(
 ):
     rid = _rid(user)
     async with get_connection() as conn:
-        await conn.execute("SELECT fn_seed_default_chart_of_accounts($1)", rid)
+        await conn.execute("SELECT fn_seed_chart_of_accounts($1::uuid)", rid)
     return {"status": "seeded"}
 
 

@@ -62,7 +62,7 @@ SYSTEM_ACCOUNTS = {
 VALID_REFERENCE_TYPES = {
     "order", "payment", "refund", "discount",
     "grn", "inventory_consumption", "inventory_adjustment",
-    "vendor_payment", "expense", "reversal",
+    "vendor_payment", "expense", "income", "reversal",
     "shift_close", "period_close",
     "settlement", "gateway_fee",
     "invoice", "invoice_void", "tax_payment",
@@ -674,6 +674,41 @@ class AccountingEngine:
                  "description": description},
                 {"account": payment_account, "debit": 0, "credit": float(amt),
                  "description": f"Paid — {description}"},
+            ],
+        )
+
+    async def record_income(
+        self,
+        *,
+        restaurant_id: str,
+        branch_id: Optional[str],
+        income_id: str,
+        amount: float,
+        revenue_account: str = "FOOD_SALES",
+        receipt_account: str = "CASH",
+        description: str = "",
+        created_by: str = "system",
+    ) -> Optional[str]:
+        """
+        Manual non-order income → DR Cash/Bank, CR Revenue Account.
+        Used for ad-hoc cash receipts (catering, vendor rebates, owner top-ups, etc.).
+        """
+        amt = _quantize(amount)
+        if amt <= 0:
+            return None
+
+        return await self.create_journal_entry(
+            reference_type="income",
+            reference_id=income_id,
+            restaurant_id=restaurant_id,
+            branch_id=branch_id,
+            description=description or f"Income {income_id}",
+            created_by=created_by,
+            lines=[
+                {"account": receipt_account, "debit": float(amt), "credit": 0,
+                 "description": f"Received — {description}"},
+                {"account": revenue_account, "debit": 0, "credit": float(amt),
+                 "description": description},
             ],
         )
 

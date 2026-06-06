@@ -1749,6 +1749,60 @@ class RzpRouteService:
             )
         return _row_to_transfer(row)
 
+    async def backfill_transfer_settlement_links(
+        self,
+        *,
+        settlement_id: str,
+        merchant_id: Optional[str] = None,
+    ) -> int:
+        """Re-mirror every transfer that Razorpay rolled into ``settlement_id``.
+
+        Razorpay attaches ``recipient_settlement_id`` to a transfer entity
+        only once it has been swept into a linked-account settlement (T+2).
+        ``transfer.processed`` fires earlier (no settlement id yet) and the
+        ``settlement.processed`` webhook carries no transfer references, so
+        without this back-link the transfer rows keep ``recipient_settlement_id
+        = NULL`` until the 12h drift-catcher poll runs — which leaves
+        dashboards (e.g. static-QR payments) stuck on "pending" even after
+        Razorpay shows "Settled".
+
+        Listing ``GET /v1/transfers?recipient_settlement_id=...`` returns the
+        transfers in this settlement, each already carrying the settlement id,
+        so re-upserting them populates the link immediately. Best-effort:
+        returns the number of transfers re-mirrored.
+        """
+        from app.services.razorpay import route as route_api
+
+        upserted = 0
+        skip = 0
+        page = 100
+        while True:
+            resp = await route_api.list_transfers(
+                count=page,
+                skip=skip,
+                recipient_settlement_id=settlement_id,
+                merchant_id=merchant_id,
+            )
+            items = (resp or {}).get("items") or []
+            if not items:
+                break
+            for entity in items:
+                try:
+                    await self.upsert_transfer_from_razorpay(
+                        rzp_entity=entity, merchant_id_override=merchant_id,
+                    )
+                    upserted += 1
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "rzp_transfer_settlement_backfill_upsert_failed",
+                        settlement_id=settlement_id,
+                        transfer_id=entity.get("id"),
+                    )
+            if len(items) < page:
+                break
+            skip += page
+        return upserted
+
     async def create_transfer(
         self,
         *,

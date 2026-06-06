@@ -532,9 +532,17 @@ class OrderService:
                 addon_total = Decimal("0")
                 if addons:
                     for addon in addons:
+                        addon_id_raw = addon.get("id") if isinstance(addon, dict) else addon
+                        try:
+                            addon_id = int(addon_id_raw)
+                        except (TypeError, ValueError):
+                            raise ValidationError(
+                                f"Invalid addon id: {addon_id_raw!r}"
+                            )
+
                         addon_row = await conn.fetchrow(
                             "SELECT price FROM item_addons WHERE id = $1 AND item_id = $2 AND is_active = true",
-                            addon.get("id"), item_id,
+                            addon_id, item_id,
                         )
                         if addon_row:
                             addon_total += Decimal(str(addon_row["price"]))

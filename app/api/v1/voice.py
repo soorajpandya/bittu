@@ -1,10 +1,13 @@
 """ElevenLabs TTS voice notification endpoints."""
-from fastapi import APIRouter, Depends
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from app.core.auth import UserContext, require_permission
-from app.services.elevenlabs_service import ElevenLabsService
+from app.services.elevenlabs_service import (
+    ElevenLabsService,
+    VOICE_FILES_DIR,
+)
 
 router = APIRouter(prefix="/voice", tags=["Restaurant Settings"])
 _svc = ElevenLabsService()
@@ -46,3 +49,27 @@ async def payment_voice_notification(
         language=body.language,
     )
     return Response(content=audio, media_type="audio/mpeg")
+
+
+# ── Public, token-gated audio playback ────────────────────────────────────
+# The ``token`` is the unguessable Razorpay payment id (``pay_xxx``). The
+# MP3 is pre-generated server-side during the captured-payment webhook so
+# the FE can play it directly via ``<audio src="...">`` without sending an
+# Authorization header (which avoids browser autoplay/CORS friction).
+@router.get(
+    "/payment-audio/{token}.mp3",
+    response_class=FileResponse,
+    include_in_schema=False,
+)
+async def payment_audio(token: str):
+    safe = "".join(c for c in (token or "") if c.isalnum() or c in ("-", "_"))[:64]
+    if not safe:
+        raise HTTPException(status_code=404, detail="not_found")
+    path = VOICE_FILES_DIR / f"{safe}.mp3"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="not_found")
+    return FileResponse(
+        path,
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "public, max-age=86400, immutable"},
+    )

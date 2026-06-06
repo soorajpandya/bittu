@@ -35,6 +35,7 @@ from app.core.events import PAYMENT_INITIATED, DomainEvent, emit_and_publish
 from app.core.logging import get_logger
 from app.services.razorpay import orders as rzp_orders_api
 from app.services.razorpay import qr_codes as rzp_qr_api
+from app.services.razorpay.qr_codes import prefer_bittu_qr_image_url
 from app.services.razorpay.client import RazorpayError
 
 logger = get_logger(__name__)
@@ -61,12 +62,18 @@ class PaymentIntent:
 
     def to_client_dict(self) -> dict[str, Any]:
         """Shape returned to POS / customer-app."""
+        razorpay_qr_image_url = self.qr_image_url
+        qr_image_url = prefer_bittu_qr_image_url(
+            upi_intent=self.qr_image_content,
+            razorpay_image_url=razorpay_qr_image_url,
+        )
         return {
             "razorpay_order_id": self.razorpay_order_id,
             "amount": self.amount_paise,
             "currency": self.currency,
             "qr_id": self.qr_id,
-            "qr_image_url": self.qr_image_url,
+            "qr_image_url": qr_image_url,
+            "razorpay_qr_image_url": razorpay_qr_image_url,
             "qr_image_content": self.qr_image_content,
             "qr_close_by": (
                 self.qr_close_by.isoformat() if self.qr_close_by else None
@@ -294,6 +301,28 @@ async def create_intent_for_order(
             qr_image_url = qr_resp.get("image_url")
             qr_image_content = qr_resp.get("image_content")
             qr_close_by_dt = close_by_dt
+
+            if not qr_image_content and qr_image_url:
+                resolved_intent, decode_source = await rzp_qr_api.resolve_upi_intent_for_qr(
+                    upi_intent=None,
+                    image_url=qr_image_url,
+                    qr_id=qr_id,
+                    merchant_id=merchant_id,
+                    fixed_amount=True,
+                    payment_amount_paise=amount_paise,
+                    payer_name="Bittu POS",
+                )
+                if resolved_intent:
+                    qr_image_content = resolved_intent
+                    qr_resp = dict(qr_resp)
+                    qr_resp["image_content"] = resolved_intent
+                    logger.info(
+                        "rzp_qr_intent_extracted_from_image",
+                        merchant_id=merchant_id,
+                        internal_order_id=internal_order_id,
+                        qr_id=qr_id,
+                        source=decode_source,
+                    )
 
             await _persist_qr_and_link(
                 merchant_id=merchant_id,

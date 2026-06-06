@@ -9,6 +9,10 @@ from app.core.auth import UserContext, require_permission
 from app.services.payment_service import PaymentService
 from app.services.elevenlabs_service import ElevenLabsService
 from app.services.activity_log_service import log_activity
+from app.services.razorpay.qr_codes import (
+    prefer_bittu_qr_image_url,
+    resolve_upi_intent_for_qr,
+)
 
 from app.core.database import get_connection, get_service_connection
 from app.core.logging import get_logger
@@ -17,6 +21,41 @@ router = APIRouter(prefix="/payments", tags=["Payments"])
 _svc = PaymentService()
 _voice_svc = ElevenLabsService()
 logger = get_logger(__name__)
+
+
+def _bittu_qr_url(*, upi_intent: Optional[str], razorpay_url: Optional[str]) -> Optional[str]:
+    return prefer_bittu_qr_image_url(
+        upi_intent=upi_intent,
+        razorpay_image_url=razorpay_url,
+    )
+
+
+async def _resolve_bittu_qr_payload(
+    *,
+    qr_image_content: Optional[str],
+    razorpay_qr_image_url: Optional[str],
+    qr_id: Optional[str],
+    merchant_id: str,
+    payment_amount_paise: Optional[int],
+) -> dict[str, Optional[str]]:
+    resolved_intent, _source = await resolve_upi_intent_for_qr(
+        upi_intent=qr_image_content,
+        image_url=razorpay_qr_image_url,
+        qr_id=qr_id,
+        merchant_id=merchant_id,
+        fixed_amount=True if payment_amount_paise is not None else None,
+        payment_amount_paise=payment_amount_paise,
+        payer_name="Bittu POS",
+    )
+    final_intent = resolved_intent or qr_image_content
+    return {
+        "qr_image_url": _bittu_qr_url(
+            upi_intent=final_intent,
+            razorpay_url=razorpay_qr_image_url,
+        ),
+        "qr_image_content": final_intent,
+        "razorpay_qr_image_url": razorpay_qr_image_url,
+    }
 
 
 # Canonical payment_method enum values (matches payment_method PG enum).
@@ -338,6 +377,15 @@ async def initiate_payment(
             payment_status_value = existing["payment_status"]
             # Terminal — return final state, frontend should stop polling.
             if payment_status_value in ("completed", "failed", "refunded"):
+                qr_image_content = existing["qr_image_content"]
+                razorpay_qr_image_url = existing["qr_image_url"]
+                qr_payload = await _resolve_bittu_qr_payload(
+                    qr_image_content=qr_image_content,
+                    razorpay_qr_image_url=razorpay_qr_image_url,
+                    qr_id=existing["qr_id"],
+                    merchant_id=str(user.restaurant_id),
+                    payment_amount_paise=int(existing["amount_paise"] or 0) or None,
+                )
                 return {
                     "payment_id": payment_id,
                     "order_id": body.order_id,
@@ -349,8 +397,9 @@ async def initiate_payment(
                     "razorpay_order_id": existing["rzp_order_id"] or existing["razorpay_order_id"],
                     "razorpay_payment_id": existing["razorpay_payment_id"],
                     "qr_id": existing["qr_id"],
-                    "qr_image_url": existing["qr_image_url"],
-                    "qr_image_content": existing["qr_image_content"],
+                    "qr_image_url": qr_payload["qr_image_url"],
+                    "qr_image_content": qr_payload["qr_image_content"],
+                    "razorpay_qr_image_url": qr_payload["razorpay_qr_image_url"],
                     "qr_close_by": existing["qr_close_by"].isoformat() if existing["qr_close_by"] else None,
                     "qr_status": existing["qr_status"],
                     "idempotent": True,
@@ -359,6 +408,15 @@ async def initiate_payment(
             # If we already have a full intent + QR cached, short-circuit
             # without re-calling Razorpay.
             if existing["rzp_order_id"] and existing["qr_image_url"]:
+                qr_image_content = existing["qr_image_content"]
+                razorpay_qr_image_url = existing["qr_image_url"]
+                qr_payload = await _resolve_bittu_qr_payload(
+                    qr_image_content=qr_image_content,
+                    razorpay_qr_image_url=razorpay_qr_image_url,
+                    qr_id=existing["qr_id"],
+                    merchant_id=str(user.restaurant_id),
+                    payment_amount_paise=int(existing["amount_paise"] or 0) or None,
+                )
                 return {
                     "payment_id": payment_id,
                     "order_id": body.order_id,
@@ -370,8 +428,9 @@ async def initiate_payment(
                     "razorpay_order_id": existing["rzp_order_id"],
                     "razorpay_payment_id": existing["razorpay_payment_id"],
                     "qr_id": existing["qr_id"],
-                    "qr_image_url": existing["qr_image_url"],
-                    "qr_image_content": existing["qr_image_content"],
+                    "qr_image_url": qr_payload["qr_image_url"],
+                    "qr_image_content": qr_payload["qr_image_content"],
+                    "razorpay_qr_image_url": qr_payload["razorpay_qr_image_url"],
                     "qr_close_by": existing["qr_close_by"].isoformat() if existing["qr_close_by"] else None,
                     "qr_status": existing["qr_status"],
                     "idempotent": True,
@@ -426,6 +485,15 @@ async def initiate_payment(
         )
 
         client = intent.to_client_dict()
+        qr_image_content = client["qr_image_content"]
+        razorpay_qr_image_url = client.get("razorpay_qr_image_url") or client["qr_image_url"]
+        qr_payload = await _resolve_bittu_qr_payload(
+            qr_image_content=qr_image_content,
+            razorpay_qr_image_url=razorpay_qr_image_url,
+            qr_id=client["qr_id"],
+            merchant_id=str(user.restaurant_id),
+            payment_amount_paise=int(client["amount"] or 0) or None,
+        )
         return {
             "payment_id": payment_id,
             "order_id": body.order_id,
@@ -436,8 +504,9 @@ async def initiate_payment(
             "currency": client["currency"],
             "razorpay_order_id": client["razorpay_order_id"],
             "qr_id": client["qr_id"],
-            "qr_image_url": client["qr_image_url"],
-            "qr_image_content": client["qr_image_content"],
+            "qr_image_url": qr_payload["qr_image_url"],
+            "qr_image_content": qr_payload["qr_image_content"],
+            "razorpay_qr_image_url": qr_payload["razorpay_qr_image_url"],
             "qr_close_by": client["qr_close_by"],
             "idempotent": existing is not None,
         }

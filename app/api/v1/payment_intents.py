@@ -21,6 +21,10 @@ from pydantic import BaseModel
 from app.core.auth import UserContext, require_permission
 from app.core.database import get_service_connection
 from app.core.logging import get_logger
+from app.services.razorpay.qr_codes import (
+    prefer_bittu_qr_image_url,
+    resolve_upi_intent_for_qr,
+)
 
 router = APIRouter(prefix="/payment-intents", tags=["Payments"])
 logger = get_logger(__name__)
@@ -53,6 +57,7 @@ class IntentOut(BaseModel):
     status: str
     qr_id: Optional[str] = None
     qr_image_url: Optional[str] = None
+    razorpay_qr_image_url: Optional[str] = None
     qr_image_content: Optional[str] = None
     qr_status: Optional[str] = None
     qr_close_by: Optional[str] = None
@@ -76,6 +81,7 @@ class QrOut(BaseModel):
     status: str
     amount_paise: Optional[int] = None
     image_url: Optional[str] = None
+    razorpay_image_url: Optional[str] = None
     image_content: Optional[str] = None
     close_by: Optional[str] = None
     closed_at: Optional[str] = None
@@ -88,6 +94,41 @@ class QrOut(BaseModel):
 
 _TERMINAL_PAYMENT_STATUSES = {"captured", "failed", "refunded", "cancelled"}
 _PENDING_PAYMENT_STATUSES = {None, "initiated", "pending", "created", "authorized"}
+
+
+def _bittu_qr_url(*, upi_intent: Optional[str], razorpay_url: Optional[str]) -> Optional[str]:
+    return prefer_bittu_qr_image_url(
+        upi_intent=upi_intent,
+        razorpay_image_url=razorpay_url,
+    )
+
+
+async def _resolve_bittu_qr_payload(
+    *,
+    qr_image_content: Optional[str],
+    razorpay_qr_image_url: Optional[str],
+    qr_id: Optional[str],
+    merchant_id: str,
+    payment_amount_paise: Optional[int],
+) -> dict[str, Optional[str]]:
+    resolved_intent, _source = await resolve_upi_intent_for_qr(
+        upi_intent=qr_image_content,
+        image_url=razorpay_qr_image_url,
+        qr_id=qr_id,
+        merchant_id=merchant_id,
+        fixed_amount=True if payment_amount_paise is not None else None,
+        payment_amount_paise=payment_amount_paise,
+        payer_name="Bittu POS",
+    )
+    final_intent = resolved_intent or qr_image_content
+    return {
+        "qr_image_url": _bittu_qr_url(
+            upi_intent=final_intent,
+            razorpay_url=razorpay_qr_image_url,
+        ),
+        "qr_image_content": final_intent,
+        "razorpay_qr_image_url": razorpay_qr_image_url,
+    }
 
 
 async def _read_intent_row(conn, merchant_id, order_id):
@@ -346,6 +387,16 @@ async def get_intent(
                         detail="payment intent not found for this order",
                     )
 
+    razorpay_qr_image_url = row["image_url"]
+    qr_image_content = row["image_content"]
+    qr_payload = await _resolve_bittu_qr_payload(
+        qr_image_content=qr_image_content,
+        razorpay_qr_image_url=razorpay_qr_image_url,
+        qr_id=row["qr_id"],
+        merchant_id=str(user.restaurant_id),
+        payment_amount_paise=int(row["amount_paise"] or 0) or None,
+    )
+
     out = IntentOut(
         internal_order_id=row["internal_order_id"],
         razorpay_order_id=row["razorpay_order_id"],
@@ -355,8 +406,9 @@ async def get_intent(
         currency=row["currency"],
         status=row["status"],
         qr_id=row["qr_id"],
-        qr_image_url=row["image_url"],
-        qr_image_content=row["image_content"],
+        qr_image_url=qr_payload["qr_image_url"],
+        razorpay_qr_image_url=qr_payload["razorpay_qr_image_url"],
+        qr_image_content=qr_payload["qr_image_content"],
         qr_status=row["qr_status"],
         qr_close_by=row["close_by"].isoformat() if row["close_by"] else None,
         payment_status=row["payment_status"],
@@ -405,12 +457,23 @@ async def get_intent_qr(
             detail="no QR registered for this order",
         )
 
+    razorpay_image_url = row["image_url"]
+    image_content = row["image_content"]
+    qr_payload = await _resolve_bittu_qr_payload(
+        qr_image_content=image_content,
+        razorpay_qr_image_url=razorpay_image_url,
+        qr_id=row["qr_id"],
+        merchant_id=str(user.restaurant_id),
+        payment_amount_paise=(int(row["amount_paise"]) if row["amount_paise"] is not None else None),
+    )
+
     return QrOut(
         qr_id=row["qr_id"],
         status=row["status"],
         amount_paise=int(row["amount_paise"]) if row["amount_paise"] is not None else None,
-        image_url=row["image_url"],
-        image_content=row["image_content"],
+        image_url=qr_payload["qr_image_url"],
+        razorpay_image_url=qr_payload["razorpay_qr_image_url"],
+        image_content=qr_payload["qr_image_content"],
         close_by=row["close_by"].isoformat() if row["close_by"] else None,
         closed_at=row["closed_at"].isoformat() if row["closed_at"] else None,
         payments_amount_received_paise=int(row["payments_amount_received_paise"] or 0),

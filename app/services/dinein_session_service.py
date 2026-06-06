@@ -21,6 +21,7 @@ from app.core.redis import DistributedLock, LockError, get_redis, cache_delete
 from app.core.events import (
     DomainEvent, emit_and_publish,
     TABLE_ORDER_PLACED, TABLE_CART_UPDATED, TABLE_CALL_WAITER,
+    TABLE_STATUS_CHANGED,
     KITCHEN_ORDER_CREATED,
 )
 from app.core.exceptions import (
@@ -207,6 +208,24 @@ class DineInSessionService:
             restaurant_id=actual_restaurant_id,
         ))
 
+        # Realtime: table is now occupied — push to all listeners
+        if is_new:
+            try:
+                await emit_and_publish(DomainEvent(
+                    event_type=TABLE_STATUS_CHANGED,
+                    payload={
+                        "table_id": table_id,
+                        "table_number": table["table_number"],
+                        "session_id": session_id,
+                        "status": "running",
+                        "is_occupied": True,
+                        "action": "occupied",
+                    },
+                    restaurant_id=actual_restaurant_id,
+                ))
+            except Exception:
+                logger.exception("emit_table_status_open_failed", session_id=session_id)
+
         return {
             "session_id": session_id,
             "session_token": session_token,
@@ -309,9 +328,33 @@ class DineInSessionService:
 
             await emit_and_publish(DomainEvent(
                 event_type=SESSION_CLOSED,
-                payload={"session_id": sid, "reason": reason},
+                payload={
+                    "session_id": sid,
+                    "table_id": str(session["table_id"]) if session.get("table_id") else None,
+                    "reason": reason,
+                },
                 restaurant_id=str(session["restaurant_id"]) if session.get("restaurant_id") else None,
+                branch_id=str(session["branch_id"]) if session.get("branch_id") else None,
             ))
+
+            # Realtime: table is now free — push to all listeners
+            if remaining == 0 and session.get("table_id"):
+                try:
+                    await emit_and_publish(DomainEvent(
+                        event_type=TABLE_STATUS_CHANGED,
+                        payload={
+                            "table_id": str(session["table_id"]),
+                            "session_id": sid,
+                            "status": "available",
+                            "is_occupied": False,
+                            "action": "vacated",
+                            "reason": reason,
+                        },
+                        restaurant_id=str(session["restaurant_id"]) if session.get("restaurant_id") else None,
+                        branch_id=str(session["branch_id"]) if session.get("branch_id") else None,
+                    ))
+                except Exception:
+                    logger.exception("emit_table_status_close_failed", session_id=sid)
 
             return {"status": new_status, "session_id": sid}
 
@@ -1842,16 +1885,21 @@ class DineInSessionService:
             "status": "recorded",
         }
 
-    async def paid_and_vacate(self, session_id: str, closed_by: Optional[str] = None) -> dict:
-        """Close session only when remaining amount is zero, then free the table."""
+    async def paid_and_vacate(self, session_id: str, closed_by: Optional[str] = None, force: bool = False) -> dict:
+        """Close session only when remaining amount is zero, then free the table.
+
+        When ``force=True`` the unpaid-balance guard is skipped so an operator
+        can clear a stuck table that won't reconcile (used by the FE's
+        "Force vacate" confirmation).
+        """
         bill = await self.get_session_bill(session_id)
         remaining = Decimal(str(bill["remaining_amount"]))
-        if remaining > 0:
+        if remaining > 0 and not force:
             raise ValidationError(f"Cannot close session with unpaid amount: {remaining}")
 
         async with get_transaction() as conn:
             session = await conn.fetchrow(
-                "SELECT id, table_id, restaurant_id, user_id, status FROM dine_in_sessions WHERE id = $1 FOR UPDATE",
+                "SELECT id, table_id, restaurant_id, branch_id, user_id, status FROM dine_in_sessions WHERE id = $1 FOR UPDATE",
                 session_id,
             )
             if not session:
@@ -1862,6 +1910,23 @@ class DineInSessionService:
                     await cache_delete(f"tables_list:{session['user_id']}")
                 except Exception:
                     pass
+                # Still emit TABLE_STATUS_CHANGED so any stale FE refreshes
+                if session.get("table_id"):
+                    try:
+                        await emit_and_publish(DomainEvent(
+                            event_type=TABLE_STATUS_CHANGED,
+                            payload={
+                                "table_id": str(session["table_id"]),
+                                "session_id": session_id,
+                                "status": "available",
+                                "is_occupied": False,
+                                "action": "already_vacated",
+                            },
+                            restaurant_id=str(session["restaurant_id"]) if session.get("restaurant_id") else None,
+                            branch_id=str(session["branch_id"]) if session.get("branch_id") else None,
+                        ))
+                    except Exception:
+                        logger.exception("emit_table_status_idempotent_failed", session_id=session_id)
                 return {
                     "status": session["status"],
                     "session_id": session_id,
@@ -1917,7 +1982,27 @@ class DineInSessionService:
                 "remaining_amount": 0,
             },
             restaurant_id=str(session["restaurant_id"]) if session.get("restaurant_id") else None,
+            branch_id=str(session["branch_id"]) if session.get("branch_id") else None,
         ))
+
+        # Realtime: table is now available — explicit table status event so
+        # FE clients that only listen to `table.status_changed` refresh too.
+        try:
+            await emit_and_publish(DomainEvent(
+                event_type=TABLE_STATUS_CHANGED,
+                payload={
+                    "table_id": str(session["table_id"]),
+                    "session_id": session_id,
+                    "status": "available",
+                    "is_occupied": False,
+                    "action": "paid_and_vacated",
+                    "closed_by": closed_by,
+                },
+                restaurant_id=str(session["restaurant_id"]) if session.get("restaurant_id") else None,
+                branch_id=str(session["branch_id"]) if session.get("branch_id") else None,
+            ))
+        except Exception:
+            logger.exception("emit_table_status_paid_vacate_failed", session_id=session_id)
 
         return {
             "status": "closed",

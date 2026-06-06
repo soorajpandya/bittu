@@ -26,6 +26,15 @@ class ExpenseCreate(BaseModel):
     reference_id: Optional[str] = None
 
 
+class IncomeCreate(BaseModel):
+    amount: float
+    category: str = "other_income"
+    description: str = ""
+    payment_method: str = "cash"  # cash | upi | card | bank
+    reference_type: Optional[str] = None
+    reference_id: Optional[str] = None
+
+
 @router.get("/cash-flow")
 async def cash_flow(
     start_date: Optional[date] = Query(None),
@@ -104,6 +113,18 @@ async def record_expense(
 
     import uuid as _uuid
 
+    # Auto-seed Chart of Accounts on first use so a fresh restaurant
+    # never gets a 400 from `_resolve_account` because CASH / COGS_FOOD
+    # weren't seeded by onboarding.
+    async with get_connection() as conn:
+        has_coa = await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM chart_of_accounts "
+            "WHERE restaurant_id = $1::uuid AND is_active = true)",
+            restaurant_id,
+        )
+        if not has_coa:
+            await conn.execute("SELECT fn_seed_chart_of_accounts($1::uuid)", restaurant_id)
+
     expense_id = body.reference_id or str(_uuid.uuid4())
     try:
         journal_id = await accounting_engine.record_expense(
@@ -130,6 +151,284 @@ async def record_expense(
     )
 
     return {**legacy_result, "journal_entry_id": journal_id}
+
+
+# Map of payment method -> CASH/UPI/CARD account code used by the engine.
+_INCOME_RECEIPT_ACCOUNT = {
+    "cash": "CASH",
+    "upi":  "BANK",
+    "bank": "BANK",
+    "card": "CARD",
+}
+
+
+@router.post("/income", status_code=201)
+async def record_income(
+    body: IncomeCreate,
+    user: UserContext = Depends(require_permission("accounting.write")),
+):
+    """
+    Manually record non-order income (e.g. catering payment, vendor rebate,
+    owner top-up). Mirrors `record_expense`: writes a double-entry journal
+    (DR Cash/UPI/Card, CR FOOD_SALES) **and** a legacy `accounting_entries`
+    row with `entry_type='revenue'` so it shows up on Daybook + cashflow.
+    """
+    uid = user.owner_id if user.is_branch_user else user.user_id
+    restaurant_id = user.restaurant_id
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="restaurant_id required")
+
+    import uuid as _uuid
+
+    # Auto-seed Chart of Accounts on first use (same pattern as /expenses).
+    async with get_connection() as conn:
+        has_coa = await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM chart_of_accounts "
+            "WHERE restaurant_id = $1::uuid AND is_active = true)",
+            restaurant_id,
+        )
+        if not has_coa:
+            await conn.execute("SELECT fn_seed_chart_of_accounts($1::uuid)", restaurant_id)
+
+    receipt_account = _INCOME_RECEIPT_ACCOUNT.get(
+        (body.payment_method or "cash").lower(), "CASH"
+    )
+    income_id = body.reference_id or str(_uuid.uuid4())
+    try:
+        journal_id = await accounting_engine.record_income(
+            restaurant_id=restaurant_id,
+            branch_id=user.branch_id,
+            income_id=income_id,
+            amount=body.amount,
+            receipt_account=receipt_account,
+            description=body.description or body.category,
+            created_by=uid,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # Legacy row for the Daybook drill-down.
+    async with get_connection() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO accounting_entries
+                (user_id, restaurant_id, branch_id, entry_type, amount,
+                 payment_method, category, reference_type, reference_id, description)
+            VALUES ($1, $2, $3, 'revenue', $4, $5, $6, $7, $8, $9)
+            RETURNING *
+            """,
+            uid, restaurant_id, user.branch_id, float(body.amount),
+            body.payment_method or "cash", body.category,
+            body.reference_type or "income", body.reference_id,
+            body.description or body.category,
+        )
+    return {**dict(row), "journal_entry_id": journal_id}
+
+
+# ── Edit / Delete ──────────────────────────────────────────────────────────────
+#
+# Posted journal entries are immutable (DB-enforced) — so "edit" = post a
+# reversing journal + mark the legacy bridge row as voided, then create a new
+# entry with the new values. "Delete" = same void+reverse, no recreate.
+
+class ExpenseUpdate(BaseModel):
+    amount: float
+    category: str
+    description: str = ""
+    reference_type: Optional[str] = None
+    reference_id: Optional[str] = None
+
+
+class IncomeUpdate(BaseModel):
+    amount: float
+    category: str = "other_income"
+    description: str = ""
+    payment_method: str = "cash"
+    reference_type: Optional[str] = None
+    reference_id: Optional[str] = None
+
+
+class DeleteRequest(BaseModel):
+    reason: str = ""
+
+
+async def _load_owned_entry(conn, entry_id: str, owner_user_id: str) -> dict:
+    """Fetch a non-voided accounting_entries row, asserting ownership."""
+    try:
+        row = await conn.fetchrow(
+            "SELECT * FROM accounting_entries WHERE id = $1::uuid FOR UPDATE",
+            entry_id,
+        )
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid entry_id")
+    if not row:
+        raise HTTPException(status_code=404, detail="entry not found")
+    if row["user_id"] != owner_user_id:
+        raise HTTPException(status_code=403, detail="not your entry")
+    if row["voided_at"] is not None:
+        raise HTTPException(status_code=409, detail="entry already voided")
+    return dict(row)
+
+
+async def _void_entry(conn, entry: dict, *, voided_by: str, reason: str) -> Optional[str]:
+    """Post a reversing journal (if entry has one) and mark the bridge row voided."""
+    reversal_id: Optional[str] = None
+    journal_id = entry.get("journal_entry_id")
+    if journal_id:
+        try:
+            reversal_id = await accounting_engine.reverse_entry(
+                journal_entry_id=str(journal_id),
+                reason=reason or "manual edit/delete",
+                created_by=voided_by,
+            )
+        except ValidationError as exc:
+            # already-reversed or period-locked → surface as 409
+            raise HTTPException(status_code=409, detail=str(exc))
+    await conn.execute(
+        """
+        UPDATE accounting_entries
+           SET voided_at = NOW(),
+               voided_by = $2,
+               void_reason = $3,
+               reversal_journal_id = $4::uuid
+         WHERE id = $1::uuid
+        """,
+        entry["id"], voided_by, reason or None, reversal_id,
+    )
+    return reversal_id
+
+
+@router.delete("/entries/{entry_id}", status_code=200)
+async def delete_entry(
+    entry_id: str,
+    body: Optional[DeleteRequest] = None,
+    user: UserContext = Depends(require_permission("accounting.write")),
+):
+    """Soft-delete an accounting entry by posting a reversing journal."""
+    uid = user.owner_id if user.is_branch_user else user.user_id
+    reason = (body.reason if body else "") or ""
+    async with get_connection() as conn:
+        async with conn.transaction():
+            entry = await _load_owned_entry(conn, entry_id, uid)
+            reversal_id = await _void_entry(
+                conn, entry, voided_by=uid, reason=reason,
+            )
+    return {
+        "id": str(entry["id"]),
+        "voided": True,
+        "reversal_journal_id": reversal_id,
+    }
+
+
+@router.put("/expenses/{entry_id}", status_code=200)
+async def update_expense(
+    entry_id: str,
+    body: ExpenseUpdate,
+    user: UserContext = Depends(require_permission("accounting.write")),
+):
+    """Edit a manual expense: void + reverse the original, then create a new entry."""
+    uid = user.owner_id if user.is_branch_user else user.user_id
+    restaurant_id = user.restaurant_id
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="restaurant_id required")
+    import uuid as _uuid
+
+    async with get_connection() as conn:
+        async with conn.transaction():
+            old = await _load_owned_entry(conn, entry_id, uid)
+            if old["entry_type"] != "expense":
+                raise HTTPException(status_code=400, detail="entry is not an expense")
+            await _void_entry(
+                conn, old, voided_by=uid, reason=f"edit → new amount {body.amount}",
+            )
+
+    # Create the replacement entry (engine + legacy row), same code path as POST.
+    new_expense_id = body.reference_id or str(_uuid.uuid4())
+    try:
+        journal_id = await accounting_engine.record_expense(
+            restaurant_id=restaurant_id,
+            branch_id=user.branch_id,
+            expense_id=new_expense_id,
+            amount=body.amount,
+            description=body.description or body.category,
+            created_by=uid,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    legacy_result = await _svc.record_expense(
+        user_id=uid,
+        restaurant_id=restaurant_id,
+        branch_id=user.branch_id,
+        amount=body.amount,
+        category=body.category,
+        description=body.description,
+        reference_type=body.reference_type,
+        reference_id=body.reference_id,
+    )
+    return {
+        **legacy_result,
+        "journal_entry_id": journal_id,
+        "replaced_entry_id": str(old["id"]),
+    }
+
+
+@router.put("/income/{entry_id}", status_code=200)
+async def update_income(
+    entry_id: str,
+    body: IncomeUpdate,
+    user: UserContext = Depends(require_permission("accounting.write")),
+):
+    """Edit a manual income entry: void + reverse the original, then create a new entry."""
+    uid = user.owner_id if user.is_branch_user else user.user_id
+    restaurant_id = user.restaurant_id
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="restaurant_id required")
+    import uuid as _uuid
+
+    async with get_connection() as conn:
+        async with conn.transaction():
+            old = await _load_owned_entry(conn, entry_id, uid)
+            if old["entry_type"] != "revenue":
+                raise HTTPException(status_code=400, detail="entry is not income")
+            await _void_entry(
+                conn, old, voided_by=uid, reason=f"edit → new amount {body.amount}",
+            )
+
+    receipt_account = _INCOME_RECEIPT_ACCOUNT.get(
+        (body.payment_method or "cash").lower(), "CASH"
+    )
+    new_income_id = body.reference_id or str(_uuid.uuid4())
+    try:
+        journal_id = await accounting_engine.record_income(
+            restaurant_id=restaurant_id,
+            branch_id=user.branch_id,
+            income_id=new_income_id,
+            amount=body.amount,
+            receipt_account=receipt_account,
+            description=body.description or body.category,
+            created_by=uid,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    async with get_connection() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO accounting_entries
+                (user_id, restaurant_id, branch_id, entry_type, amount,
+                 payment_method, category, reference_type, reference_id, description)
+            VALUES ($1, $2, $3, 'revenue', $4, $5, $6, $7, $8, $9)
+            RETURNING *
+            """,
+            uid, restaurant_id, user.branch_id, float(body.amount),
+            body.payment_method or "cash", body.category,
+            body.reference_type or "income", body.reference_id,
+            body.description or body.category,
+        )
+    return {
+        **dict(row),
+        "journal_entry_id": journal_id,
+        "replaced_entry_id": str(old["id"]),
+    }
 
 
 # ── Chart of Accounts ──────────────────────────────────────────────────────────

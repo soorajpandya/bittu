@@ -58,6 +58,22 @@ logger = get_logger(__name__)
 
 
 # ════════════════════════════════════════════════════════════════════════
+# Static QR Payment Module — additive side-effect hook
+# ════════════════════════════════════════════════════════════════════════
+# Mirrors any `payment.*` event whose payload is tied to a multi-use
+# Static QR (see ``app.services.razorpay.static_qr_service``). This is a
+# fire-and-forget call that runs AFTER the existing order/route handling
+# is complete and never raises — the order-driven flow is unaffected
+# when the payment is not a static-QR payment.
+async def _static_qr_webhook_sideeffect(event_name: str, envelope: dict) -> None:
+    try:
+        from app.services.razorpay import static_qr_service as _static_qr
+        await _static_qr.handle_webhook_payment_event(envelope, event_name=event_name)
+    except Exception:  # noqa: BLE001
+        logger.exception("static_qr_webhook_sideeffect_failed", event_name=event_name)
+
+
+# ════════════════════════════════════════════════════════════════════════
 # Public entry point
 # ════════════════════════════════════════════════════════════════════════
 
@@ -449,6 +465,7 @@ async def _handle_payment_authorized(envelope: dict, signature: Optional[str]) -
         new_status="initiated",
         expected_current=("pending",),
     )
+    await _static_qr_webhook_sideeffect(_events.EVENT_PAYMENT_AUTHORIZED, envelope)
     return {"rzp_payment_uuid": payment_uuid}
 
 
@@ -545,6 +562,24 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
             logger.exception("rzp_webhook_escrow_hold_failed",
                              payment_id=payment_row["id"])
 
+        # Pre-generate the ElevenLabs payment-confirmation MP3 so the FE can
+        # play it via <audio src="voice_url"> with no auth header / extra
+        # fetch. Best-effort: empty url on any failure.
+        voice_url = ""
+        try:
+            from app.services.elevenlabs_service import ElevenLabsService
+            voice_url = await ElevenLabsService().ensure_payment_voice_file(
+                token=rzp_payment_id,
+                amount=float(amount_decimal),
+                language="en",
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "rzp_voice_prepare_failed",
+                razorpay_payment_id=rzp_payment_id,
+            )
+            voice_url = ""
+
         try:
             await emit_and_publish(DomainEvent(
                 event_type=PAYMENT_COMPLETED,
@@ -557,6 +592,12 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
                     "amount":               float(amount_decimal),
                     "method":               payment_row.get("method"),
                     "source":               "webhook",
+                    # ElevenLabs voice confirmation — FE plays voice_url
+                    # directly via <audio src=...>; no auth required.
+                    "should_play_voice":    bool(voice_url),
+                    "voice_url":            voice_url or None,
+                    "voice_amount_rupees":  float(amount_decimal),
+                    "voice_language":       "en",
                 },
             ))
         except Exception:  # noqa: BLE001
@@ -582,6 +623,12 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
                     "merchant_id":         merchant_id,
                     "branch_id":           branch_id,
                     "source":              "webhook",
+                    # ElevenLabs voice confirmation — FE plays voice_url
+                    # directly via <audio src=...>; no auth required.
+                    "should_play_voice":   bool(voice_url),
+                    "voice_url":           voice_url or None,
+                    "voice_amount_rupees": float(amount_decimal),
+                    "voice_language":      "en",
                 },
                 branch_id=branch_id,
                 restaurant_id=merchant_id,
@@ -684,6 +731,7 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
             razorpay_payment_id=rzp_payment_id,
         )
 
+    await _static_qr_webhook_sideeffect(_events.EVENT_PAYMENT_CAPTURED, envelope)
     return {"rzp_payment_uuid": payment_uuid}
 
 
@@ -722,6 +770,7 @@ async def _handle_payment_failed(envelope: dict, signature: Optional[str]) -> di
         except Exception:  # noqa: BLE001
             logger.exception("rzp_webhook_event_emit_failed",
                              payment_id=payment_row["id"])
+    await _static_qr_webhook_sideeffect(_events.EVENT_PAYMENT_FAILED, envelope)
     return {"rzp_payment_uuid": payment_uuid}
 
 
@@ -1276,13 +1325,29 @@ async def _handle_settlement_processed(envelope: dict, signature: Optional[str])
     # Phase 6: rzp_settlement_service handles merchant resolution via
     # rzp_route_accounts.linked_account_id and the UPSERT (with platform-UUID
     # backfill behaviour).
+    merchant_id: Optional[str] = None
     try:
         from app.services.razorpay.settlement_service import rzp_settlement_service
-        await rzp_settlement_service.upsert_from_razorpay(
+        result = await rzp_settlement_service.upsert_from_razorpay(
             rzp_entity=entity, status_override="processed",
         )
+        merchant_id = (result or {}).get("merchant_id")
     except Exception:  # noqa: BLE001
         logger.exception("rzp_settlement_upsert_failed", settlement_id=settlement_id)
+
+    # Back-link this settlement onto its Route transfers so dashboards
+    # (e.g. static-QR payments) flip to "settled" immediately instead of
+    # waiting up to 12h for the drift-catcher poll. Best-effort.
+    try:
+        from app.services.razorpay.route_service import rzp_route_service
+        await rzp_route_service.backfill_transfer_settlement_links(
+            settlement_id=settlement_id, merchant_id=merchant_id,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "rzp_settlement_transfer_backfill_failed",
+            settlement_id=settlement_id,
+        )
     return {"settlement_id": settlement_id}
 
 

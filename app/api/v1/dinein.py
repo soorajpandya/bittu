@@ -332,11 +332,24 @@ async def record_session_payment(
     )
 
 
+class _PaidVacateBody(BaseModel):
+    force: Optional[bool] = False
+
+
 @router.post("/sessions/{session_id}/paid-vacate")
 async def paid_vacate_session(
     session_id: str,
+    body: _PaidVacateBody = _PaidVacateBody(),
     user: UserContext = Depends(require_permission("dinein.manage")),
 ):
-    """Close session and free table after full payment validation."""
+    """Close session and free table after full payment validation.
+
+    Accepts an optional ``{"force": true}`` body to bypass the unpaid-balance
+    guard (used by the FE's "Force vacate" confirm).
+    """
     actor = user.owner_id if user.is_branch_user else user.user_id
-    return await _svc.paid_and_vacate(session_id=session_id, closed_by=actor)
+    return await _svc.paid_and_vacate(
+        session_id=session_id,
+        closed_by=actor,
+        force=bool(getattr(body, "force", False)),
+    )

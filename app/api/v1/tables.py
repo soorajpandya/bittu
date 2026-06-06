@@ -9,6 +9,7 @@ from app.core.auth import UserContext, require_permission, get_current_user_opti
 from app.core.database import get_connection
 from app.core.logging import get_logger
 from app.core.redis import cache_get, cache_set, cache_delete
+from app.core.events import DomainEvent, emit_and_publish, TABLE_STATUS_CHANGED
 from app.services.activity_log_service import log_activity
 from app.services.table_service import TableSessionService
 from app.services.dinein_session_service import DineInSessionService
@@ -136,11 +137,29 @@ async def list_tables(
             pass
 
         async with get_connection() as conn:
+            # Left-join the active dine_in_session so the frontend has a
+            # session_id to call /sessions/{id}/paid-vacate with. Without
+            # this the FE only sees `current_order_id` and ends up POSTing
+            # to /sessions//paid-vacate (double slash → 404).
             rows = await conn.fetch(
-                "SELECT id, user_id, restaurant_id, table_number, capacity, status,"
-                " is_active, is_occupied, occupied_since, session_token,"
-                " current_order_id, created_at, updated_at"
-                " FROM restaurant_tables WHERE user_id = $1 ORDER BY table_number ASC",
+                """
+                SELECT t.id, t.user_id, t.restaurant_id, t.table_number, t.capacity,
+                       t.status, t.is_active, t.is_occupied, t.occupied_since,
+                       t.session_token, t.current_order_id, t.created_at, t.updated_at,
+                       s.id AS active_session_id
+                FROM restaurant_tables t
+                LEFT JOIN LATERAL (
+                    SELECT id
+                    FROM dine_in_sessions
+                    WHERE table_id = t.id
+                      AND status = 'active'
+                      AND ended_at IS NULL
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ) s ON TRUE
+                WHERE t.user_id = $1
+                ORDER BY t.table_number ASC
+                """,
                 owner_id,
             )
         # Normalize legacy status values for frontend ('blank'→'available', 'running'→'occupied').
@@ -153,6 +172,11 @@ async def list_tables(
             # Belt-and-braces: if is_occupied true, force 'occupied'.
             if d.get("is_occupied"):
                 d["status"] = "occupied"
+            # Expose the active session id under both keys so older FE
+            # builds that read `session_id` keep working alongside new ones
+            # that read `active_session_id`.
+            if d.get("active_session_id"):
+                d["session_id"] = d["active_session_id"]
             result.append(d)
         try:
             await cache_set(cache_key, orjson.dumps(result, default=str).decode(), ttl=_TABLES_LIST_CACHE_TTL)
@@ -173,6 +197,26 @@ async def create_table(
     try:
         owner_id = user.owner_id if user.is_branch_user else user.user_id
         async with get_connection() as conn:
+            # Reject duplicate table_number for the same owner among active rows.
+            # (The schema has only a non-unique index, so we enforce uniqueness
+            # at the app layer until a partial unique index migration lands.)
+            dup = await conn.fetchval(
+                """
+                SELECT 1 FROM restaurant_tables
+                WHERE user_id = $1
+                  AND LOWER(table_number) = LOWER($2)
+                  AND is_active = true
+                LIMIT 1
+                """,
+                owner_id,
+                body.table_number,
+            )
+            if dup:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    status_code=409,
+                    content={"detail": f"A table with number '{body.table_number}' already exists."},
+                )
             row = await conn.fetchrow(
                 """
                 INSERT INTO restaurant_tables (user_id, restaurant_id, table_number, capacity, status, is_active)
@@ -199,6 +243,22 @@ async def create_table(
                 await cache_delete(f"tables_list:{owner_id}")
             except Exception:
                 pass
+            try:
+                await emit_and_publish(DomainEvent(
+                    event_type=TABLE_STATUS_CHANGED,
+                    payload={
+                        "table_id": str(result.get("id")) if result.get("id") else None,
+                        "table_number": result.get("table_number"),
+                        "status": result.get("status"),
+                        "is_occupied": bool(result.get("is_occupied")),
+                        "action": "created",
+                    },
+                    user_id=user.user_id,
+                    restaurant_id=user.restaurant_id,
+                    branch_id=user.branch_id,
+                ))
+            except Exception:
+                logger.exception("emit_table_status_create_failed")
             return result
     except Exception as e:
         logger.warning("create_table_failed", error=str(e), user_id=user.user_id)
@@ -214,12 +274,13 @@ class UpdateTableIn(BaseModel):
 
 
 @router.patch("/{table_id}")
+@router.put("/{table_id}")
 async def update_table(
     table_id: str,
     body: UpdateTableIn,
     user: UserContext = Depends(require_permission("table.manage")),
 ):
-    """Update a restaurant table."""
+    """Update a restaurant table. Accepts both PATCH and PUT (FE compat)."""
     try:
         owner_id = user.owner_id if user.is_branch_user else user.user_id
         updates = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -231,6 +292,27 @@ async def update_table(
         values = list(updates.values())
 
         async with get_connection() as conn:
+            # Block renames that would collide with another active table.
+            if "table_number" in updates:
+                dup = await conn.fetchval(
+                    """
+                    SELECT 1 FROM restaurant_tables
+                    WHERE user_id = $1
+                      AND id <> $2
+                      AND LOWER(table_number) = LOWER($3)
+                      AND is_active = true
+                    LIMIT 1
+                    """,
+                    owner_id,
+                    table_id,
+                    updates["table_number"],
+                )
+                if dup:
+                    from fastapi.responses import JSONResponse
+                    return JSONResponse(
+                        status_code=409,
+                        content={"detail": f"A table with number '{updates['table_number']}' already exists."},
+                    )
             row = await conn.fetchrow(
                 f"UPDATE restaurant_tables SET {set_clauses} WHERE id = $1 AND user_id = ${len(values)+2} RETURNING *",
                 table_id, *values, owner_id,
@@ -251,6 +333,23 @@ async def update_table(
                 await cache_delete(f"tables_list:{owner_id}")
             except Exception:
                 pass
+            try:
+                await emit_and_publish(DomainEvent(
+                    event_type=TABLE_STATUS_CHANGED,
+                    payload={
+                        "table_id": table_id,
+                        "table_number": result.get("table_number"),
+                        "status": result.get("status"),
+                        "is_occupied": bool(result.get("is_occupied")),
+                        "action": "updated",
+                        "updated_fields": list(updates.keys()),
+                    },
+                    user_id=user.user_id,
+                    restaurant_id=user.restaurant_id,
+                    branch_id=user.branch_id,
+                ))
+            except Exception:
+                logger.exception("emit_table_status_update_failed", table_id=table_id)
             return result
     except Exception as e:
         logger.warning("update_table_failed", error=str(e), user_id=user.user_id)
@@ -286,6 +385,19 @@ async def delete_table(
                 await cache_delete(f"tables_list:{owner_id}")
             except Exception:
                 pass
+            try:
+                await emit_and_publish(DomainEvent(
+                    event_type=TABLE_STATUS_CHANGED,
+                    payload={
+                        "table_id": table_id,
+                        "action": "deleted",
+                    },
+                    user_id=user.user_id,
+                    restaurant_id=user.restaurant_id,
+                    branch_id=user.branch_id,
+                ))
+            except Exception:
+                logger.exception("emit_table_status_delete_failed", table_id=table_id)
             return {"status": "deleted"}
     except Exception as e:
         logger.warning("delete_table_failed", error=str(e), user_id=user.user_id)
@@ -540,6 +652,9 @@ async def qr_call_waiter(body: QRCallWaiterIn):
 
 class MarkPaidVacateIn(BaseModel):
     order_id: Optional[str] = None
+    # When true, bypass the "unpaid balance" guard and force-close the
+    # session anyway. The FE surfaces this as the "Force vacate" confirm.
+    force: Optional[bool] = False
 
 
 class SessionSplitBillIn(BaseModel):
@@ -650,6 +765,44 @@ async def mark_paid_and_vacate(
             owner_id=actor,
         )
 
+        # Idempotency: if the caller passed a restaurant_tables.id (common
+        # for the /tables/{id}/vacate alias) and the table is already
+        # available (no active dine-in session, no legacy session, no
+        # occupancy flags), short-circuit with 200 "already_vacated" so the
+        # frontend can safely retry / double-click without seeing a 404.
+        already_vacated_table = await conn.fetchrow(
+            """
+            SELECT rt.id
+            FROM restaurant_tables rt
+            WHERE rt.id = $1
+              AND rt.user_id = $2
+              AND COALESCE(rt.is_occupied, false) = false
+              AND (rt.status IS NULL OR rt.status <> 'occupied')
+              AND rt.session_token IS NULL
+              AND rt.current_order_id IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM dine_in_sessions ds
+                  WHERE ds.table_id = rt.id
+                    AND ds.status = 'active'
+                    AND ds.ended_at IS NULL
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM table_sessions ts
+                  WHERE ts.table_id = rt.id
+                    AND ts.is_active = true
+              )
+            """,
+            session_id,
+            actor,
+        )
+        if already_vacated_table is not None:
+            return {
+                "status": "already_vacated",
+                "session_id": None,
+                "table_id": str(already_vacated_table["id"]),
+                "remaining_amount": 0.0,
+            }
+
         # If resolver couldn't find an active dine_in_sessions row, fall back
         # to the legacy table_sessions engine so tables backed only by the
         # legacy row still close cleanly.
@@ -736,6 +889,21 @@ async def mark_paid_and_vacate(
             await cache_delete(f"tables_list:{actor}")
         except Exception:
             pass
+        try:
+            await emit_and_publish(DomainEvent(
+                event_type=TABLE_STATUS_CHANGED,
+                payload={
+                    "table_id": orphan_table_id,
+                    "status": "available",
+                    "is_occupied": False,
+                    "action": "orphan_recovery",
+                },
+                user_id=user.user_id,
+                restaurant_id=user.restaurant_id,
+                branch_id=user.branch_id,
+            ))
+        except Exception:
+            logger.exception("emit_table_status_orphan_failed", table_id=orphan_table_id)
         await log_activity(
             user_id=user.user_id,
             branch_id=user.branch_id,
@@ -751,13 +919,112 @@ async def mark_paid_and_vacate(
             "remaining_amount": 0.0,
         }
 
-    result = await _dinein_svc.paid_and_vacate(session_id=resolved_session_id, closed_by=actor)
+    result = await _dinein_svc.paid_and_vacate(
+        session_id=resolved_session_id,
+        closed_by=actor,
+        force=bool(getattr(body, "force", False)),
+    )
     await log_activity(
         user_id=user.user_id,
         branch_id=user.branch_id,
         action="table.paid_and_vacated",
         entity_type="table_session",
         entity_id=resolved_session_id,
-        metadata={},
+        metadata={"force": bool(getattr(body, "force", False))},
     )
     return result
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Vacate-by-table-id helpers
+#
+# The web frontend sometimes loses the dine_in_sessions.id (stale cache,
+# never fetched, race after refresh, ...) but always has the table_id from
+# the URL. These two endpoints let it operate purely from the table_id:
+#
+#   GET  /api/v1/tables/{table_id}/active-session  →  {session_id|null}
+#   POST /api/v1/tables/{table_id}/vacate          →  same body as
+#                                                     POST /sessions/{sid}/paid-vacate
+#
+# Internally /vacate just delegates to mark_paid_and_vacate() — the
+# existing handler already accepts a restaurant_tables.id as its path
+# param and does orphan / legacy fallback. This route is just a
+# table-id-first alias so the FE doesn't 404 on /sessions//paid-vacate
+# when sessionId is null.
+# ────────────────────────────────────────────────────────────────────────
+
+
+@router.get("/{table_id}/active-session")
+async def get_active_session_for_table(
+    table_id: str,
+    user: UserContext = Depends(require_permission("table.read")),
+):
+    """Return the currently active dine_in_sessions.id for a table, if any.
+
+    Used by the FE to re-resolve when its cached session id is missing.
+    """
+    owner_id = user.owner_id if user.is_branch_user else user.user_id
+    async with get_connection() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id, session_token, status, created_at
+            FROM dine_in_sessions
+            WHERE table_id = $1
+              AND user_id  = $2
+              AND status   = 'active'
+              AND ended_at IS NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            table_id,
+            owner_id,
+        )
+        # Legacy fallback — older tables only have a table_sessions row.
+        legacy_id: Optional[str] = None
+        if not row:
+            legacy = await conn.fetchrow(
+                """
+                SELECT id
+                FROM table_sessions
+                WHERE table_id = $1
+                  AND user_id  = $2
+                  AND is_active = true
+                ORDER BY started_at DESC
+                LIMIT 1
+                """,
+                table_id,
+                owner_id,
+            )
+            if legacy:
+                legacy_id = str(legacy["id"])
+
+    if row:
+        return {
+            "session_id": str(row["id"]),
+            "session_token": row["session_token"],
+            "status": row["status"],
+            "engine": "dinein",
+        }
+    if legacy_id:
+        return {
+            "session_id": legacy_id,
+            "session_token": None,
+            "status": "active",
+            "engine": "legacy",
+        }
+    return {"session_id": None, "session_token": None, "status": None, "engine": None}
+
+
+@router.post("/{table_id}/vacate")
+async def vacate_table(
+    table_id: str,
+    body: MarkPaidVacateIn = MarkPaidVacateIn(),
+    user: UserContext = Depends(require_permission("table.close")),
+):
+    """Vacate a table by table_id.
+
+    Thin alias for ``POST /sessions/{session_id}/paid-vacate`` that resolves
+    the active session server-side from ``table_id``. Use this when the FE
+    doesn't have (or lost) the session id.
+    """
+    return await mark_paid_and_vacate(session_id=table_id, body=body, user=user)

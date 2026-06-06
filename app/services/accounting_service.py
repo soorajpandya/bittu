@@ -632,6 +632,7 @@ class AccountingService:
                     WHERE user_id = $1
                       AND ($2::uuid IS NULL OR branch_id = $2)
                       AND DATE(created_at) BETWEEN $3 AND $4
+                      AND voided_at IS NULL
                 ),
                 modern AS (
                     SELECT
@@ -685,7 +686,7 @@ class AccountingService:
         offset: int = 0,
     ) -> list[dict]:
         """List accounting entries with optional filters."""
-        sql = "SELECT * FROM accounting_entries WHERE user_id = $1"
+        sql = "SELECT * FROM accounting_entries WHERE user_id = $1 AND voided_at IS NULL"
         params: list = [user_id]
 
         if branch_id:
@@ -729,6 +730,7 @@ class AccountingService:
                 WHERE user_id = $1
                   AND ($2::uuid IS NULL OR branch_id = $2)
                   AND DATE(created_at) BETWEEN $3 AND $4
+                  AND voided_at IS NULL
                 GROUP BY DATE(created_at)
                 ORDER BY DATE(created_at)
                 """,
@@ -764,6 +766,7 @@ class AccountingService:
                   AND entry_type = 'revenue'
                   AND ($2::uuid IS NULL OR branch_id = $2)
                   AND DATE(created_at) BETWEEN $3 AND $4
+                  AND voided_at IS NULL
                 GROUP BY payment_method
                 ORDER BY total DESC
                 """,

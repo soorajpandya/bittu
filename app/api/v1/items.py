@@ -4,6 +4,7 @@ from typing import Optional, List, Any, Literal
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel, ConfigDict
+import asyncpg
 import structlog
 import orjson
 
@@ -555,10 +556,16 @@ async def delete_item(
     params.append(item_id)
 
     async with get_connection() as conn:
-        result = await conn.execute(
-            f'DELETE FROM items WHERE {clause} AND "Item_ID" = ${len(params)}',
-            *params,
-        )
+        try:
+            result = await conn.execute(
+                f'DELETE FROM items WHERE {clause} AND "Item_ID" = ${len(params)}',
+                *params,
+            )
+        except asyncpg.exceptions.RaiseError as exc:
+            # A DB guard trigger blocked the cascade (e.g. gst_invoice_items
+            # immutability). Surface a 409 with the trigger's message instead
+            # of a 500.
+            raise HTTPException(status_code=409, detail=str(exc))
         if result == "DELETE 0":
             raise HTTPException(status_code=404, detail="Item not found")
     uid = user.owner_id if user.is_branch_user else user.user_id

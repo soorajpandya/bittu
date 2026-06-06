@@ -302,22 +302,24 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestIdMiddleware)
 
     # -- CORS (outermost — added last so it wraps everything) --
+    # Local dev hosts (any port on localhost / 127.0.0.1) always pass via
+    # `allow_origin_regex`, so a new FE Vite/Next port (5173, 5174, 3000,
+    # 3001, …) never needs a backend redeploy. Production origins still
+    # come from `settings.CORS_ORIGINS`.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=[
-            "Authorization",
-            "Content-Type",
-            "X-Request-ID",
-            "X-Idempotency-Key",
-            # HMAC request signing headers (RequestSecurityMiddleware)
-            "X-Device-Id",
-            "X-Timestamp",
-            "X-Nonce",
-            "X-Signature",
-        ],
+        # Use "*" so any header the FE sends (axios `X-Requested-With`,
+        # Sentry's `sentry-trace` / `baggage`, CSRF tokens, future custom
+        # headers, etc.) is accepted on preflight. Starlette echoes the
+        # requested headers back in `Access-Control-Allow-Headers` even
+        # with `allow_credentials=True`.
+        allow_headers=["*"],
+        expose_headers=["X-Request-ID"],
+        max_age=600,
     )
 
     # -- Structured exception handlers --

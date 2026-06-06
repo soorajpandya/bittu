@@ -119,6 +119,9 @@ router.include_router(_rzp_route_raw.router)
 # ── Razorpay Smart Collect — virtual accounts + inbound credits (Phase 8) ──
 from app.api.v1 import rzp_smart_collect as _rzp_smart_collect
 router.include_router(_rzp_smart_collect.router)
+# ── Razorpay Static QR (multi-use, no order binding) ──
+from app.api.v1 import static_qr as _static_qr
+router.include_router(_static_qr.router)
 # ── Razorpay Invoices — hosted invoices (Phase 9) ──
 from app.api.v1 import rzp_invoices as _rzp_invoices
 router.include_router(_rzp_invoices.router)

@@ -258,8 +258,10 @@ async def ws_endpoint(websocket: WebSocket, token: Optional[str] = None):
     if user_ctx.branch_id:
         await manager.subscribe(conn, f"branch:{user_ctx.branch_id}")
 
-    # Auto-subscribe owners/managers to restaurant-wide channel
-    if user_ctx.role in ("owner", "manager") and user_ctx.restaurant_id:
+    # Auto-subscribe ALL authenticated staff (owner, manager, branch staff)
+    # to restaurant-wide channel so they receive table.status_changed and
+    # other restaurant-scoped events without manual subscribe.
+    if user_ctx.restaurant_id:
         await manager.subscribe(conn, f"restaurant:{user_ctx.restaurant_id}")
 
     logger.info("ws_connected", user_id=user_id, branch_id=user_ctx.branch_id)
@@ -336,7 +338,11 @@ def _can_subscribe(user_ctx, channel: str) -> bool:
         return False
 
     if channel.startswith("restaurant:"):
-        # Owners/managers can subscribe to restaurant-wide events
+        # Any authenticated user in the restaurant can listen to
+        # restaurant-wide events (table status, kitchen tickets, etc.).
+        rid = channel.split(":", 1)[1]
+        if user_ctx.restaurant_id and user_ctx.restaurant_id == rid:
+            return True
         if user_ctx.role in ("owner", "manager"):
             return True
         return False

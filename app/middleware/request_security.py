@@ -73,6 +73,9 @@ _SKIP_PREFIXES = (
     "/api/v1/auth/",
     "/api/v1/webhooks/",
     "/api/v1/health",
+    # Public, token-gated audio assets (token = unguessable razorpay_payment_id);
+    # served as <audio src="..."> without an Authorization header.
+    "/api/v1/voice/payment-audio/",
     "/health",
     "/metrics",
     "/docs",
