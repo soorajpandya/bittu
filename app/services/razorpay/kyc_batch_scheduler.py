@@ -63,6 +63,15 @@ async def run_once() -> dict:
         record_count=result.get("record_count", 0),
         elapsed_ms=elapsed_ms,
     )
+    # Reconcile any linked accounts Razorpay has since activated so the
+    # merchant's app flips pending -> activated without a manual admin
+    # click. Best-effort: never let a reconcile failure break the tick.
+    try:
+        recon = await rzp_kyc_batch_service.reconcile_pending_accounts()
+        if recon.get("candidates"):
+            logger.info("rzp_kyc_reconcile_tick", **recon)
+    except Exception:
+        logger.exception("rzp_kyc_reconcile_tick_failed")
     return result
 
 

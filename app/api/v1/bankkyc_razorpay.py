@@ -113,6 +113,21 @@ async def admin_stats(
     return await rzp_kyc_batch_service.stats()
 
 
+@router.post(
+    "/admin/reconcile",
+    summary="Force-reconcile pending linked accounts against Razorpay now",
+)
+async def admin_reconcile(
+    limit: int = Query(200, ge=1, le=1000),
+    _: UserContext = Depends(require_platform_admin()),
+):
+    """Sweep every non-terminal submission that has a ``razorpay_account_id``
+    but isn't yet ``activated`` locally, and flip it via the ``/v1/balance``
+    liveness probe. Runs automatically every 30 min; this is the manual
+    on-demand trigger for the super-admin dashboard."""
+    return await rzp_kyc_batch_service.reconcile_pending_accounts(limit=limit)
+
+
 @router.get("/admin/batches", summary="List recent batches")
 async def admin_list_batches(
     limit: int = Query(50, ge=1, le=500),

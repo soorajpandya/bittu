@@ -1096,6 +1096,61 @@ class RzpKycBatchService:
             "alerts": _build_alerts(oldest_age_hours, pending_batch_uploads, pending_merchants),
         }
 
+    # ── automatic reconciler (run by the 30-min scheduler) ─────────────
+    async def reconcile_pending_accounts(self, *, limit: int = 200) -> dict:
+        """Re-check submissions that already have a ``razorpay_account_id``
+        but aren't yet locally ``activated``.
+
+        Razorpay's batch-CSV onboarding never calls back into our system,
+        so a linked account that Razorpay has since activated stays stuck
+        at ``pending`` in the merchant's app. This sweeps every such
+        submission through ``check_account_status`` (which runs the
+        ``/v1/balance`` liveness probe and promotes the local row to
+        ``activated`` when Razorpay confirms it).
+
+        Idempotent and best-effort: a single bad row never aborts the
+        sweep. Designed to be called from the KYC batch scheduler tick.
+        """
+        async with get_connection() as c:
+            rows = await c.fetch(
+                """
+                SELECT id
+                  FROM rzp_kyc_submissions
+                 WHERE status <> 'REJECTED'
+                   AND razorpay_account_id IS NOT NULL
+                   AND razorpay_account_id <> ''
+                   AND COALESCE(razorpay_account_status, '') <> 'activated'
+                 ORDER BY id ASC
+                 LIMIT $1
+                """,
+                limit,
+            )
+        checked = activated = failed = 0
+        for r in rows:
+            sid = r["id"]
+            try:
+                res = await self.check_account_status(sid)
+                checked += 1
+                sub = (res or {}).get("submission") or {}
+                if (sub.get("razorpay_account_status") or "").lower() == "activated":
+                    activated += 1
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                logger.warning(
+                    "rzp_kyc.reconcile.submission_failed",
+                    submission_id=sid,
+                    error=str(exc),
+                )
+        result = {
+            "candidates": len(rows),
+            "checked":    checked,
+            "activated":  activated,
+            "failed":     failed,
+        }
+        if rows:
+            logger.info("rzp_kyc.reconcile.swept", **result)
+        return result
+
 
 # ── alerts ──────────────────────────────────────────────────────────────────
 def _build_alerts(
