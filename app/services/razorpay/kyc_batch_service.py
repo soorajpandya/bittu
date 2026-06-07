@@ -940,6 +940,16 @@ class RzpKycBatchService:
                 "authored locally from the /v1/balance liveness probe."
             ),
         }
+        # Batch-CSV linked accounts are born on Razorpay's side WITHOUT
+        # our ``bittu_merchant_id`` note (no API call was made), so the
+        # local row's ``notes`` stays ``{}``. Stamp the merchant mapping
+        # here so it matches the convention every other rzp_* write
+        # follows and downstream merchant-resolution by notes works.
+        notes_patch = {
+            "bittu_merchant_id": str(merchant_id),
+            "linked_account_id": account_id,
+            "source": "dashboard_batch_csv",
+        }
         async with get_connection() as c:
             await c.execute(
                 """
@@ -956,6 +966,7 @@ class RzpKycBatchService:
                        bank_account_ifsc           = COALESCE(bank_account_ifsc, $4),
                        bank_account_last4          = COALESCE(bank_account_last4, $5),
                        bank_account_hash           = COALESCE(bank_account_hash, $6),
+                       notes                       = COALESCE(notes, '{}'::jsonb) || $7::jsonb,
                        updated_at                  = NOW()
                  WHERE merchant_id = $1::uuid
                 """,
@@ -963,6 +974,7 @@ class RzpKycBatchService:
                 synthetic_product_id,
                 json.dumps(synthetic_product_raw),
                 ifsc, last4, bhash,
+                json.dumps(notes_patch),
             )
             await c.execute(
                 """
