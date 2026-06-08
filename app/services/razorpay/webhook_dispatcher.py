@@ -668,14 +668,16 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
                     route_product_status=_prod,
                 )
             else:
-                # Flat 5% platform commission, mirroring the order-level
-                # transfers[] split in payment_intent.py. The DB-driven
-                # ``fee_service.compute_fee`` resolves to a much smaller
-                # Razorpay-style fee (~0.3%) which is gateway-fee math, not
-                # our platform commission — using it here under-charged the
-                # platform (₹0.03 instead of ₹0.50 on a ₹10 capture).
-                # Keep ``fee_service.compute_fee`` invocation for audit /
-                # ledger metadata but do NOT use its number for the split.
+                # Bittu keeps a FIXED 1.53% platform fee; the merchant
+                # transfer is gross - bittu_fee - estimated_rzp_charge.
+                # The Razorpay charge is an *estimate* here (the actual fee
+                # isn't known until settlement) and is trued-up later from
+                # rzp_settlements/rzp_route_transfers — so the Bittu margin
+                # stays exact at 1.53% regardless of estimate error.
+                # ``fee_service.compute_fee`` is kept for audit metadata only.
+                from app.services.razorpay.fee_policy import (
+                    provisional_merchant_transfer_paise,
+                )
                 fee_payload = await fee_service.compute_fee(
                     merchant_id,
                     gross=amount_decimal,
@@ -683,9 +685,11 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
                     currency=(entity.get("currency") or "INR"),
                     record=False,
                 )
-                merchant_share_paise = (amount_paise * 95) // 100
-                commission_paise = amount_paise - merchant_share_paise
-                net_paise = int(merchant_share_paise)
+                _method = (payment_row.get("method") or entity.get("method") or "online")
+                net_paise, bittu_fee_paise_v, est_rzp_paise = (
+                    provisional_merchant_transfer_paise(amount_paise, _method)
+                )
+                commission_paise = amount_paise - net_paise  # bittu_fee + est_rzp
                 if net_paise < 100:
                     # Razorpay rejects transfers under ₹1.
                     logger.warning(
@@ -705,6 +709,8 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
                             "source":            "auto_split_on_capture",
                             "commission_paise":  str(commission_paise),
                             "merchant_share":    str(net_paise),
+                            "bittu_fee_paise":   str(bittu_fee_paise_v),
+                            "est_rzp_paise":     str(est_rzp_paise),
                             "rzp_gateway_fee":   str(fee_payload.get("fee") or 0),
                             "rzp_gateway_gst":   str(fee_payload.get("gst") or 0),
                             "internal_order_id": str(internal_order_id or ""),

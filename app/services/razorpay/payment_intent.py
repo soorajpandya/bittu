@@ -168,7 +168,7 @@ async def create_intent_for_order(
     # ── 1a. build Route transfers[] split if merchant is activated ──
     # When the merchant's linked account + product are both activated, ask
     # Razorpay to atomically split the captured payment into the merchant's
-    # linked account at capture time. Bittu keeps a flat 5% commission;
+    # linked account at capture time. Bittu keeps a fixed 1.53% platform fee;
     # merchant_share is floored to whole paise so the sum never exceeds
     # the gross amount.
     #
@@ -179,7 +179,14 @@ async def create_intent_for_order(
     transfers_payload: Optional[list[dict]] = None
     linked_account_id = await _route_gate.get_active_linked_account_id(merchant_id)
     if linked_account_id:
-        merchant_share_paise = (amount_paise * 95) // 100
+        # Bittu keeps a FIXED 1.53% platform fee; merchant share is
+        # gross - bittu_fee - estimated_rzp_charge. The payment method is
+        # not yet known at order creation, so the estimate uses the default
+        # rate and is trued-up later at settlement.
+        from app.services.razorpay.fee_policy import provisional_merchant_transfer_paise
+        merchant_share_paise, _bittu_fee_paise, _est_rzp_paise = (
+            provisional_merchant_transfer_paise(amount_paise, None)
+        )
         if merchant_share_paise >= 100:
             transfers_payload = [{
                 "account":  linked_account_id,
@@ -189,6 +196,8 @@ async def create_intent_for_order(
                     "merchant_id":       merchant_id,
                     "internal_order_id": internal_order_id,
                     "razorpay_payment_id_for": "auto_route_at_capture",
+                    "bittu_fee_paise":   str(_bittu_fee_paise),
+                    "est_rzp_paise":     str(_est_rzp_paise),
                 },
                 "linked_account_notes": ["merchant_id", "internal_order_id"],
                 "on_hold": False,
