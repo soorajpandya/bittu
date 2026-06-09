@@ -14,10 +14,14 @@ refreshes EVERY merchant. These endpoints are surgical.
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
 from app.core.database import get_service_connection
 from app.services.razorpay.route_service import rzp_route_service
+
+# Valid values for rzp_route_accounts.status (rzp_route_account_state enum).
+_VALID_ACCOUNT_STATES = {"created", "activated", "suspended", "rejected", "deleted"}
 
 
 async def list_linked_accounts(
@@ -346,3 +350,183 @@ async def onboarding_queue(*, limit: int = 100) -> dict[str, Any]:
         b = d.pop("bucket")
         buckets.setdefault(b, []).append(d)
     return {"counts": {k: len(v) for k, v in buckets.items()}, "buckets": buckets}
+
+
+# ─────────────────────── backfill / repair ────────────────────────────
+# Surgical data-fix endpoints that let ops seed or correct the
+# rzp_route_accounts row WITHOUT calling Razorpay. These replace the
+# ad-hoc gitignored `_backfill_*.py` / `_inspect_route_account.py`
+# scripts that previously had to be shipped to EC2 by hand.
+
+async def _merchant_exists(conn, merchant_id: str) -> bool:
+    return bool(
+        await conn.fetchval(
+            "SELECT 1 FROM restaurants WHERE id = $1::uuid", merchant_id
+        )
+    )
+
+
+async def backfill_linked_account(
+    *,
+    merchant_id: str,
+    linked_account_id: str,
+    status: str = "activated",
+    kyc_status: Optional[str] = "activated",
+    activation_status: Optional[str] = "activated",
+    route_product_status: Optional[str] = "activated",
+    route_product_id: Optional[str] = None,
+    stakeholder_id: Optional[str] = None,
+    legal_business_name: Optional[str] = None,
+    business_type: Optional[str] = None,
+    contact_name: Optional[str] = None,
+    email: Optional[str] = None,
+    phone: Optional[str] = None,
+    reference_id: Optional[str] = None,
+    bank_account_ifsc: Optional[str] = None,
+    bank_account_last4: Optional[str] = None,
+    tnc_accepted: bool = True,
+    notes: Optional[dict] = None,
+) -> dict[str, Any]:
+    """Upsert a rzp_route_accounts row for a merchant (idempotent).
+
+    merchant_id is UNIQUE, so re-running updates the existing row.
+    notes are MERGED (existing || provided) and always stamped with
+    ``bittu_merchant_id`` so downstream reconcilers can map back.
+    """
+    if status not in _VALID_ACCOUNT_STATES:
+        raise ValueError(
+            f"invalid status {status!r}; allowed: {sorted(_VALID_ACCOUNT_STATES)}"
+        )
+
+    merged_notes = dict(notes or {})
+    merged_notes["bittu_merchant_id"] = merchant_id
+    notes_json = json.dumps(merged_notes)
+
+    async with get_service_connection() as conn:
+        if not await _merchant_exists(conn, merchant_id):
+            raise LookupError("merchant (restaurant) not found")
+
+        # Guard: linked_account_id is UNIQUE — refuse to steal another
+        # merchant's account here. Use /repoint for an intentional move.
+        owner = await conn.fetchval(
+            "SELECT merchant_id::text FROM rzp_route_accounts "
+            "WHERE linked_account_id = $1",
+            linked_account_id,
+        )
+        if owner and owner != merchant_id:
+            raise ValueError(
+                f"linked_account_id {linked_account_id} already belongs to "
+                f"merchant {owner}; use the repoint endpoint to move it"
+            )
+
+        row = await conn.fetchrow(
+            """
+            INSERT INTO rzp_route_accounts (
+                merchant_id, linked_account_id, status, kyc_status,
+                activation_status, route_product_status, route_product_id,
+                stakeholder_id, legal_business_name, business_type,
+                contact_name, email, phone, reference_id,
+                bank_account_ifsc, bank_account_last4,
+                tnc_accepted_at, notes,
+                route_product_activated_at
+            ) VALUES (
+                $1::uuid, $2, $3::rzp_route_account_state, $4,
+                $5, $6, $7,
+                $8, $9, $10,
+                $11, $12, $13, $14,
+                $15, $16,
+                CASE WHEN $17 THEN NOW() ELSE NULL END, $18::jsonb,
+                CASE WHEN $6 = 'activated' THEN NOW() ELSE NULL END
+            )
+            ON CONFLICT (merchant_id) DO UPDATE SET
+                linked_account_id    = EXCLUDED.linked_account_id,
+                status               = EXCLUDED.status,
+                kyc_status           = COALESCE(EXCLUDED.kyc_status, rzp_route_accounts.kyc_status),
+                activation_status    = COALESCE(EXCLUDED.activation_status, rzp_route_accounts.activation_status),
+                route_product_status = COALESCE(EXCLUDED.route_product_status, rzp_route_accounts.route_product_status),
+                route_product_id     = COALESCE(EXCLUDED.route_product_id, rzp_route_accounts.route_product_id),
+                stakeholder_id       = COALESCE(EXCLUDED.stakeholder_id, rzp_route_accounts.stakeholder_id),
+                legal_business_name  = COALESCE(EXCLUDED.legal_business_name, rzp_route_accounts.legal_business_name),
+                business_type        = COALESCE(EXCLUDED.business_type, rzp_route_accounts.business_type),
+                contact_name         = COALESCE(EXCLUDED.contact_name, rzp_route_accounts.contact_name),
+                email                = COALESCE(EXCLUDED.email, rzp_route_accounts.email),
+                phone                = COALESCE(EXCLUDED.phone, rzp_route_accounts.phone),
+                reference_id         = COALESCE(EXCLUDED.reference_id, rzp_route_accounts.reference_id),
+                bank_account_ifsc    = COALESCE(EXCLUDED.bank_account_ifsc, rzp_route_accounts.bank_account_ifsc),
+                bank_account_last4   = COALESCE(EXCLUDED.bank_account_last4, rzp_route_accounts.bank_account_last4),
+                tnc_accepted_at      = COALESCE(rzp_route_accounts.tnc_accepted_at, EXCLUDED.tnc_accepted_at),
+                route_product_activated_at = COALESCE(rzp_route_accounts.route_product_activated_at, EXCLUDED.route_product_activated_at),
+                notes                = rzp_route_accounts.notes || EXCLUDED.notes,
+                updated_at           = NOW()
+            RETURNING merchant_id::text AS merchant_id, linked_account_id,
+                      status::text AS status, kyc_status, activation_status,
+                      route_product_status, route_product_id, stakeholder_id,
+                      notes, created_at, updated_at
+            """,
+            merchant_id, linked_account_id, status, kyc_status,
+            activation_status, route_product_status, route_product_id,
+            stakeholder_id, legal_business_name, business_type,
+            contact_name, email, phone, reference_id,
+            bank_account_ifsc, bank_account_last4,
+            tnc_accepted, notes_json,
+        )
+    return {"ok": True, "account": dict(row)}
+
+
+async def repoint_linked_account(
+    *,
+    merchant_id: str,
+    linked_account_id: str,
+    notes: Optional[dict] = None,
+) -> dict[str, Any]:
+    """Move an existing linked account (acc_xxx) to a different merchant.
+
+    merchant_id is UNIQUE, so the target merchant must NOT already own a
+    route account. The row's notes are stamped with the new
+    ``bittu_merchant_id`` and a ``repointed_from`` audit trail.
+    """
+    async with get_service_connection() as conn:
+        if not await _merchant_exists(conn, merchant_id):
+            raise LookupError("target merchant (restaurant) not found")
+
+        src = await conn.fetchrow(
+            "SELECT merchant_id::text AS merchant_id, notes "
+            "FROM rzp_route_accounts WHERE linked_account_id = $1",
+            linked_account_id,
+        )
+        if not src:
+            raise LookupError("linked_account_id not found")
+        if src["merchant_id"] == merchant_id:
+            raise ValueError("linked account already points to this merchant")
+
+        existing_target = await conn.fetchval(
+            "SELECT linked_account_id FROM rzp_route_accounts "
+            "WHERE merchant_id = $1::uuid",
+            merchant_id,
+        )
+        if existing_target:
+            raise ValueError(
+                f"target merchant already owns linked account "
+                f"{existing_target}; remove it before repointing"
+            )
+
+        merged_notes = dict(notes or {})
+        merged_notes["bittu_merchant_id"] = merchant_id
+        merged_notes["repointed_from"] = src["merchant_id"]
+        notes_json = json.dumps(merged_notes)
+
+        row = await conn.fetchrow(
+            """
+            UPDATE rzp_route_accounts
+               SET merchant_id = $1::uuid,
+                   notes       = notes || $2::jsonb,
+                   updated_at  = NOW()
+             WHERE linked_account_id = $3
+            RETURNING merchant_id::text AS merchant_id, linked_account_id,
+                      status::text AS status, kyc_status, activation_status,
+                      route_product_status, notes, updated_at
+            """,
+            merchant_id, notes_json, linked_account_id,
+        )
+    return {"ok": True, "repointed_from": src["merchant_id"], "account": dict(row)}
+

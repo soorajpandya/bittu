@@ -132,3 +132,81 @@ async def onboarding_queue(
     _: UserContext = Depends(require_platform_admin()),
 ):
     return await route_admin_service.onboarding_queue(limit=limit)
+
+
+class BackfillAccountBody(BaseModel):
+    linked_account_id: str = Field(..., min_length=4, max_length=64)
+    status: str = Field(default="activated", max_length=16)
+    kyc_status: Optional[str] = Field(default="activated", max_length=64)
+    activation_status: Optional[str] = Field(default="activated", max_length=64)
+    route_product_status: Optional[str] = Field(default="activated", max_length=64)
+    route_product_id: Optional[str] = Field(default=None, max_length=64)
+    stakeholder_id: Optional[str] = Field(default=None, max_length=64)
+    legal_business_name: Optional[str] = Field(default=None, max_length=200)
+    business_type: Optional[str] = Field(default=None, max_length=64)
+    contact_name: Optional[str] = Field(default=None, max_length=200)
+    email: Optional[str] = Field(default=None, max_length=200)
+    phone: Optional[str] = Field(default=None, max_length=20)
+    reference_id: Optional[str] = Field(default=None, max_length=64)
+    bank_account_ifsc: Optional[str] = Field(default=None, max_length=16)
+    bank_account_last4: Optional[str] = Field(default=None, max_length=4)
+    tnc_accepted: bool = True
+    notes: Optional[dict] = None
+
+
+@router.post("/accounts/{merchant_id}/backfill")
+async def backfill_linked_account(
+    merchant_id: str = Path(..., min_length=8, max_length=64),
+    body: BackfillAccountBody = ...,
+    _: UserContext = Depends(require_platform_admin()),
+):
+    """Seed or correct a merchant's rzp_route_accounts row (no Razorpay call)."""
+    try:
+        return await route_admin_service.backfill_linked_account(
+            merchant_id=merchant_id,
+            linked_account_id=body.linked_account_id,
+            status=body.status,
+            kyc_status=body.kyc_status,
+            activation_status=body.activation_status,
+            route_product_status=body.route_product_status,
+            route_product_id=body.route_product_id,
+            stakeholder_id=body.stakeholder_id,
+            legal_business_name=body.legal_business_name,
+            business_type=body.business_type,
+            contact_name=body.contact_name,
+            email=body.email,
+            phone=body.phone,
+            reference_id=body.reference_id,
+            bank_account_ifsc=body.bank_account_ifsc,
+            bank_account_last4=body.bank_account_last4,
+            tnc_accepted=body.tnc_accepted,
+            notes=body.notes,
+        )
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+class RepointAccountBody(BaseModel):
+    linked_account_id: str = Field(..., min_length=4, max_length=64)
+    notes: Optional[dict] = None
+
+
+@router.post("/accounts/{merchant_id}/repoint")
+async def repoint_linked_account(
+    merchant_id: str = Path(..., min_length=8, max_length=64),
+    body: RepointAccountBody = ...,
+    _: UserContext = Depends(require_platform_admin()),
+):
+    """Move an existing linked account (acc_xxx) to a different merchant."""
+    try:
+        return await route_admin_service.repoint_linked_account(
+            merchant_id=merchant_id,
+            linked_account_id=body.linked_account_id,
+            notes=body.notes,
+        )
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
