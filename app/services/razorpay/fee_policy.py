@@ -1,12 +1,12 @@
 """Bittu fee policy — the single source of truth for the split.
 
-Only the Bittu platform fee is fixed (1.57% of gross). The Razorpay
+Only the Bittu platform fee is fixed (1.60% of gross). The Razorpay
 charge is NOT assumed — at capture time it is *estimated* (because the
 actual fee is not yet known) and later trued-up from the actual values
 stored on rzp_payments / rzp_settlements / rzp_route_transfers.
 
     merchant_settlement = gross - razorpay_total_charges - bittu_fee
-    bittu_fee           = gross * 1.57%   (fixed, all methods)
+    bittu_fee           = gross * 1.60%   (fixed, all methods)
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import os
 from decimal import Decimal, ROUND_HALF_UP
 
 # ── The ONLY fixed rate in the system ─────────────────────────────
-BITTU_FEE_RATE = Decimal("0.0157")          # 1.57% of gross, all methods
+BITTU_FEE_RATE = Decimal("0.0160")          # 1.60% of gross, all methods
 
 # Provisional Razorpay-charge estimate used ONLY to compute the
 # capture-time transfer. Trued-up from actuals at settlement, so an
@@ -32,7 +32,7 @@ def _q_paise(amount_paise: Decimal | int) -> int:
 
 
 def bittu_fee_paise(gross_paise: int) -> int:
-    """Fixed 1.57% Bittu platform fee, in paise."""
+    """Fixed 1.60% Bittu platform fee, in paise."""
     return _q_paise(Decimal(gross_paise) * BITTU_FEE_RATE)
 
 
