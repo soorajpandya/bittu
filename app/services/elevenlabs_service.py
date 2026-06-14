@@ -20,7 +20,22 @@ ELEVENLABS_TTS_URL = "https://api.elevenlabs.io/v1/text-to-speech"
 # publicly (token-gated by the unguessable razorpay_payment_id) via the
 # voice.payment_audio route. The dir is created lazily on first write.
 VOICE_FILES_DIR = Path(__file__).resolve().parents[2] / "files" / "voice"
-VOICE_AUDIO_URL_TEMPLATE = "/api/v1/voice/payment-audio/{token}.mp3"
+VOICE_AUDIO_PATH_TEMPLATE = "/api/v1/voice/payment-audio/{token}.mp3"
+# Backwards-compatible alias (some callers/tests import this name).
+VOICE_AUDIO_URL_TEMPLATE = VOICE_AUDIO_PATH_TEMPLATE
+
+
+def _public_audio_url(token: str) -> str:
+    """Build the URL the frontend loads for a payment voice clip.
+
+    Returns an ABSOLUTE url when ``PUBLIC_API_BASE_URL`` is configured so the
+    FE can play it via ``new Audio(voice_url)`` even when it is served from a
+    different origin (e.g. localhost:5173 or order.bittupos.com). Falls back
+    to a relative path only when no base URL is set.
+    """
+    rel = VOICE_AUDIO_PATH_TEMPLATE.format(token=token)
+    base = (getattr(_cfg(), "PUBLIC_API_BASE_URL", "") or "").rstrip("/")
+    return f"{base}{rel}" if base else rel
 
 
 def _cfg():
@@ -115,7 +130,7 @@ class ElevenLabsService:
                 tmp = target.with_suffix(".mp3.tmp")
                 tmp.write_bytes(audio)
                 tmp.replace(target)
-            return VOICE_AUDIO_URL_TEMPLATE.format(token=safe)
+            return _public_audio_url(safe)
         except Exception:  # noqa: BLE001
             logger.exception(
                 "elevenlabs_payment_voice_file_failed",

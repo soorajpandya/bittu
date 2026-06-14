@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = ["*"]
     ALLOWED_HOSTS: list[str] = ["*"]
     SECRET_KEY: str = ""  # Required in production for signing
+    # Public, internet-reachable origin of THIS backend. Used to build
+    # absolute URLs for assets the frontend loads directly (e.g. the
+    # ElevenLabs payment-confirmation MP3 played via <audio src=...>).
+    # Must be the API host, not the frontend host. Leave blank to emit
+    # relative URLs (only works when FE and API share an origin).
+    PUBLIC_API_BASE_URL: str = "https://api.bittupos.com"
 
     @field_validator("CORS_ORIGINS")
     @classmethod
