@@ -13,6 +13,7 @@ Endpoints (all JWT-gated, merchant owner/manager):
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -45,6 +46,28 @@ def require_merchant(user: UserContext = Depends(get_current_user)) -> UserConte
             "Required: owner or manager."
         )
     return user
+
+
+def _parse_client_ts(value: Optional[str]) -> Optional[datetime]:
+    """Best-effort parse of the client-reported ISO-8601 timestamp.
+
+    asyncpg binds the value to a ``timestamptz`` parameter and requires a real
+    ``datetime`` (it will not parse strings). This is non-authoritative
+    comparison data, so an unparseable value is stored as NULL rather than
+    failing the whole request.
+    """
+    if not value:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    # Accept a trailing 'Z' (UTC) which datetime.fromisoformat rejects on <3.11.
+    if raw.endswith("Z") or raw.endswith("z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
 
 
 def _client_ip(request: Request) -> Optional[str]:
@@ -182,6 +205,7 @@ async def record_agreement_acceptance(
 
     user_agent = body.user_agent or request.headers.get("user-agent", "")[:1024] or None
     server_ip = _client_ip(request)
+    accepted_at_client = _parse_client_ts(body.accepted_at_client)
 
     async with get_connection() as conn:
         snap = await _resolve_merchant_snapshot(conn, user)
@@ -207,7 +231,7 @@ async def record_agreement_acceptance(
             snap["name"],
             snap["email"],
             snap["business_name"],
-            body.accepted_at_client,
+            accepted_at_client,
             body.ip_client,
         )
 
