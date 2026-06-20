@@ -74,24 +74,24 @@ from app.services.escrow_integration import release_holds_for_settlement
 logger = get_logger(__name__)
 
 # ── Fee constants ─────────────────────────────────────────────────────────────
-# 5 % flat gross deduction. Customer pays gross, merchant nets gross × 0.95.
-TOTAL_DEDUCTION_RATE = Decimal("0.050000")   # 5.00 % flat gross deduction
-GST_RATE             = Decimal("0.180000")   # 18 % GST
+# Pricing: 1.75 % base service fee + 18 % GST = 2.065 % flat gross deduction.
+# Customer pays gross, merchant nets gross × (1 - 0.02065) = gross × 0.97935.
+GST_RATE               = Decimal("0.180000")   # 18 % GST
+PLATFORM_FEE_BASE_RATE = Decimal("0.017500")   # 1.75 % base service fee (ex-GST)
+TOTAL_DEDUCTION_RATE   = (
+    PLATFORM_FEE_BASE_RATE * (Decimal("1.000000") + GST_RATE)
+)  # = 0.020650  (2.065 % of gross, incl GST)
 
-# Razorpay's automatic server-side cut: 0.99 % base + 18 % GST on that base.
-# Computed inline so the relationship stays self-documenting; equivalent to
-# Decimal("0.011682").
-RAZORPAY_TOTAL_RATE  = (
-    Decimal("0.009900") * (Decimal("1.000000") + GST_RATE)
-)  # = 0.011682  (1.1682 % of gross)
+# Razorpay's automatic server-side cut: ~1.64 % of gross (incl. their GST).
+RAZORPAY_TOTAL_RATE  = Decimal("0.016400")   # 1.6400 % of gross (incl GST)
 
-# Remainder of the 5 % cut after Razorpay's slice = our gross platform pool.
+# Remainder of the deduction after Razorpay's slice = our gross platform pool.
 # The pool is GST-inclusive; reverse-extract the base platform fee, then
 # treat GST as the residual so the three components reconcile exactly.
-PLATFORM_POOL_RATE   = TOTAL_DEDUCTION_RATE - RAZORPAY_TOTAL_RATE  # 0.038318
+PLATFORM_POOL_RATE   = TOTAL_DEDUCTION_RATE - RAZORPAY_TOTAL_RATE  # 0.004250
 BITTU_FEE_RATE       = (PLATFORM_POOL_RATE / (Decimal("1") + GST_RATE)).quantize(
     Decimal("0.000001"), rounding=ROUND_HALF_UP
-)  # ≈ 0.032473  (3.2473 % of gross)
+)  # ≈ 0.003602  (0.3602 % of gross, ex-GST)
 
 
 def _q2(val) -> Decimal:
@@ -111,7 +111,8 @@ def _q6(val) -> Decimal:
 
 def _calc_settlement_breakdown(gross) -> dict:
     """
-    Full per-settlement breakdown under the 5 % gross-deduction model.
+    Full per-settlement breakdown under the 2.065 % gross-deduction model
+    (1.75 % base service fee + 18 % GST).
 
     Bank-facing amounts (`total_deduction`, `net_to_merchant`) are quantized
     to paisa (2 dp) — they hit the merchant's bank statement and must match
@@ -125,9 +126,9 @@ def _calc_settlement_breakdown(gross) -> dict:
         net_to_merchant + total_deduction      == gross
 
     Worked example for gross = ₹100.00:
-        total_deduction = 5.0000   net_to_merchant = 95.0000
-        razorpay_cut    = 1.1682   platform_pool   = 3.8318
-        bittu_fee       = 3.2473   gst_on_fee      = 0.5845
+        total_deduction = 2.0650   net_to_merchant = 97.9350
+        razorpay_cut    = 1.6400   platform_pool   = 0.4250
+        bittu_fee       = 0.3602   gst_on_fee      = 0.0648
     """
     gross = _q2(gross)
 

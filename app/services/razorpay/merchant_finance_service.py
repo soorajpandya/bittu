@@ -58,8 +58,9 @@ _Q2 = Decimal("0.01")
 # Synthetic split — used ONLY for pre-onboarded merchants where there is no
 # transfer row to read from. Once a merchant is Route-active, commission is
 # derived from the actual transfer amount, not from this constant.
-_LEGACY_COMMISSION_RATE = Decimal("0.05")
-_LEGACY_MERCHANT_RATE   = Decimal("0.95")
+# Mirrors statement_service.TOTAL_DEDUCTION_RATE: 1.75% + 18% GST = 2.065%.
+_LEGACY_COMMISSION_RATE = Decimal("0.020650")   # 2.065% total gross deduction
+_LEGACY_MERCHANT_RATE   = Decimal("0.979350")   # merchant nets 97.935%
 
 
 # Local POS payment methods that bypass Razorpay entirely. Stored in the
@@ -323,9 +324,9 @@ class MerchantFinanceService:
         settled      = _money(settled_net_paise or 0)
         refunds      = _money(refund_paise or 0)
 
-        # Merchant's share of *online* gross is gross minus Bittu's flat
-        # 5% commission. Cash never has commission.
-        merchant_share_online = (online_gross * Decimal("0.95")).quantize(Decimal("0.01"))
+        # Merchant's share of *online* gross is gross minus the 2.065%
+        # total deduction (1.75% + GST). Cash never has commission.
+        merchant_share_online = (online_gross * _LEGACY_MERCHANT_RATE).quantize(Decimal("0.01"))
         commission = online_gross - merchant_share_online
         if commission < 0:
             commission = Decimal("0.00")
@@ -964,9 +965,9 @@ class MerchantFinanceService:
             }
 
         async with get_connection() as conn:
-            # Gross captured payments. The merchant's share is gross × 0.95
-            # (Bittu's flat 5 % commission). We use captured payments (not
-            # rzp_route_transfers) because the Route transfer worker runs
+            # Gross captured payments. The merchant's share is gross × 0.97935
+            # (2.065 % total deduction = 1.75 % + GST). We use captured payments
+            # (not rzp_route_transfers) because the Route transfer worker runs
             # out-of-band and a freshly-captured payment may not yet have
             # a transfer row — but the money IS owed to the merchant, so
             # it must surface in the ledger balance immediately.
@@ -1012,7 +1013,7 @@ class MerchantFinanceService:
         refunds_r    = _money(refunded or 0)
 
         # Merchant share of captured payments, net of commission.
-        merchant_share = (online_gross * Decimal("0.95")).quantize(Decimal("0.01"))
+        merchant_share = (online_gross * _LEGACY_MERCHANT_RATE).quantize(Decimal("0.01"))
         commission     = (online_gross - merchant_share).quantize(Decimal("0.01"))
 
         # Owed to merchant but not yet paid out to their bank.
@@ -1039,8 +1040,8 @@ class MerchantFinanceService:
 
             # ── full bifurcation (lifetime, in rupees) ─────────────────
             # gross_sales         = ∑ captured payments (what the customer paid)
-            # platform_commission = 5 % kept by Bittu (gross - merchant_earned)
-            # merchant_earned     = 95 % of gross — what the merchant has ever earned
+            # platform_commission = 2.065 % kept (gross - merchant_earned)
+            # merchant_earned     = 97.935 % of gross — what the merchant has ever earned
             # transferred_to_linked = ∑ Route transfers that have been created
             # settled_amount      = ∑ amounts already paid out to merchant's bank
             # refunded_amount     = ∑ refunds the merchant has issued (or are pending)
