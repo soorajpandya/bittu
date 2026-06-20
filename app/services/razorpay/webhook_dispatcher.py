@@ -668,12 +668,12 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
                     route_product_status=_prod,
                 )
             else:
-                # Bittu withholds 0.425% (0.36% fee + GST); the merchant
+                # Bittu withholds 0.415% (0.3517% fee + GST); the merchant
                 # transfer is gross - bittu_fee - estimated_rzp_charge.
                 # The Razorpay charge is an *estimate* here (the actual fee
                 # isn't known until settlement) and is trued-up later from
                 # rzp_settlements/rzp_route_transfers — so the Bittu margin
-                # stays exact at 0.425% regardless of estimate error.
+                # stays exact at 0.415% regardless of estimate error.
                 # ``fee_service.compute_fee`` is kept for audit metadata only.
                 from app.services.razorpay.fee_policy import (
                     provisional_merchant_transfer_paise,

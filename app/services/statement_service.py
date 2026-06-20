@@ -82,16 +82,16 @@ TOTAL_DEDUCTION_RATE   = (
     PLATFORM_FEE_BASE_RATE * (Decimal("1.000000") + GST_RATE)
 )  # = 0.020650  (2.065 % of gross, incl GST)
 
-# Razorpay's automatic server-side cut: ~1.64 % of gross (incl. their GST).
-RAZORPAY_TOTAL_RATE  = Decimal("0.016400")   # 1.6400 % of gross (incl GST)
+# Razorpay's automatic server-side cut: 1.65 % of gross (incl. their GST).
+RAZORPAY_TOTAL_RATE  = Decimal("0.016500")   # 1.6500 % of gross (incl GST)
 
 # Remainder of the deduction after Razorpay's slice = our gross platform pool.
 # The pool is GST-inclusive; reverse-extract the base platform fee, then
 # treat GST as the residual so the three components reconcile exactly.
-PLATFORM_POOL_RATE   = TOTAL_DEDUCTION_RATE - RAZORPAY_TOTAL_RATE  # 0.004250
+PLATFORM_POOL_RATE   = TOTAL_DEDUCTION_RATE - RAZORPAY_TOTAL_RATE  # 0.004150
 BITTU_FEE_RATE       = (PLATFORM_POOL_RATE / (Decimal("1") + GST_RATE)).quantize(
     Decimal("0.000001"), rounding=ROUND_HALF_UP
-)  # ≈ 0.003602  (0.3602 % of gross, ex-GST)
+)  # ≈ 0.003517  (0.3517 % of gross, ex-GST)
 
 
 def _q2(val) -> Decimal:
@@ -127,8 +127,8 @@ def _calc_settlement_breakdown(gross) -> dict:
 
     Worked example for gross = ₹100.00:
         total_deduction = 2.0650   net_to_merchant = 97.9350
-        razorpay_cut    = 1.6400   platform_pool   = 0.4250
-        bittu_fee       = 0.3602   gst_on_fee      = 0.0648
+        razorpay_cut    = 1.6500   platform_pool   = 0.4150
+        bittu_fee       = 0.3517   gst_on_fee      = 0.0633
     """
     gross = _q2(gross)
 

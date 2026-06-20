@@ -3,8 +3,8 @@
 Pricing model (integrated payments): the merchant is charged a 1.75% base
 service fee + 18% GST = 2.065% total of gross. That total splits into:
 
-    Razorpay haircut (incl. GST)  ~1.64%  (intercepted server-side)
-    Bittu withholding (incl. GST)  0.425% (= 0.36% base fee + 18% GST)
+    Razorpay haircut (incl. GST)  ~1.65%  (intercepted server-side)
+    Bittu withholding (incl. GST)  0.415% (= 0.3517% base fee + 18% GST)
     ───────────────────────────────────────
     total merchant deduction       2.065%
 
@@ -14,24 +14,24 @@ actual values stored on rzp_payments / rzp_settlements /
 rzp_route_transfers.
 
     merchant_settlement = gross - razorpay_total_charges - bittu_fee
-    bittu_fee           = gross * 0.425%   (0.36% fee + 18% GST, all methods)
+    bittu_fee           = gross * 0.415%   (0.3517% fee + 18% GST, all methods)
 """
 from __future__ import annotations
 
 import os
 from decimal import Decimal, ROUND_HALF_UP
 
-# ── Bittu's gross withholding: 0.36% base platform fee + 18% GST = 0.425% ──
+# ── Bittu's gross withholding: 0.3517% base platform fee + 18% GST = 0.415% ──
 # This is what Bittu keeps from each transaction (revenue + GST payable),
 # NOT the merchant-facing headline fee (that is 1.75% + GST incl. Razorpay).
-BITTU_FEE_RATE = Decimal("0.00425")         # 0.425% of gross, all methods
+BITTU_FEE_RATE = Decimal("0.00415")         # 0.415% of gross, all methods
 
 # Provisional Razorpay-charge estimate used ONLY to compute the
 # capture-time transfer. Trued-up from actuals at settlement, so an
 # imperfect estimate self-corrects and never changes the Bittu margin.
 # Tunable via env without code change; NOT a billing assumption.
 _DEFAULT_RZP_ESTIMATE_RATE = Decimal(
-    os.getenv("BITTU_RZP_ESTIMATE_RATE", "0.0164")  # ~1.64% incl GST
+    os.getenv("BITTU_RZP_ESTIMATE_RATE", "0.0165")  # ~1.65% incl GST
 )
 _CASH_METHODS = {"cash", "counter", "cod"}
 
@@ -42,7 +42,7 @@ def _q_paise(amount_paise: Decimal | int) -> int:
 
 
 def bittu_fee_paise(gross_paise: int) -> int:
-    """Bittu gross withholding (0.36% fee + 18% GST = 0.425%), in paise."""
+    """Bittu gross withholding (0.3517% fee + 18% GST = 0.415%), in paise."""
     return _q_paise(Decimal(gross_paise) * BITTU_FEE_RATE)
 
 
