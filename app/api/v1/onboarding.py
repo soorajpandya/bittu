@@ -42,6 +42,12 @@ class VerifySubscriptionIn(BaseModel):
     razorpay_signature: str = Field(..., min_length=16)
 
 
+class VerifyDeviceIn(BaseModel):
+    razorpay_payment_id: str = Field(..., min_length=4)
+    razorpay_order_id: str = Field(..., min_length=4)
+    razorpay_signature: str = Field(..., min_length=16)
+
+
 @router.get("/plans")
 async def list_plans(user: UserContext = Depends(get_current_user)):
     """Server-authoritative plan catalog. All prices EXCLUDE GST."""
@@ -87,5 +93,39 @@ async def verify_subscription(
         user,
         razorpay_payment_id=body.razorpay_payment_id,
         razorpay_subscription_id=body.razorpay_subscription_id,
+        razorpay_signature=body.razorpay_signature,
+    )
+
+
+# ── One-time device fee (business / enterprise) — separate from the gate ────
+
+
+@router.get("/device-fee")
+async def get_device_fee(user: UserContext = Depends(get_current_user)):
+    """Return the device-fee requirement/status from onboarding state."""
+    state = await subscription_service.get_onboarding_state(user)
+    return state["device"]
+
+
+@router.post("/device-fee")
+async def create_device_order(user: UserContext = Depends(get_current_user)):
+    """Create (or reuse) the one-time device-fee order for the selected plan.
+
+    Returns ``required: false`` for plans without a device fee. For
+    business/enterprise returns the ``razorpay_order_id``, amount + GST, and
+    ``key_id`` the FE needs to open Razorpay Checkout (one-time order).
+    """
+    return await subscription_service.create_or_get_device_order(user)
+
+
+@router.post("/device-fee/verify")
+async def verify_device(
+    body: VerifyDeviceIn, user: UserContext = Depends(get_current_user)
+):
+    """Verify the Razorpay Checkout device-fee (order) callback."""
+    return await subscription_service.verify_device_payment(
+        user,
+        razorpay_order_id=body.razorpay_order_id,
+        razorpay_payment_id=body.razorpay_payment_id,
         razorpay_signature=body.razorpay_signature,
     )

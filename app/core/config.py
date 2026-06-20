@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     # One-time device fee (paise) for business/enterprise. Informational here;
     # collected as a separate one-time order, NOT part of the subscription gate.
     RZP_DEVICE_FEE_PAISE: int = 3000000  # ₹30,000
+    # GST rate (percent) added on top of GST-exclusive onboarding prices
+    # (software subscription + one-time device fee). 18% standard SaaS/goods.
+    ONBOARDING_GST_PERCENT: float = 18.0
 
     # ── PhonePe ──
     PHONEPE_CLIENT_ID: str = ""

@@ -16,64 +16,75 @@ Responsibilities
 from __future__ import annotations
 
 import json
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Optional
 
 from app.core.config import get_settings
 from app.core.database import get_connection, get_service_connection
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.logging import get_logger
+from app.services.razorpay import orders as rzp_orders
 from app.services.razorpay import subscriptions as rzp_subscriptions
-from app.services.razorpay.payments import verify_subscription_payment_signature
+from app.services.razorpay.payments import (
+    verify_order_payment_signature,
+    verify_subscription_payment_signature,
+)
 
 logger = get_logger(__name__)
 
 
 # ── Plan catalog (server-authoritative; prices EXCLUDE GST) ─────────────────
+# Canonical metadata. The public `/onboarding/plans` shape is derived from
+# this via `_plan_public()` to exactly match the FE contract.
 
 PLAN_CATALOG: dict[str, dict[str, Any]] = {
     "starter": {
         "id": "starter",
-        "display_name": "Software",
-        "subscription_amount_year": 5000,
-        "device_one_time": 0,
-        "txn_fee_percent": 0.0,
-        "integrated_payments": False,
-        "requires_subscription": True,
-        "requires_device": False,
-        "description": "₹5,000 / year. Payments via merchant's own UPI.",
+        "name": "Software",
+        "tagline": "For restaurants using their own UPI.",
+        "subscription_amount": 5000,
+        "subscription_interval": "yearly",
+        "device_fee_amount": 0,
+        "transaction_fee_percent": None,
+        "reconciliation": "manual",
+        "payments": "own_upi",
+        "payment_gated": True,
     },
     "business": {
         "id": "business",
-        "display_name": "Software + Device",
-        "subscription_amount_year": 5000,
-        "device_one_time": 30000,
-        "txn_fee_percent": 0.0,
-        "integrated_payments": False,
-        "requires_subscription": True,
-        "requires_device": True,
-        "description": "₹30,000 one-time device + ₹5,000 / year. Own UPI.",
+        "name": "Software + Device",
+        "tagline": "Dedicated Bittu POS hardware.",
+        "subscription_amount": 5000,
+        "subscription_interval": "yearly",
+        "device_fee_amount": 30000,
+        "transaction_fee_percent": None,
+        "reconciliation": "manual",
+        "payments": "own_upi",
+        "payment_gated": True,
     },
     "growth": {
         "id": "growth",
-        "display_name": "Integrated Payments",
-        "subscription_amount_year": 0,
-        "device_one_time": 0,
-        "txn_fee_percent": 1.75,
-        "integrated_payments": True,
-        "requires_subscription": False,
-        "requires_device": False,
-        "description": "₹0 subscription, 1.75% per transaction. Auto reconciliation.",
+        "name": "Integrated Payments",
+        "tagline": "Automatic reconciliation included.",
+        "subscription_amount": 0,
+        "subscription_interval": None,
+        "device_fee_amount": 0,
+        "transaction_fee_percent": 1.75,
+        "reconciliation": "automatic",
+        "payments": "integrated",
+        "payment_gated": False,
     },
     "enterprise": {
         "id": "enterprise",
-        "display_name": "Complete Suite",
-        "subscription_amount_year": 0,
-        "device_one_time": 30000,
-        "txn_fee_percent": 1.75,
-        "integrated_payments": True,
-        "requires_subscription": False,
-        "requires_device": True,
-        "description": "₹30,000 one-time device + 1.75% per transaction.",
+        "name": "Complete Suite",
+        "tagline": "Hardware + payments in one platform.",
+        "subscription_amount": 0,
+        "subscription_interval": None,
+        "device_fee_amount": 30000,
+        "transaction_fee_percent": 1.75,
+        "reconciliation": "automatic",
+        "payments": "integrated",
+        "payment_gated": False,
     },
 }
 
@@ -87,18 +98,52 @@ PAID_STATUSES = frozenset({"authenticated", "active"})
 REUSABLE_STATUSES = frozenset({"created", "authenticated", "active", "pending"})
 
 
+def _requires_subscription(meta: dict[str, Any]) -> bool:
+    return bool(meta.get("payment_gated"))
+
+
+def _requires_device(meta: dict[str, Any]) -> bool:
+    return int(meta.get("device_fee_amount") or 0) > 0
+
+
+def _plan_public(meta: dict[str, Any]) -> dict[str, Any]:
+    """Project canonical metadata into the FE `/onboarding/plans` contract."""
+    device = (
+        {"amount": meta["device_fee_amount"], "billing": "separate_one_time"}
+        if _requires_device(meta)
+        else None
+    )
+    return {
+        "id": meta["id"],
+        "name": meta["name"],
+        "tagline": meta["tagline"],
+        "subscription": {
+            "amount": meta["subscription_amount"],
+            "interval": meta["subscription_interval"],
+        },
+        "device_fee": device,
+        "transaction_fee_percent": meta["transaction_fee_percent"],
+        "reconciliation": meta["reconciliation"],
+        "payments": meta["payments"],
+        "payment_gated": meta["payment_gated"],
+    }
+
+
 def get_plan_catalog() -> dict[str, Any]:
     """Return the full plan catalog plus billing metadata for the FE."""
     return {
         "default_plan": DEFAULT_PLAN,
         "prices_exclude_gst": PRICES_EXCLUDE_GST,
         "currency": "INR",
-        "plans": list(PLAN_CATALOG.values()),
+        "gst_percent": get_settings().ONBOARDING_GST_PERCENT,
+        "plans": [_plan_public(m) for m in PLAN_CATALOG.values()],
     }
 
 
 def _plan_meta(plan: Optional[str]) -> Optional[dict[str, Any]]:
-    return PLAN_CATALOG.get(plan) if plan else None
+    """Public-shaped metadata for a single plan (used in onboarding state)."""
+    meta = PLAN_CATALOG.get(plan) if plan else None
+    return _plan_public(meta) if meta else None
 
 
 def _rzp_plan_id_for(plan: str) -> Optional[str]:
@@ -182,7 +227,7 @@ class SubscriptionService:
             raise ValidationError("Select a plan before starting subscription payment.")
         meta = PLAN_CATALOG[plan]
 
-        if not meta["requires_subscription"]:
+        if not _requires_subscription(meta):
             # Integrated-payments plans: nothing to pay upfront.
             return {
                 "required": False,
@@ -328,19 +373,194 @@ class SubscriptionService:
         )
         return await self.get_onboarding_state(user)
 
+    # ── one-time device fee (separate from the subscription gate) ─────────────
+
+    @staticmethod
+    def _device_amounts(meta: dict[str, Any]) -> dict[str, Any]:
+        """Compute device fee + GST. Returns rupee and paise figures."""
+        amount = Decimal(int(meta.get("device_fee_amount") or 0))
+        gst_pct = Decimal(str(get_settings().ONBOARDING_GST_PERCENT))
+        gst = (amount * gst_pct / Decimal(100)).quantize(Decimal("0.01"), ROUND_HALF_UP)
+        total = amount + gst
+        return {
+            "amount": int(amount),
+            "gst": float(gst),
+            "total": float(total),
+            "gst_percent": float(gst_pct),
+            "amount_paise": int((amount * 100).quantize(Decimal("1"), ROUND_HALF_UP)),
+            "gst_paise": int((gst * 100).quantize(Decimal("1"), ROUND_HALF_UP)),
+            "total_paise": int((total * 100).quantize(Decimal("1"), ROUND_HALF_UP)),
+        }
+
+    async def _latest_device_order_row(self, restaurant_id: str) -> Optional[dict]:
+        async with get_connection() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT * FROM merchant_device_orders
+                WHERE restaurant_id = $1::uuid
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                restaurant_id,
+            )
+        return dict(row) if row else None
+
+    def _device_public(
+        self, row: Optional[dict], *, required: bool, meta: Optional[dict]
+    ) -> dict:
+        if not required or not meta:
+            return {"required": False, "status": None}
+        amounts = self._device_amounts(meta)
+        base = {
+            "required": True,
+            "amount": amounts["amount"],
+            "gst": amounts["gst"],
+            "gst_percent": amounts["gst_percent"],
+            "total": amounts["total"],
+            "currency": "INR",
+            "key_id": get_settings().RAZORPAY_KEY_ID,
+            "billing": "separate_one_time",
+        }
+        if not row:
+            base["status"] = None
+            return base
+        base.update(
+            {
+                "id": str(row["id"]),
+                "status": row["status"],
+                "razorpay_order_id": row["razorpay_order_id"],
+                "razorpay_payment_id": row.get("razorpay_payment_id"),
+                "paid": row["status"] == "paid",
+            }
+        )
+        return base
+
+    async def create_or_get_device_order(self, user) -> dict:
+        rest = await self._resolve_restaurant(user)
+        plan = rest.get("plan")
+        if not plan:
+            raise ValidationError("Select a plan before starting the device payment.")
+        meta = PLAN_CATALOG[plan]
+        if not _requires_device(meta):
+            return {
+                "required": False,
+                "plan": plan,
+                "reason": "This plan has no device fee.",
+            }
+
+        existing = await self._latest_device_order_row(rest["restaurant_id"])
+        if existing and existing["status"] in ("created",):
+            return self._device_public(existing, required=True, meta=meta)
+        if existing and existing["status"] == "paid":
+            return self._device_public(existing, required=True, meta=meta)
+
+        amounts = self._device_amounts(meta)
+        order = await rzp_orders.create_order(
+            amount_paise=amounts["total_paise"],
+            currency="INR",
+            receipt=f"device-{rest['restaurant_id'][:8]}",
+            notes={
+                "restaurant_id": rest["restaurant_id"],
+                "user_id": str(user.user_id),
+                "plan": plan,
+                "type": "device_fee",
+            },
+            merchant_id=rest["restaurant_id"],
+        )
+
+        async with get_connection() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO merchant_device_orders (
+                    restaurant_id, user_id, plan,
+                    amount_paise, gst_paise, total_paise,
+                    razorpay_order_id, status, notes, raw
+                ) VALUES (
+                    $1::uuid, $2, $3,
+                    $4, $5, $6,
+                    $7, 'created', $8::jsonb, $9::jsonb
+                )
+                ON CONFLICT (razorpay_order_id) DO UPDATE SET
+                    raw = EXCLUDED.raw, updated_at = now()
+                RETURNING *
+                """,
+                rest["restaurant_id"],
+                str(user.user_id),
+                plan,
+                amounts["amount_paise"],
+                amounts["gst_paise"],
+                amounts["total_paise"],
+                order.get("id"),
+                json.dumps(order.get("notes") or {}),
+                json.dumps(order),
+            )
+        logger.info(
+            "onboarding_device_order_created",
+            restaurant_id=rest["restaurant_id"],
+            plan=plan,
+            razorpay_order_id=order.get("id"),
+        )
+        return self._device_public(dict(row), required=True, meta=meta)
+
+    async def verify_device_payment(
+        self,
+        user,
+        *,
+        razorpay_order_id: str,
+        razorpay_payment_id: str,
+        razorpay_signature: str,
+    ) -> dict:
+        if not verify_order_payment_signature(
+            razorpay_order_id=razorpay_order_id,
+            razorpay_payment_id=razorpay_payment_id,
+            signature=razorpay_signature,
+        ):
+            raise ValidationError("Invalid device payment signature.")
+
+        rest = await self._resolve_restaurant(user)
+        async with get_connection() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE merchant_device_orders
+                SET status              = 'paid',
+                    razorpay_payment_id = $2,
+                    paid_at             = COALESCE(paid_at, now()),
+                    updated_at          = now()
+                WHERE razorpay_order_id = $1
+                  AND restaurant_id = $3::uuid
+                RETURNING *
+                """,
+                razorpay_order_id,
+                razorpay_payment_id,
+                rest["restaurant_id"],
+            )
+        if row is None:
+            raise NotFoundError("DeviceOrder")
+        logger.info(
+            "onboarding_device_payment_verified",
+            restaurant_id=rest["restaurant_id"],
+            razorpay_order_id=razorpay_order_id,
+        )
+        return await self.get_onboarding_state(user)
+
     # ── onboarding state composition ──────────────────────────────────────────
 
     async def get_onboarding_state(self, user) -> dict:
         rest = await self._resolve_restaurant(user)
         plan = rest.get("plan")
+        canon = PLAN_CATALOG.get(plan) if plan else None
         meta = _plan_meta(plan)
         sub_row = await self._latest_subscription_row(rest["restaurant_id"])
 
-        requires_subscription = bool(meta and meta["requires_subscription"])
+        requires_subscription = bool(canon and _requires_subscription(canon))
+        requires_device = bool(canon and _requires_device(canon))
         sub_status = sub_row["status"] if sub_row else None
         subscription_paid = (not requires_subscription) or (
             sub_status in PAID_STATUSES
         )
+
+        device_row = await self._latest_device_order_row(rest["restaurant_id"])
+        device_paid = bool(device_row and device_row["status"] == "paid")
 
         kyc_status = await self._kyc_status(rest["restaurant_id"])
         kyc_submitted = kyc_status not in (None, "NOT_SUBMITTED")
@@ -354,18 +574,25 @@ class SubscriptionService:
             "plan": plan,
             "plan_meta": meta,
             "requires_subscription": requires_subscription,
+            "requires_device": requires_device,
             "subscription": self._subscription_public(sub_row, required=requires_subscription)
             if sub_row
             else {"required": requires_subscription, "status": None},
+            "device": self._device_public(device_row, required=requires_device, meta=canon),
             "subscription_paid": subscription_paid,
+            "device_paid": device_paid,
             "kyc_status": kyc_status,
+            # ── top-level flags (FE contract §5) ──
+            "plan_selected": plan_selected,
+            "kyc_submitted": kyc_submitted,
+            "can_proceed_to_settings": can_proceed_to_settings,
+            "onboarding_complete": onboarding_complete,
+            # retained for back-compat
             "steps": {
                 "plan_selected": plan_selected,
                 "subscription_paid": subscription_paid,
                 "kyc_submitted": kyc_submitted,
             },
-            "can_proceed_to_settings": can_proceed_to_settings,
-            "onboarding_complete": onboarding_complete,
         }
 
     async def _kyc_status(self, restaurant_id: str) -> Optional[str]:
