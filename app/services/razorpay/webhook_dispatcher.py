@@ -1470,6 +1470,28 @@ async def _handle_va_credited(envelope: dict, signature: Optional[str]) -> dict:
 # Invoices (Phase 9)
 # ════════════════════════════════════════════════════════════════════════
 
+# ════════════════════════════════════════════════════════════════════════
+# Subscriptions (onboarding SaaS billing)
+# ════════════════════════════════════════════════════════════════════════
+
+async def _handle_subscription(envelope: dict, signature: Optional[str]) -> dict:
+    """Mirror a subscription state transition into ``merchant_subscriptions``.
+
+    Drives the onboarding payment gate: once a subscription is
+    authenticated/active the merchant may proceed to settings + KYC. Never
+    raises out of the webhook path (subscription_service swallows + logs).
+    """
+    event_name = (envelope or {}).get("event") or ""
+    try:
+        from app.services.subscription_service import subscription_service
+        return await subscription_service.handle_subscription_webhook(
+            event=event_name, envelope=envelope
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("rzp_subscription_webhook_failed", event_name=event_name)
+        return {"status": "failed", "event": event_name}
+
+
 async def _handle_invoice(envelope: dict, signature: Optional[str]) -> dict:
     """
     Mirror an invoice state transition into ``rzp_invoices``.
@@ -1543,6 +1565,17 @@ _HANDLERS: dict[str, Callable[[dict, Optional[str]], Awaitable[dict]]] = {
     _events.EVENT_INVOICE_PAID:             _handle_invoice,
     _events.EVENT_INVOICE_PARTIALLY_PAID:   _handle_invoice,
     _events.EVENT_INVOICE_EXPIRED:          _handle_invoice,
+    # subscriptions (onboarding SaaS billing)
+    _events.EVENT_SUBSCRIPTION_AUTHENTICATED: _handle_subscription,
+    _events.EVENT_SUBSCRIPTION_ACTIVATED:     _handle_subscription,
+    _events.EVENT_SUBSCRIPTION_CHARGED:       _handle_subscription,
+    _events.EVENT_SUBSCRIPTION_PENDING:       _handle_subscription,
+    _events.EVENT_SUBSCRIPTION_HALTED:        _handle_subscription,
+    _events.EVENT_SUBSCRIPTION_CANCELLED:     _handle_subscription,
+    _events.EVENT_SUBSCRIPTION_COMPLETED:     _handle_subscription,
+    _events.EVENT_SUBSCRIPTION_PAUSED:        _handle_subscription,
+    _events.EVENT_SUBSCRIPTION_RESUMED:       _handle_subscription,
+    _events.EVENT_SUBSCRIPTION_UPDATED:       _handle_subscription,
     # informational / record-only (Phase >3 fills in)
     _events.EVENT_DOWNTIME_STARTED:         _record_only,
     _events.EVENT_DOWNTIME_UPDATED:         _record_only,

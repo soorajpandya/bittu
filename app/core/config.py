@@ -67,6 +67,21 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_SECRET: str
     RAZORPAY_WEBHOOK_SECRET: str
 
+    # ── Onboarding SaaS subscriptions (Razorpay Subscriptions) ──
+    # Razorpay Plan ids backing each recurring "Software" plan. These are
+    # created once in the Razorpay dashboard (Subscriptions → Plans). The
+    # backend creates a per-merchant subscription against the matching plan
+    # id when the merchant picks starter/business. growth/enterprise have a
+    # ₹0 subscription (integrated-payments revenue model) so no plan id.
+    # Defaults point at the existing ₹5,000/yr plan; override per-tier via env.
+    RZP_PLAN_ID_STARTER: str = "plan_T2h5aH7NNRKuLt"
+    RZP_PLAN_ID_BUSINESS: str = "plan_T2h5aH7NNRKuLt"
+    # Number of billing cycles Razorpay should schedule for a new subscription.
+    RZP_SUBSCRIPTION_TOTAL_COUNT: int = 100
+    # One-time device fee (paise) for business/enterprise. Informational here;
+    # collected as a separate one-time order, NOT part of the subscription gate.
+    RZP_DEVICE_FEE_PAISE: int = 3000000  # ₹30,000
+
     # ── PhonePe ──
     PHONEPE_CLIENT_ID: str = ""
     PHONEPE_CLIENT_SECRET: str = ""

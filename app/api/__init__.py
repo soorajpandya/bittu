@@ -203,6 +203,9 @@ router.include_router(_merchant_ledger.router)
 # ── Sub-Merchant Agreement acceptance (append-only acceptance audit trail) ──
 from app.api.v1 import merchant_agreement as _merchant_agreement
 router.include_router(_merchant_agreement.router)
+# ── Onboarding — plan selection + Razorpay SaaS-subscription payment gate ──
+from app.api.v1 import onboarding as _onboarding
+router.include_router(_onboarding.router)
 # ── Escrow Ledger (T+N held funds tracking, Phase 2) ──
 from app.api.v1 import escrow as _escrow
 router.include_router(_escrow.router)

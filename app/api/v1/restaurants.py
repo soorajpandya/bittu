@@ -37,6 +37,8 @@ class UpdateRestaurantIn(BaseModel):
     opening_time: Optional[str] = None
     closing_time: Optional[str] = None
     avg_prep_time: Optional[int] = None
+    # Onboarding plan: starter | business | growth | enterprise.
+    plan: Optional[str] = None
 
 
 @router.get("")

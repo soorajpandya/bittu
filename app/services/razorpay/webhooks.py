@@ -12,8 +12,12 @@ NOTE: Event names below match the Razorpay dashboard exactly. Anything
 outside `HANDLED_EVENTS` is silently acknowledged (200 OK) so Razorpay
 stops retrying — Phase 3 logs them at INFO level.
 
+Onboarding SaaS subscriptions (subscribe on the dashboard):
+  * subscription.*           — recurring "Software" plan billing (starter,
+                               business). Drives the onboarding payment gate
+                               via app.services.subscription_service.
+
 Out of scope (do NOT subscribe on the dashboard):
-  * subscription.*           — no subscription product
   * payment_link.*           — using orders + QR instead
   * fund_account.*           — RazorpayX, out of scope
   * account.*                — partner-mode, out of scope
@@ -71,6 +75,31 @@ EVENT_REFUND_SPEED_CHANGED     = "refund.speed_changed"
 EVENT_TRANSFER_PROCESSED       = "transfer.processed"
 EVENT_TRANSFER_FAILED          = "transfer.failed"
 
+# ── Subscriptions (onboarding SaaS billing) ───────────────────────────────
+EVENT_SUBSCRIPTION_AUTHENTICATED = "subscription.authenticated"
+EVENT_SUBSCRIPTION_ACTIVATED     = "subscription.activated"
+EVENT_SUBSCRIPTION_CHARGED       = "subscription.charged"
+EVENT_SUBSCRIPTION_PENDING       = "subscription.pending"
+EVENT_SUBSCRIPTION_HALTED        = "subscription.halted"
+EVENT_SUBSCRIPTION_CANCELLED     = "subscription.cancelled"
+EVENT_SUBSCRIPTION_COMPLETED     = "subscription.completed"
+EVENT_SUBSCRIPTION_PAUSED        = "subscription.paused"
+EVENT_SUBSCRIPTION_RESUMED       = "subscription.resumed"
+EVENT_SUBSCRIPTION_UPDATED       = "subscription.updated"
+
+SUBSCRIPTION_EVENTS: frozenset[str] = frozenset({
+    EVENT_SUBSCRIPTION_AUTHENTICATED,
+    EVENT_SUBSCRIPTION_ACTIVATED,
+    EVENT_SUBSCRIPTION_CHARGED,
+    EVENT_SUBSCRIPTION_PENDING,
+    EVENT_SUBSCRIPTION_HALTED,
+    EVENT_SUBSCRIPTION_CANCELLED,
+    EVENT_SUBSCRIPTION_COMPLETED,
+    EVENT_SUBSCRIPTION_PAUSED,
+    EVENT_SUBSCRIPTION_RESUMED,
+    EVENT_SUBSCRIPTION_UPDATED,
+})
+
 
 HANDLED_EVENTS: frozenset[str] = frozenset({
     # payments
@@ -112,6 +141,17 @@ HANDLED_EVENTS: frozenset[str] = frozenset({
     # route transfers
     EVENT_TRANSFER_PROCESSED,
     EVENT_TRANSFER_FAILED,
+    # subscriptions (onboarding SaaS billing)
+    EVENT_SUBSCRIPTION_AUTHENTICATED,
+    EVENT_SUBSCRIPTION_ACTIVATED,
+    EVENT_SUBSCRIPTION_CHARGED,
+    EVENT_SUBSCRIPTION_PENDING,
+    EVENT_SUBSCRIPTION_HALTED,
+    EVENT_SUBSCRIPTION_CANCELLED,
+    EVENT_SUBSCRIPTION_COMPLETED,
+    EVENT_SUBSCRIPTION_PAUSED,
+    EVENT_SUBSCRIPTION_RESUMED,
+    EVENT_SUBSCRIPTION_UPDATED,
 })
 
 __all__ = [
@@ -146,4 +186,15 @@ __all__ = [
     "EVENT_REFUND_SPEED_CHANGED",
     "EVENT_TRANSFER_PROCESSED",
     "EVENT_TRANSFER_FAILED",
+    "SUBSCRIPTION_EVENTS",
+    "EVENT_SUBSCRIPTION_AUTHENTICATED",
+    "EVENT_SUBSCRIPTION_ACTIVATED",
+    "EVENT_SUBSCRIPTION_CHARGED",
+    "EVENT_SUBSCRIPTION_PENDING",
+    "EVENT_SUBSCRIPTION_HALTED",
+    "EVENT_SUBSCRIPTION_CANCELLED",
+    "EVENT_SUBSCRIPTION_COMPLETED",
+    "EVENT_SUBSCRIPTION_PAUSED",
+    "EVENT_SUBSCRIPTION_RESUMED",
+    "EVENT_SUBSCRIPTION_UPDATED",
 ]

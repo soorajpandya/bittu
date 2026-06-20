@@ -34,6 +34,21 @@ def verify_webhook_signature(*, body: bytes, signature: str) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
+def verify_subscription_payment_signature(
+    *, razorpay_payment_id: str, razorpay_subscription_id: str, signature: str
+) -> bool:
+    """Verify the Razorpay Checkout callback for a subscription.
+
+    For subscriptions the signed message is ``payment_id|subscription_id``
+    (note the order is the *opposite* of the orders flow) HMAC-SHA256'd with
+    the key secret. See Razorpay "Handle the Subscription Payment" docs.
+    """
+    secret = get_settings().RAZORPAY_KEY_SECRET.encode()
+    msg = f"{razorpay_payment_id}|{razorpay_subscription_id}".encode()
+    expected = hmac.new(secret, msg, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+
 # ── REST wrappers ─────────────────────────────────────────────────────────
 
 
