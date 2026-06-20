@@ -206,6 +206,9 @@ router.include_router(_merchant_agreement.router)
 # ── Onboarding — plan selection + Razorpay SaaS-subscription payment gate ──
 from app.api.v1 import onboarding as _onboarding
 router.include_router(_onboarding.router)
+# ── Bittu AI — Restaurant Operating Intelligence Layer (assistant, briefing, insights) ──
+from app.api.v1 import bittu_ai as _bittu_ai
+router.include_router(_bittu_ai.router)
 # ── Escrow Ledger (T+N held funds tracking, Phase 2) ──
 from app.api.v1 import escrow as _escrow
 router.include_router(_escrow.router)

@@ -124,6 +124,11 @@ class Settings(BaseSettings):
     # ── OpenAI ──
     OPENAI_API_KEY: str = ""
 
+    # ── Bittu AI (business assistant) ──
+    # Reuses OPENAI_API_KEY. Cheap text model by default; tool-calling capable.
+    BITTU_AI_MODEL: str = "gpt-4o-mini"
+    BITTU_AI_ENABLED: bool = True
+
     # ── Google Cloud Vision ──
     GOOGLE_VISION_API_KEY: str = ""
 
