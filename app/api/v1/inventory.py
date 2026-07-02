@@ -46,6 +46,8 @@ from app.core.exceptions import NotFoundError, ValidationError
 from app.services.activity_log_service import log_activity
 from app.services.inventory_service import InventoryService
 from app.services.inventory_event_service import inventory_event_service
+from app.services.inventory_conversion_service import inventory_conversion_service
+from app.services.inventory_sales_service import inventory_sales_service
 
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
 _svc = InventoryService()
@@ -1035,3 +1037,422 @@ async def reconciliation_drift(
             user.restaurant_id,
         )
     return [dict(r) for r in rows]
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# CONVERSIONS  (semi-finished goods — raw materials → dosa batter, etc.)
+# ════════════════════════════════════════════════════════════════════════════
+
+class ConversionInputIn(BaseModel):
+    ingredient_id: str
+    quantity_required: Decimal = Field(..., gt=0)
+    unit: Optional[str] = None
+    waste_percent: Decimal = Field(default=Decimal("0"), ge=0)
+
+
+class ConversionRecipeIn(BaseModel):
+    output_ingredient_id: str
+    yield_quantity: Decimal = Field(..., gt=0)
+    yield_unit: Optional[str] = None
+    name: Optional[str] = None
+    notes: Optional[str] = None
+    inputs: list[ConversionInputIn] = Field(..., min_length=1)
+
+
+@router.get("/conversion-recipes")
+async def list_conversion_recipes(
+    output_ingredient_id: Optional[str] = None,
+    user: UserContext = Depends(require_permission("inventory.read")),
+):
+    if not user.restaurant_id:
+        return []
+    return await inventory_conversion_service.list_recipes(
+        restaurant_id=user.restaurant_id,
+        output_ingredient_id=output_ingredient_id,
+    )
+
+
+@router.post("/conversion-recipes", status_code=201)
+async def create_conversion_recipe(
+    body: ConversionRecipeIn,
+    user: UserContext = Depends(require_permission("inventory.update")),
+):
+    if not user.restaurant_id:
+        raise ValidationError("restaurant context required")
+    return await inventory_conversion_service.create_recipe(
+        restaurant_id=user.restaurant_id,
+        branch_id=user.branch_id,
+        output_ingredient_id=body.output_ingredient_id,
+        yield_quantity=body.yield_quantity,
+        yield_unit=body.yield_unit,
+        inputs=[i.model_dump() for i in body.inputs],
+        name=body.name,
+        notes=body.notes,
+        created_by=user.user_id,
+    )
+
+
+class ConvertRunInputIn(BaseModel):
+    ingredient_id: str
+    quantity: Decimal = Field(..., gt=0)
+
+
+class ConvertRunIn(BaseModel):
+    output_ingredient_id: str
+    produced_quantity: Decimal = Field(..., gt=0)
+    output_unit: Optional[str] = None
+    conversion_recipe_id: Optional[str] = None
+    inputs: Optional[list[ConvertRunInputIn]] = None
+    notes: Optional[str] = None
+
+
+@router.get("/conversions")
+async def list_conversions(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: UserContext = Depends(require_permission("inventory.read")),
+):
+    if not user.restaurant_id:
+        return []
+    return await inventory_conversion_service.list_conversions(
+        restaurant_id=user.restaurant_id, limit=limit, offset=offset,
+    )
+
+
+@router.post("/conversions", status_code=201)
+async def create_conversion(
+    body: ConvertRunIn,
+    user: UserContext = Depends(require_permission("inventory.update")),
+):
+    if not user.restaurant_id:
+        raise ValidationError("restaurant context required")
+    result = await inventory_conversion_service.convert(
+        restaurant_id=user.restaurant_id,
+        branch_id=user.branch_id,
+        output_ingredient_id=body.output_ingredient_id,
+        produced_quantity=body.produced_quantity,
+        conversion_recipe_id=body.conversion_recipe_id,
+        inputs=[i.model_dump() for i in body.inputs] if body.inputs else None,
+        output_unit=body.output_unit,
+        notes=body.notes,
+        created_by=user.user_id,
+    )
+    await log_activity(
+        user_id=user.user_id,
+        branch_id=user.branch_id,
+        action="inventory.conversion",
+        entity_type="inventory_conversion",
+        entity_id=result.get("conversion_id"),
+        metadata={"output_ingredient_id": body.output_ingredient_id,
+                  "produced_quantity": float(body.produced_quantity)},
+    )
+    return result
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# RAW MATERIAL SALES  (sell raw stock to another outlet / party)
+# ════════════════════════════════════════════════════════════════════════════
+
+class SaleItemIn(BaseModel):
+    ingredient_id: str
+    quantity: Decimal = Field(..., gt=0)
+    unit: Optional[str] = None
+    unit_price: Decimal = Field(default=Decimal("0"), ge=0)
+    tax_percent: Decimal = Field(default=Decimal("0"), ge=0)
+
+
+class SaleIn(BaseModel):
+    items: list[SaleItemIn] = Field(..., min_length=1)
+    buyer_name: Optional[str] = None
+    buyer_gst: Optional[str] = None
+    buyer_contact: Optional[str] = None
+    buyer_address: Optional[str] = None
+    terms: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@router.get("/sales")
+async def list_sales(
+    status: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: UserContext = Depends(require_permission("inventory.read")),
+):
+    if not user.restaurant_id:
+        return []
+    return await inventory_sales_service.list_sales(
+        restaurant_id=user.restaurant_id, status=status,
+        limit=limit, offset=offset,
+    )
+
+
+@router.get("/sales/{sale_id}")
+async def get_sale(
+    sale_id: str,
+    user: UserContext = Depends(require_permission("inventory.read")),
+):
+    if not user.restaurant_id:
+        raise ValidationError("restaurant context required")
+    return await inventory_sales_service.get_sale(
+        restaurant_id=user.restaurant_id, sale_id=sale_id,
+    )
+
+
+@router.post("/sales", status_code=201)
+async def create_sale(
+    body: SaleIn,
+    user: UserContext = Depends(require_permission("inventory.update")),
+):
+    if not user.restaurant_id:
+        raise ValidationError("restaurant context required")
+    result = await inventory_sales_service.create_sale(
+        restaurant_id=user.restaurant_id,
+        branch_id=user.branch_id,
+        items=[i.model_dump() for i in body.items],
+        buyer_name=body.buyer_name,
+        buyer_gst=body.buyer_gst,
+        buyer_contact=body.buyer_contact,
+        buyer_address=body.buyer_address,
+        terms=body.terms,
+        notes=body.notes,
+        created_by=user.user_id,
+    )
+    await log_activity(
+        user_id=user.user_id,
+        branch_id=user.branch_id,
+        action="inventory.sale",
+        entity_type="inventory_sale",
+        entity_id=str(result.get("id")),
+        metadata={"total_amount": float(result.get("total_amount") or 0)},
+    )
+    return result
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# TRANSFER RETURNS  (return previously-transferred stock to the sender)
+# ════════════════════════════════════════════════════════════════════════════
+
+class TransferReturnLine(BaseModel):
+    ingredient_id: str
+    quantity: Decimal = Field(..., gt=0)
+    unit: Optional[str] = None
+
+
+class TransferReturnIn(BaseModel):
+    items: Optional[list[TransferReturnLine]] = None  # None → return full received qty
+    notes: Optional[str] = None
+
+
+@router.post("/transfers/{transfer_id}/return")
+async def create_transfer_return(
+    transfer_id: str,
+    body: TransferReturnIn,
+    user: UserContext = Depends(require_permission("inventory.update")),
+):
+    """Create a reverse transfer that returns stock to the original sender.
+
+    The return is itself a `stock_transfer` (transfer_type='return') going
+    from the original destination branch back to the origin branch. Use the
+    existing ship/receive endpoints to move the stock.
+    """
+    if not user.restaurant_id:
+        raise ValidationError("restaurant context required")
+
+    async with get_connection() as conn:
+        orig = await conn.fetchrow(
+            "SELECT * FROM stock_transfers WHERE id=$1::uuid AND restaurant_id=$2::uuid",
+            transfer_id, user.restaurant_id,
+        )
+        if not orig:
+            raise NotFoundError("stock_transfer", transfer_id)
+        if orig["status"] != "received":
+            raise ValidationError("only a received transfer can be returned")
+        if orig["transfer_type"] == "return":
+            raise ValidationError("a return transfer cannot itself be returned")
+        orig_items = await conn.fetch(
+            "SELECT * FROM stock_transfer_items WHERE transfer_id=$1::uuid",
+            transfer_id,
+        )
+
+    # Build the return line set (default = full received quantities)
+    requested = (
+        {l.ingredient_id: (l.quantity, l.unit) for l in body.items}
+        if body.items else {}
+    )
+    return_lines: list[tuple[str, Decimal, Optional[str]]] = []
+    for it in orig_items:
+        recvd = Decimal(str(it["quantity_received"] or it["quantity_sent"] or 0))
+        if body.items:
+            if it["ingredient_id"] not in requested:
+                continue
+            qty, unit = requested[it["ingredient_id"]]
+            qty = Decimal(str(qty))
+            if qty > recvd:
+                raise ValidationError(
+                    f"cannot return more than received for {it['ingredient_id']}"
+                )
+            return_lines.append((it["ingredient_id"], qty, unit or it["unit"]))
+        else:
+            if recvd > 0:
+                return_lines.append((it["ingredient_id"], recvd, it["unit"]))
+
+    if not return_lines:
+        raise ValidationError("no returnable quantities")
+
+    async with get_serializable_transaction() as conn:
+        return_id = await conn.fetchval(
+            """
+            INSERT INTO stock_transfers
+                (restaurant_id, from_branch_id, to_branch_id, status,
+                 requested_by, notes, transfer_type, original_transfer_id)
+            VALUES ($1::uuid, $2::uuid, $3::uuid, 'draft', $4, $5, 'return', $6::uuid)
+            RETURNING id
+            """,
+            user.restaurant_id, orig["to_branch_id"], orig["from_branch_id"],
+            user.user_id, body.notes, transfer_id,
+        )
+        for ing_id, qty, unit in return_lines:
+            await conn.execute(
+                """
+                INSERT INTO stock_transfer_items
+                    (transfer_id, ingredient_id, quantity_sent, unit)
+                VALUES ($1::uuid, $2, $3, $4)
+                """,
+                return_id, ing_id, float(qty), unit,
+            )
+
+    return {
+        "return_transfer_id": str(return_id),
+        "original_transfer_id": transfer_id,
+        "status": "draft",
+        "transfer_type": "return",
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# REPORTS  (current stock, variance, consumption / P&L)
+# ════════════════════════════════════════════════════════════════════════════
+
+@router.get("/reports/current-stock")
+async def report_current_stock(
+    low_only: bool = False,
+    user: UserContext = Depends(require_permission("inventory.read")),
+):
+    """Current stock report: per-ingredient balance, cost, and valuation."""
+    if not user.restaurant_id:
+        return {"items": [], "total_valuation": 0}
+    async with get_connection() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT i.id AS ingredient_id, i.name, i.unit, i.category,
+                   i.cost_per_unit, i.reorder_point, i.minimum_stock,
+                   fn_inventory_balance(i.id, $2::uuid, NULL) AS balance
+              FROM ingredients i
+             WHERE i.restaurant_id = $1::uuid
+               AND i.deleted_at IS NULL
+             ORDER BY i.name
+            """,
+            user.restaurant_id, user.branch_id,
+        )
+    items = []
+    total_valuation = Decimal("0")
+    for r in rows:
+        bal = Decimal(str(r["balance"] or 0))
+        cpu = Decimal(str(r["cost_per_unit"] or 0))
+        threshold = max(
+            Decimal(str(r["reorder_point"] or 0)),
+            Decimal(str(r["minimum_stock"] or 0)),
+        )
+        is_low = bal <= threshold and threshold > 0
+        if low_only and not is_low:
+            continue
+        valuation = bal * cpu
+        total_valuation += valuation
+        items.append({
+            "ingredient_id": r["ingredient_id"],
+            "name": r["name"],
+            "unit": r["unit"],
+            "category": r["category"],
+            "balance": float(bal),
+            "cost_per_unit": float(cpu),
+            "valuation": float(valuation),
+            "is_low_stock": is_low,
+        })
+    return {"items": items, "total_valuation": float(total_valuation)}
+
+
+@router.get("/reports/variance")
+async def report_variance(
+    count_id: Optional[str] = None,
+    limit: int = Query(200, ge=1, le=1000),
+    user: UserContext = Depends(require_permission("inventory.read")),
+):
+    """Variance report from physical counts (expected vs counted)."""
+    if not user.restaurant_id:
+        return {"items": []}
+    params: list = [user.restaurant_id]
+    where = "c.restaurant_id = $1::uuid"
+    if count_id:
+        params.append(count_id)
+        where += f" AND c.id = ${len(params)}::uuid"
+    params.append(limit)
+    async with get_connection() as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT ci.ingredient_id, i.name, ci.expected_qty, ci.counted_qty,
+                   ci.variance, ci.unit, ci.unit_cost,
+                   (ci.variance * COALESCE(ci.unit_cost, 0)) AS variance_value,
+                   c.id AS count_id, c.count_number, c.count_date, c.status
+              FROM inventory_count_items ci
+              JOIN inventory_counts c ON c.id = ci.count_id
+              LEFT JOIN ingredients i ON i.id = ci.ingredient_id
+             WHERE {where}
+               AND ci.counted_qty IS NOT NULL
+             ORDER BY c.count_date DESC, ABS(ci.variance) DESC
+             LIMIT ${len(params)}
+            """,
+            *params,
+        )
+    return {"items": [dict(r) for r in rows]}
+
+
+@router.get("/reports/consumption-pnl")
+async def report_consumption_pnl(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    user: UserContext = Depends(require_permission("inventory.read")),
+):
+    """Consumption / P&L report from daily analytics rollups."""
+    if not user.restaurant_id:
+        return {"items": [], "totals": {}}
+    params: list = [user.restaurant_id]
+    where = "restaurant_id = $1::uuid"
+    if start_date:
+        params.append(start_date)
+        where += f" AND period_date >= ${len(params)}::date"
+    if end_date:
+        params.append(end_date)
+        where += f" AND period_date <= ${len(params)}::date"
+    async with get_connection() as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT a.ingredient_id, i.name,
+                   SUM(a.consumed_qty)    AS consumed_qty,
+                   SUM(a.purchased_qty)   AS purchased_qty,
+                   SUM(a.wasted_qty)      AS wasted_qty,
+                   SUM(a.cogs)            AS cogs,
+                   SUM(a.waste_value)     AS waste_value
+              FROM inventory_analytics a
+              LEFT JOIN ingredients i ON i.id = a.ingredient_id
+             WHERE {where}
+             GROUP BY a.ingredient_id, i.name
+             ORDER BY SUM(a.cogs) DESC NULLS LAST
+            """,
+            *params,
+        )
+    items = [dict(r) for r in rows]
+    totals = {
+        "cogs": float(sum(Decimal(str(r["cogs"] or 0)) for r in rows)),
+        "waste_value": float(sum(Decimal(str(r["waste_value"] or 0)) for r in rows)),
+    }
+    return {"items": items, "totals": totals}

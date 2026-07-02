@@ -214,3 +214,66 @@ class PurchaseOrderService:
         if not row:
             raise NotFoundError("PurchaseOrder", po_id)
         return {"deleted": True, "id": str(row["id"])}
+
+    # ── Approval workflow ───────────────────────────────────────────────────
+
+    async def _set_approval(
+        self, user: UserContext, po_id: int, *,
+        from_statuses: set[str], to_status: str,
+        approved_by: Optional[str] = None, set_approved_at: bool = False,
+        rejected_reason: Optional[str] = None, requested_by: Optional[str] = None,
+    ) -> dict:
+        clause, params = tenant_where_clause(user)
+        params.append(po_id)
+        async with get_serializable_transaction() as conn:
+            existing = await conn.fetchrow(
+                f"SELECT * FROM purchase_orders WHERE {clause} AND id = ${len(params)} FOR UPDATE",
+                *params,
+            )
+            if not existing:
+                raise NotFoundError("PurchaseOrder", po_id)
+            current = existing["approval_status"] or "draft"
+            if current not in from_statuses:
+                raise ValidationError(
+                    f"cannot move approval from '{current}' to '{to_status}'"
+                )
+
+            sets = ["approval_status = $1"]
+            vals: list = [to_status]
+            if requested_by is not None:
+                vals.append(requested_by)
+                sets.append(f"requested_by = ${len(vals)}")
+            if approved_by is not None:
+                vals.append(approved_by)
+                sets.append(f"approved_by = ${len(vals)}")
+            if set_approved_at:
+                sets.append("approved_at = NOW()")
+            if rejected_reason is not None:
+                vals.append(rejected_reason)
+                sets.append(f"rejected_reason = ${len(vals)}")
+            vals.append(po_id)
+            row = await conn.fetchrow(
+                f"UPDATE purchase_orders SET {', '.join(sets)} "
+                f"WHERE id = ${len(vals)} RETURNING *",
+                *vals,
+            )
+        return dict(row)
+
+    async def submit_for_approval(self, user: UserContext, po_id: int) -> dict:
+        return await self._set_approval(
+            user, po_id, from_statuses={"draft", "rejected"},
+            to_status="pending_approval", requested_by=user.user_id,
+        )
+
+    async def approve_order(self, user: UserContext, po_id: int) -> dict:
+        return await self._set_approval(
+            user, po_id, from_statuses={"pending_approval"},
+            to_status="approved", approved_by=user.user_id, set_approved_at=True,
+        )
+
+    async def reject_order(self, user: UserContext, po_id: int, reason: str) -> dict:
+        return await self._set_approval(
+            user, po_id, from_statuses={"pending_approval"},
+            to_status="rejected", rejected_reason=reason,
+        )
+

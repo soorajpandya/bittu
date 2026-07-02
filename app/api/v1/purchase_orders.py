@@ -103,3 +103,56 @@ async def delete_order(
     user: UserContext = Depends(require_permission("purchase_order.delete")),
 ):
     return await _svc.delete_order(user, po_id)
+
+
+# ── Approval workflow ────────────────────────────────────────────────────────
+
+class RejectIn(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
+
+
+@router.post("/{po_id}/submit")
+async def submit_order(
+    po_id: int,
+    user: UserContext = Depends(require_permission("purchase_order.write")),
+):
+    """Submit a draft PO for approval."""
+    return await _svc.submit_for_approval(user, po_id)
+
+
+@router.post("/{po_id}/approve")
+async def approve_order(
+    po_id: int,
+    user: UserContext = Depends(require_permission("purchase_order.approve")),
+):
+    """Approve a PO that is pending approval."""
+    return await _svc.approve_order(user, po_id)
+
+
+@router.post("/{po_id}/reject")
+async def reject_order(
+    po_id: int,
+    body: RejectIn,
+    user: UserContext = Depends(require_permission("purchase_order.approve")),
+):
+    """Reject a PO that is pending approval."""
+    return await _svc.reject_order(user, po_id, body.reason)
+
+
+@router.get("/{po_id}/pdf")
+async def purchase_order_pdf(
+    po_id: int,
+    user: UserContext = Depends(require_permission("purchase_order.read")),
+):
+    """Render the purchase order as a PDF (for printing / emailing to vendor)."""
+    from fastapi import Response
+    from app.services.invoice_pdf_service import render_purchase_order
+
+    order = await _svc.get_order(user, po_id)
+    pdf_bytes, filename = await render_purchase_order(order=order)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
