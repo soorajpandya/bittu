@@ -1425,13 +1425,21 @@ async def report_consumption_pnl(
     """Consumption / P&L report from daily analytics rollups."""
     if not user.restaurant_id:
         return {"items": [], "totals": {}}
+    from datetime import date as _date
+
+    def _parse_date(v: str, field: str):
+        try:
+            return _date.fromisoformat(v)
+        except (TypeError, ValueError):
+            raise ValidationError(f"{field} must be an ISO date (YYYY-MM-DD)")
+
     params: list = [user.restaurant_id]
     where = "a.restaurant_id = $1::uuid"
     if start_date:
-        params.append(start_date)
+        params.append(_parse_date(start_date, "start_date"))
         where += f" AND a.period_date >= ${len(params)}::date"
     if end_date:
-        params.append(end_date)
+        params.append(_parse_date(end_date, "end_date"))
         where += f" AND a.period_date <= ${len(params)}::date"
     async with get_connection() as conn:
         rows = await conn.fetch(
