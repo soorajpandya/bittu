@@ -1426,13 +1426,13 @@ async def report_consumption_pnl(
     if not user.restaurant_id:
         return {"items": [], "totals": {}}
     params: list = [user.restaurant_id]
-    where = "restaurant_id = $1::uuid"
+    where = "a.restaurant_id = $1::uuid"
     if start_date:
         params.append(start_date)
-        where += f" AND period_date >= ${len(params)}::date"
+        where += f" AND a.period_date >= ${len(params)}::date"
     if end_date:
         params.append(end_date)
-        where += f" AND period_date <= ${len(params)}::date"
+        where += f" AND a.period_date <= ${len(params)}::date"
     async with get_connection() as conn:
         rows = await conn.fetch(
             f"""
