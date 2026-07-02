@@ -1,11 +1,13 @@
 """Unit tests for app.services.tax_engine."""
 from decimal import Decimal
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.services.tax_engine import (
     TaxConfig, TaxConfigError, compute_tax,
     ItemTaxLine, compute_cart_tax, _line_from_item_row,
+    get_tax_config, invalidate_tax_config,
     validate_gst_number, validate_gst_settings_patch,
 )
 
@@ -41,6 +43,31 @@ def test_from_row_full():
     })
     assert cfg.gst_number == "29ABCDE1234F1Z5"
     assert cfg.gst_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_get_tax_config_falls_back_to_legacy_owner_settings_row():
+    """Checkout must see owner-keyed settings even when restaurant_id is NULL."""
+    restaurant_id = "00000000-0000-0000-0000-000000000123"
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value={
+        "gst_enabled": False,
+        "gst_type": "GST",
+        "gst_number": None,
+        "gst_percentage": Decimal("5"),
+        "cgst_percentage": Decimal("2.5"),
+        "sgst_percentage": Decimal("2.5"),
+        "tax_inclusive": False,
+        "tax_percentage": Decimal("5"),
+    })
+    invalidate_tax_config(restaurant_id)
+
+    cfg = await get_tax_config(conn, restaurant_id)
+
+    assert cfg.gst_enabled is False
+    query = conn.fetchrow.await_args.args[0]
+    assert "r.owner_id::text = rs.user_id::text" in query
+    assert "rs.restaurant_id IS NULL" in query
 
 
 # ── compute_tax ──────────────────────────────────────────────────

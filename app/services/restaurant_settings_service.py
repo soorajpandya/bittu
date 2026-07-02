@@ -47,13 +47,19 @@ class RestaurantSettingsService:
                 )
             if existing:
                 fields = {k: v for k, v in data.items() if v is not None and k in _ALLOWED_COLUMNS}
-                if not fields:
+                should_link_restaurant = bool(user.restaurant_id)
+                if not fields and not should_link_restaurant:
                     row = await conn.fetchrow(
                         "SELECT * FROM restaurant_settings WHERE user_id = $1", uid
                     )
                     return dict(row)
                 set_parts = []
                 vals = [uid]
+                if should_link_restaurant:
+                    vals.append(user.restaurant_id)
+                    set_parts.append(
+                        f"restaurant_id = COALESCE(restaurant_id, ${len(vals)}::uuid)"
+                    )
                 for k, v in fields.items():
                     vals.append(v)
                     if k in ("printer_config", "theme_config"):

@@ -2012,6 +2012,384 @@ class DineInSessionService:
         }
 
     # ══════════════════════════════════════════════════════════
+    # 4. POST-PAID PAYMENT (public, customer-facing)
+    # ══════════════════════════════════════════════════════════
+
+    async def get_bill_by_token(self, session_token: str) -> dict:
+        """Public bill snapshot resolved from a session_token (no JWT)."""
+        session = await self._get_valid_session(session_token)
+        return await self.get_session_bill(str(session["id"]))
+
+    async def get_payment_status(self, session_token: str) -> dict:
+        """Poll the payment/settlement state for a QR session (public)."""
+        session = await self._get_valid_session(session_token)
+        session_id = str(session["id"])
+        bill = await self.get_session_bill(session_id)
+        grand_total = float(bill.get("grand_total") or 0)
+        paid = float(bill.get("paid_total") or 0)
+        remaining = float(bill.get("remaining_amount") or 0)
+        return {
+            "session_id": session_id,
+            "status": bill.get("status"),
+            "grand_total": grand_total,
+            "paid_amount": paid,
+            "remaining_amount": remaining,
+            "is_paid": grand_total > 0 and remaining <= 0,
+            "payments": bill.get("payments", []),
+        }
+
+    async def _resolve_payments_mode(self, restaurant_id: Optional[str]) -> str:
+        """Return 'integrated' or 'own_upi' based on the merchant's plan."""
+        from app.services.subscription_service import PLAN_CATALOG, DEFAULT_PLAN
+
+        plan = None
+        if restaurant_id:
+            async with get_connection() as conn:
+                plan = await conn.fetchval(
+                    "SELECT plan FROM restaurants WHERE id = $1::uuid", restaurant_id,
+                )
+        meta = PLAN_CATALOG.get(plan or DEFAULT_PLAN) or PLAN_CATALOG[DEFAULT_PLAN]
+        return "own_upi" if meta.get("payments") == "own_upi" else "integrated"
+
+    async def create_payment_intent(
+        self,
+        session_token: str,
+        customer_name: Optional[str] = None,
+        customer_phone: Optional[str] = None,
+    ) -> dict:
+        """Post-paid checkout for a QR dine-in session.
+
+        Routing is plan-driven:
+          - ``integrated`` (growth/enterprise) → Razorpay Route intent + dynamic
+            UPI QR. Settlement is confirmed automatically by the
+            ``payment.captured`` webhook.
+          - ``own_upi`` (starter/business) → the merchant's own static UPI QR /
+            intent with the session amount injected. Settlement is confirmed
+            manually by staff.
+        """
+        from decimal import ROUND_HALF_UP
+
+        session = await self._get_valid_session(session_token)
+        session_id = str(session["id"])
+        restaurant_id = str(session["restaurant_id"]) if session.get("restaurant_id") else None
+        owner_id = str(session["user_id"])
+        branch_id = str(session["branch_id"]) if session.get("branch_id") else None
+
+        bill = await self.get_session_bill(session_id)
+        remaining = Decimal(str(bill.get("remaining_amount") or 0))
+        if remaining <= 0:
+            raise ValidationError("This session has nothing left to pay")
+
+        # Resolve the order the payment attaches to (post-paid: the active order).
+        order_id = str(session["active_order_id"]) if session.get("active_order_id") else None
+        order_number: Optional[str] = None
+        async with get_connection() as conn:
+            if not order_id:
+                row = await conn.fetchrow(
+                    """
+                    SELECT o.id::text AS order_id
+                      FROM session_orders so
+                      JOIN orders o ON o.id = so.order_id
+                     WHERE so.session_id = $1
+                     ORDER BY o.created_at DESC
+                     LIMIT 1
+                    """,
+                    session_id,
+                )
+                if not row:
+                    raise ValidationError("Place an order before paying")
+                order_id = row["order_id"]
+            onum = await conn.fetchrow(
+                "SELECT COALESCE(metadata->>'order_number', LEFT(id::text, 8)) AS order_number "
+                "FROM orders WHERE id = $1::uuid",
+                order_id,
+            )
+            order_number = onum["order_number"] if onum else None
+
+        amount_paise = int(
+            (remaining * Decimal("100")).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        )
+        payments_mode = await self._resolve_payments_mode(restaurant_id)
+
+        if payments_mode == "integrated":
+            return await self._checkout_integrated(
+                session_id=session_id,
+                restaurant_id=restaurant_id,
+                owner_id=owner_id,
+                branch_id=branch_id,
+                order_id=order_id,
+                order_number=order_number,
+                amount=remaining,
+                amount_paise=amount_paise,
+                customer_name=customer_name,
+                customer_phone=customer_phone,
+            )
+        return await self._checkout_own_upi(
+            session_id=session_id,
+            restaurant_id=restaurant_id,
+            order_id=order_id,
+            order_number=order_number,
+            amount=remaining,
+            amount_paise=amount_paise,
+        )
+
+    async def _checkout_integrated(
+        self,
+        *,
+        session_id: str,
+        restaurant_id: Optional[str],
+        owner_id: str,
+        branch_id: Optional[str],
+        order_id: str,
+        order_number: Optional[str],
+        amount: Decimal,
+        amount_paise: int,
+        customer_name: Optional[str],
+        customer_phone: Optional[str],
+    ) -> dict:
+        """Razorpay Route intent for integrated-payments merchants."""
+        from app.services.razorpay.payment_intent import create_intent_for_order
+
+        if not restaurant_id:
+            raise ValidationError("Session is not linked to a restaurant")
+
+        # Ensure a canonical online payment row exists for this order so the
+        # webhook can flip it to completed and the money pipeline can run.
+        async with get_connection() as conn:
+            existing = await conn.fetchrow(
+                """
+                SELECT id::text AS id FROM payments
+                 WHERE order_id = $1::uuid AND restaurant_id = $2::uuid AND method = 'online'
+                 ORDER BY created_at DESC
+                 LIMIT 1
+                """,
+                order_id, restaurant_id,
+            )
+            if existing:
+                payment_id = existing["id"]
+            else:
+                payment_id = str(uuid.uuid4())
+                await conn.execute(
+                    """
+                    INSERT INTO payments (
+                        id, order_id, restaurant_id, user_id, branch_id,
+                        method, status, amount, currency
+                    ) VALUES (
+                        $1::uuid, $2::uuid, $3::uuid, $4, $5,
+                        'online'::payment_method, 'pending'::payment_status, $6, 'INR'
+                    )
+                    """,
+                    payment_id, order_id, restaurant_id, owner_id, branch_id, float(amount),
+                )
+
+        try:
+            intent = await create_intent_for_order(
+                merchant_id=restaurant_id,
+                branch_id=branch_id,
+                internal_order_id=order_id,
+                payment_id=payment_id,
+                amount=amount,
+                currency="INR",
+                receipt=order_number,
+                customer_name=customer_name,
+                customer_phone=customer_phone,
+                owner_user_id=owner_id,
+                create_qr=True,
+            )
+        except PermissionError as exc:
+            raise ValidationError(
+                f"Online payments are not enabled for this restaurant yet: {exc}"
+            )
+
+        client = intent.to_client_dict()
+        return {
+            "mode": "integrated",
+            "session_id": session_id,
+            "order_id": order_id,
+            "payment_id": payment_id,
+            "amount": float(amount),
+            "amount_paise": client.get("amount") or amount_paise,
+            "currency": client.get("currency") or "INR",
+            "razorpay_order_id": client.get("razorpay_order_id"),
+            "qr_id": client.get("qr_id"),
+            "qr_image_url": client.get("qr_image_url"),
+            "qr_image_content": client.get("qr_image_content"),
+            "qr_close_by": client.get("qr_close_by"),
+            "settlement": "automatic",
+            "poll_status_after_ms": 3000,
+            "message": "Scan the UPI QR or open your UPI app to pay. Payment confirms automatically.",
+        }
+
+    async def _checkout_own_upi(
+        self,
+        *,
+        session_id: str,
+        restaurant_id: Optional[str],
+        order_id: str,
+        order_number: Optional[str],
+        amount: Decimal,
+        amount_paise: int,
+    ) -> dict:
+        """Merchant's own static UPI QR/intent for own-UPI-plan merchants."""
+        from app.services.razorpay.static_qr_service import get_active_static_qr
+        from app.services.razorpay.qr_codes import build_upi_intent_for_pos
+
+        if not restaurant_id:
+            raise ValidationError("Session is not linked to a restaurant")
+
+        qr = await get_active_static_qr(restaurant_id)
+        if not qr or not qr.get("upi_intent"):
+            raise ValidationError(
+                "This restaurant has not set up its UPI payment QR yet"
+            )
+
+        upi_intent = build_upi_intent_for_pos(
+            base_upi_intent=qr["upi_intent"],
+            fixed_amount=True,
+            payment_amount_paise=amount_paise,
+            payer_name=qr.get("merchant_display_name") or "Bittu",
+        )
+        return {
+            "mode": "own_upi",
+            "session_id": session_id,
+            "order_id": order_id,
+            "amount": float(amount),
+            "amount_paise": amount_paise,
+            "currency": "INR",
+            "upi_intent": upi_intent,
+            "qr_image": qr.get("bittu_qr_image"),
+            "settlement": "manual",
+            "message": "Pay to the restaurant's UPI, then ask staff to confirm your payment.",
+        }
+
+    async def settle_session_from_gateway(
+        self,
+        *,
+        order_id: str,
+        amount: float,
+        transaction_ref: str,
+        method: str = "online",
+    ) -> dict:
+        """Settle a dine-in session from a captured gateway payment (webhook).
+
+        Idempotent on ``transaction_ref``. Records the receipt in
+        ``table_session_payments`` and updates the session totals WITHOUT
+        re-mirroring into the canonical ``payments``/ledger tables (the webhook
+        already credited those for this gateway payment). Auto-vacates the
+        table once fully paid. Never raises for the "not a dine-in order" case
+        so the webhook can call it blindly.
+        """
+        async with get_transaction() as conn:
+            srow = await conn.fetchrow(
+                "SELECT session_id FROM session_orders WHERE order_id = $1::uuid LIMIT 1",
+                order_id,
+            )
+            if not srow:
+                return {"status": "no_session"}
+            session_id = str(srow["session_id"])
+
+            session = await conn.fetchrow(
+                "SELECT id, status, restaurant_id, branch_id FROM dine_in_sessions "
+                "WHERE id = $1 FOR UPDATE",
+                session_id,
+            )
+            if not session:
+                return {"status": "no_session"}
+            restaurant_id = str(session["restaurant_id"]) if session["restaurant_id"] else None
+            branch_id = str(session["branch_id"]) if session["branch_id"] else None
+
+            if transaction_ref:
+                dup = await conn.fetchval(
+                    "SELECT 1 FROM table_session_payments "
+                    "WHERE session_id = $1 AND transaction_ref = $2 LIMIT 1",
+                    session_id, transaction_ref,
+                )
+                if dup:
+                    return {"status": "already_recorded", "session_id": session_id}
+
+            totals = await conn.fetchrow(
+                """
+                SELECT
+                    COALESCE((
+                        SELECT SUM(o.total_amount)
+                        FROM session_orders so
+                        JOIN orders o ON o.id = so.order_id
+                        WHERE so.session_id = $1
+                    ), 0) AS grand_total,
+                    COALESCE((
+                        SELECT SUM(p.amount)
+                        FROM table_session_payments p
+                        WHERE p.session_id = $1
+                    ), 0) AS paid_total
+                """,
+                session_id,
+            )
+            grand_total = Decimal(str(totals["grand_total"]))
+            paid_total = Decimal(str(totals["paid_total"]))
+            remaining = grand_total - paid_total
+            if remaining <= 0:
+                return {"status": "already_paid", "session_id": session_id}
+
+            amt = Decimal(str(amount or 0))
+            if amt <= 0:
+                return {"status": "zero_amount", "session_id": session_id}
+            if amt > remaining:
+                amt = remaining
+
+            await conn.execute(
+                """
+                INSERT INTO table_session_payments (
+                    session_id, amount, payment_method, transaction_ref, paid_by, notes
+                ) VALUES ($1, $2, $3, $4, 'customer', 'razorpay_webhook')
+                """,
+                session_id, float(amt), method, transaction_ref,
+            )
+
+            new_paid = paid_total + amt
+            new_remaining = remaining - amt
+            if new_remaining < 0:
+                new_remaining = Decimal("0")
+            await conn.execute(
+                """
+                UPDATE dine_in_sessions
+                SET total_amount = $1, paid_amount = $2, remaining_amount = $3
+                WHERE id = $4
+                """,
+                float(grand_total), float(new_paid), float(new_remaining), session_id,
+            )
+
+        await self._invalidate_bill_cache(session_id)
+
+        if new_remaining <= 0:
+            try:
+                await self.paid_and_vacate(session_id=session_id, closed_by=None)
+            except Exception:
+                logger.exception("dinein_gateway_auto_vacate_failed", session_id=session_id)
+
+        try:
+            await emit_and_publish(DomainEvent(
+                event_type=BILL_UPDATED,
+                payload={
+                    "session_id": session_id,
+                    "transaction_ref": transaction_ref,
+                    "payment_method": method,
+                    "amount": float(amt),
+                    "remaining_amount": float(new_remaining),
+                    "source": "gateway_webhook",
+                },
+                restaurant_id=restaurant_id,
+                branch_id=branch_id,
+            ))
+        except Exception:
+            logger.exception("dinein_gateway_bill_event_failed", session_id=session_id)
+
+        return {
+            "status": "settled",
+            "session_id": session_id,
+            "remaining_amount": float(new_remaining),
+        }
+
+    # ══════════════════════════════════════════════════════════
     # PRIVATE HELPERS
     # ══════════════════════════════════════════════════════════
 

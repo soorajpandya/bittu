@@ -638,6 +638,24 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
             logger.exception("rzp_webhook_ws_push_failed",
                              payment_id=payment_row["id"])
 
+        # ── Dine-in session settlement (post-paid QR table flow) ─────────
+        # If this captured payment belongs to an order linked to a dine-in
+        # session, record the receipt against the session and free the table.
+        # Idempotent on the razorpay_payment_id; best-effort — never raises.
+        try:
+            _oid = payment_row.get("order_id") or internal_order_id
+            if _oid:
+                from app.services.dinein_session_service import DineInSessionService
+                await DineInSessionService().settle_session_from_gateway(
+                    order_id=str(_oid),
+                    amount=float(amount_decimal),
+                    transaction_ref=rzp_payment_id,
+                    method="online",
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("rzp_webhook_dinein_settle_failed",
+                             payment_id=payment_row.get("id"))
+
         # ── Auto Route split (net-of-Bittu-fee) ──────────────────────────
         # Money flows: Customer → Razorpay → Bittu master → (this transfer) →
         # Merchant's linked account. If the merchant has not finished Route

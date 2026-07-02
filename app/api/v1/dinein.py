@@ -69,6 +69,12 @@ class MergeSessionsIn(BaseModel):
     target_session_token: str
 
 
+class PayIn(BaseModel):
+    session_token: str
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+
+
 class CallWaiterIn(BaseModel):
     session_token: str
     request_type: str = "assistance"  # assistance | bill | water
@@ -193,6 +199,36 @@ async def place_order(body: PlaceOrderIn):
 async def order_status(session_token: str = Query(...)):
     """Get orders for THIS session only (strict isolation)."""
     return await _svc.get_order_status(session_token)
+
+
+# ── Payment (post-paid, public) ──
+
+@router.get("/qr/bill")
+async def qr_bill(session_token: str = Query(...)):
+    """Public bill snapshot for a QR session (by session_token)."""
+    return await _svc.get_bill_by_token(session_token)
+
+
+@router.post("/qr/pay")
+async def qr_pay(body: PayIn):
+    """Post-paid checkout for a QR session — returns a UPI intent/QR.
+
+    Routing is plan-driven: integrated merchants get a Razorpay Route intent
+    (auto-confirmed via the payment.captured webhook); own-UPI merchants get
+    their own static UPI QR with the session amount injected (confirmed
+    manually by staff).
+    """
+    return await _svc.create_payment_intent(
+        session_token=body.session_token,
+        customer_name=body.customer_name,
+        customer_phone=body.customer_phone,
+    )
+
+
+@router.get("/qr/payment-status")
+async def qr_payment_status(session_token: str = Query(...)):
+    """Poll the payment/settlement state for a QR session."""
+    return await _svc.get_payment_status(session_token)
 
 
 # ── Merge ──

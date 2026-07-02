@@ -509,11 +509,21 @@ async def get_tax_config(conn, restaurant_id: Optional[str]) -> TaxConfig:
 
     row = await conn.fetchrow(
         """
-        SELECT gst_enabled, gst_type, gst_number,
-               gst_percentage, cgst_percentage, sgst_percentage,
-               tax_inclusive, tax_percentage
-          FROM restaurant_settings
-         WHERE restaurant_id = $1
+        SELECT rs.gst_enabled, rs.gst_type, rs.gst_number,
+               rs.gst_percentage, rs.cgst_percentage, rs.sgst_percentage,
+               rs.tax_inclusive, rs.tax_percentage
+          FROM restaurant_settings rs
+          LEFT JOIN restaurants r ON r.id = $1::uuid
+         WHERE rs.restaurant_id = $1::uuid
+            OR (
+                 rs.restaurant_id IS NULL
+                 AND r.owner_id::text = rs.user_id::text
+               )
+         ORDER BY
+               CASE WHEN rs.restaurant_id = $1::uuid THEN 0 ELSE 1 END,
+               rs.updated_at DESC NULLS LAST,
+               rs.id DESC
+         LIMIT 1
         """,
         restaurant_id,
     )
