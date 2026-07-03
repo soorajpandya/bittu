@@ -83,6 +83,13 @@ class DineInSessionService:
                     "is_new": False,
                     "active_order_id": restored.get("active_order_id"),
                 }
+            # Token maps to a NON-active (paid/closed/expired) session. Do NOT
+            # silently mint a brand-new session (that's what caused a refresh
+            # after payment to bounce the customer into a fresh menu + new PIN).
+            # Return a terminal signal so the FE shows the paid/closed screen.
+            terminal = await self._terminal_session_for_token(client_session_token)
+            if terminal:
+                return terminal
 
         # ── Validate table ──
         async with get_connection() as conn:
@@ -2100,6 +2107,61 @@ class DineInSessionService:
     # ══════════════════════════════════════════════════════════
     # 4. POST-PAID PAYMENT (public, customer-facing)
     # ══════════════════════════════════════════════════════════
+
+    async def _terminal_session_for_token(self, session_token: str) -> Optional[dict]:
+        """Return a terminal 'session closed/paid' payload if the token maps to
+        a non-active session, else None.
+
+        Used so a page refresh after payment shows the paid/closed screen
+        instead of minting a brand-new session with a new PIN.
+        """
+        async with get_connection() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT ds.id, ds.status, ds.table_id, ds.restaurant_id,
+                       ds.total_amount, ds.remaining_amount,
+                       rt.table_number, rt.capacity,
+                       r.id AS rest_id, r.name AS rest_name, r.logo_url,
+                       r.phone, r.address, r.city
+                FROM dine_in_sessions ds
+                JOIN restaurant_tables rt ON rt.id = ds.table_id
+                LEFT JOIN restaurants r ON r.id = ds.restaurant_id
+                WHERE ds.session_token = $1
+                """,
+                session_token,
+            )
+        if not row or row["status"] == "active":
+            return None
+        total = float(row["total_amount"] or 0)
+        remaining = float(row["remaining_amount"] or 0)
+        is_paid = total > 0 and remaining <= 0
+        return {
+            "session_closed": True,
+            "is_new": False,
+            "session_id": str(row["id"]),
+            "status": row["status"],
+            "is_paid": is_paid,
+            "grand_total": total,
+            "remaining_amount": remaining,
+            "table": {
+                "id": str(row["table_id"]),
+                "table_number": row["table_number"],
+                "capacity": row["capacity"],
+            },
+            "restaurant": {
+                "id": str(row["rest_id"]) if row["rest_id"] else None,
+                "name": row["rest_name"],
+                "logo_url": row["logo_url"],
+                "phone": row["phone"],
+                "address": row["address"],
+                "city": row["city"],
+            } if row["rest_id"] else {},
+            "message": (
+                "Your bill is paid and this session is closed."
+                if is_paid
+                else "This session is closed. Scan the QR again to start a new order."
+            ),
+        }
 
     async def _resolve_session_id_by_token(self, session_token: str) -> str:
         """Resolve a session id from a token regardless of status.

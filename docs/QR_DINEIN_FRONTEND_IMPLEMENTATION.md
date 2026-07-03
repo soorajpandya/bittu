@@ -54,6 +54,20 @@ call **`/qr/join`** (step 1b). Show the `message`.
 **(c) Restore — you sent a valid saved token** → same shape as (a) with
 `is_new: false`. Seamless reconnect.
 
+**(d) Session closed / already paid — you sent a saved token whose session is
+done** (e.g. the user **refreshed the page after paying**):
+```jsonc
+{ "session_closed": true, "is_new": false, "session_id": "...", "status": "closed",
+  "is_paid": true, "grand_total": 540, "remaining_amount": 0,
+  "table": {...}, "restaurant": {...},
+  "message": "Your bill is paid and this session is closed." }
+```
+→ Show the **paid / thank-you screen** (or "session ended") and **clear the
+saved `session_token`**. Do **NOT** treat this as a new session and do **NOT**
+re-render the menu. If the user wants to order again, they scan the physical QR
+(with no token) to start a fresh session. This response is what prevents the
+"refresh after payment bounces me into a new menu + new PIN" behavior.
+
 > **Security behavior:** After the bill is paid the session is **closed**. A
 > saved token/URL can no longer **add items or place orders** (mutations are
 > rejected with a "session closed" error), and a **re-scan starts a brand-new
@@ -205,8 +219,8 @@ Scan ──▶ requires_join? ──yes──▶ PIN prompt ──▶ /qr/join �
 | `ORDERING` | have `session_token` | menu, cart, place-order |
 | `BILL` | user taps "View bill / Pay" | `/qr/bill`, `/qr/pay` |
 | `AWAITING_PAYMENT` | after `/qr/pay` | poll `/qr/payment-status` |
-| `PAID` | `is_paid == true` | success screen; **clear `session_token`** |
-| `SESSION_DEAD` | any call returns "session not found/closed" | clear token; offer re-scan |
+| `PAID` | `is_paid == true` **or** scan → `session_closed` w/ `is_paid` | success screen; **clear `session_token`** |
+| `SESSION_DEAD` | scan → `session_closed` (unpaid) or session errors | clear token; offer re-scan |
 
 ## Error handling rules
 
@@ -216,6 +230,9 @@ Scan ──▶ requires_join? ──yes──▶ PIN prompt ──▶ /qr/join �
 - **"session closed" on add/order after payment** → expected; the bill is
   settled. Show the paid/success screen (read `/qr/payment-status`).
 - **`requires_join`** → never treat as an error; route to `NEEDS_PIN`.
+- **`session_closed` on scan** → the saved token's session is done. If
+  `is_paid`, go to `PAID` (thank-you screen); otherwise `SESSION_DEAD`. Either
+  way **clear `session_token`**; never re-render the menu for it.
 - **`cart/add` 200 but UI stale** → you forgot to re-render; re-fetch `/qr/cart`.
 - **Persist `device_id`** — if it changes, a returning customer will be treated
   as a new device and asked for the PIN.
