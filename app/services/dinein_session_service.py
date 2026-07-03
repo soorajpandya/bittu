@@ -122,10 +122,12 @@ class DineInSessionService:
 
         # Reuse active session for this table if present.
         is_new = True
+        requires_join = False
+        join_pin: Optional[str] = None
         async with get_transaction() as conn:
             existing = await conn.fetchrow(
                 """
-                SELECT id, session_token, active_order_id
+                SELECT id, session_token, active_order_id, join_pin
                 FROM dine_in_sessions
                 WHERE table_id = $1
                   AND status = 'active'
@@ -138,19 +140,36 @@ class DineInSessionService:
 
             if existing:
                 session_id = str(existing["id"])
-                session_token = existing["session_token"]
                 is_new = False
-                await conn.execute(
-                    """
-                    UPDATE dine_in_sessions
-                    SET device_id = COALESCE($1, device_id),
-                        last_activity_at = now()
-                    WHERE id = $2
-                    """,
-                    device_id,
-                    session_id,
-                )
+                # ── Device-binding gate ──────────────────────────────────
+                # Only a device already registered on this session gets the
+                # token silently. A brand-new device must join with the table
+                # PIN via /qr/join, so a saved URL opened elsewhere (or a
+                # nearby stranger) cannot piggyback onto an active bill.
+                known_device = False
+                if device_id:
+                    known_device = bool(await conn.fetchval(
+                        "SELECT 1 FROM table_session_users "
+                        "WHERE session_id = $1 AND device_id = $2 LIMIT 1",
+                        session_id, device_id,
+                    ))
+                if not known_device:
+                    requires_join = True
+                    join_pin = existing["join_pin"]
+                else:
+                    session_token = existing["session_token"]
+                    join_pin = existing["join_pin"]
+                    await conn.execute(
+                        """
+                        UPDATE dine_in_sessions
+                        SET last_activity_at = now()
+                        WHERE id = $1
+                        """,
+                        session_id,
+                    )
             else:
+                # New session — mint a short per-visit table PIN for joiners.
+                join_pin = f"{secrets.randbelow(10000):04d}"
                 await conn.execute(
                     """
                     INSERT INTO dine_in_sessions (
@@ -158,30 +177,23 @@ class DineInSessionService:
                         session_token, device_id, guest_count, status,
                         last_activity_at, expires_at, started_at,
                         created_by, total_amount, paid_amount, remaining_amount,
-                        active_users_count
-                    ) VALUES ($1, $2, $3, $4, NULL, $5, $6, 1, 'active', $7, $8, $7, 'qr', 0, 0, 0, 0)
+                        active_users_count, join_pin
+                    ) VALUES ($1, $2, $3, $4, NULL, $5, $6, 1, 'active', $7, $8, $7, 'qr', 0, 0, 0, 0, $9)
                     """,
                     session_id, table_id, actual_restaurant_id,
-                    owner_id, session_token, device_id, now, expires_at,
+                    owner_id, session_token, device_id, now, expires_at, join_pin,
                 )
 
-            # Ensure table is marked running
-            await conn.execute(
-                """
-                UPDATE restaurant_tables
-                SET status = 'running', is_occupied = true, occupied_since = COALESCE(occupied_since, $1)
-                WHERE id = $2
-                """,
-                now, table_id,
-            )
-
-        # Invalidate tables list cache so staff sees updated status immediately
-        try:
-            await cache_delete(f"tables_list:{owner_id}")
-        except Exception:
-            pass
-
-        await self._ensure_session_user(session_id, "qr", device_id=device_id)
+            if not requires_join:
+                # Ensure table is marked running
+                await conn.execute(
+                    """
+                    UPDATE restaurant_tables
+                    SET status = 'running', is_occupied = true, occupied_since = COALESCE(occupied_since, $1)
+                    WHERE id = $2
+                    """,
+                    now, table_id,
+                )
 
         table_info = {
             "id": str(table["id"]),
@@ -196,6 +208,25 @@ class DineInSessionService:
             "address": table.get("address"),
             "city": table.get("city"),
         } if table["rest_id"] else {}
+
+        # New device on a live session → withhold the token, ask for the PIN.
+        if requires_join:
+            return {
+                "requires_join": True,
+                "session_id": session_id,
+                "table": table_info,
+                "restaurant": restaurant_info,
+                "is_new": False,
+                "message": "This table already has an active session. Enter the table PIN to join.",
+            }
+
+        # Invalidate tables list cache so staff sees updated status immediately
+        try:
+            await cache_delete(f"tables_list:{owner_id}")
+        except Exception:
+            pass
+
+        await self._ensure_session_user(session_id, "qr", device_id=device_id)
 
         await emit_and_publish(DomainEvent(
             event_type=SESSION_CREATED if is_new else SESSION_RESTORED,
@@ -232,7 +263,58 @@ class DineInSessionService:
             "table": table_info,
             "restaurant": restaurant_info,
             "is_new": is_new,
+            "join_pin": join_pin,
             "active_order_id": str(existing["active_order_id"]) if not is_new and existing and existing.get("active_order_id") else None,
+        }
+
+    async def join_session(
+        self,
+        restaurant_id: str,
+        table_id: str,
+        device_id: str,
+        join_pin: str,
+    ) -> dict:
+        """Join an existing active session on a table using its table PIN.
+
+        Used when a new device scans a table that already has an active
+        session (``scan_qr`` returned ``requires_join``). Validates the PIN,
+        registers the device, and hands back the session token.
+        """
+        async with get_transaction() as conn:
+            session = await conn.fetchrow(
+                """
+                SELECT id, session_token, join_pin, active_order_id
+                FROM dine_in_sessions
+                WHERE table_id = $1 AND status = 'active'
+                ORDER BY created_at DESC
+                LIMIT 1
+                FOR UPDATE
+                """,
+                table_id,
+            )
+            if not session:
+                raise NotFoundError("Session", "no active session for this table")
+
+            supplied = str(join_pin or "").strip()
+            expected = str(session["join_pin"] or "").strip()
+            if not expected or supplied != expected:
+                raise ValidationError("Invalid table PIN")
+
+            session_id = str(session["id"])
+            session_token = session["session_token"]
+            await conn.execute(
+                "UPDATE dine_in_sessions SET last_activity_at = now() WHERE id = $1",
+                session_id,
+            )
+
+        await self._ensure_session_user(session_id, "qr", device_id=device_id)
+
+        return {
+            "session_id": session_id,
+            "session_token": session_token,
+            "is_new": False,
+            "active_order_id": str(session["active_order_id"]) if session.get("active_order_id") else None,
+            "message": "Joined the table session.",
         }
 
     async def get_session_state(self, session_token: str) -> dict:
@@ -284,16 +366,19 @@ class DineInSessionService:
         """
         session = await self._get_valid_session(session_token)
         sid = str(session["id"])
-        session_user_id = await self._ensure_session_user(sid, "qr", device_id=device_id)
 
         try:
             async with DistributedLock(f"dinein_session:{sid}", timeout=10):
                 async with get_transaction() as conn:
                     new_status = "completed" if reason == "completed" else "cancelled"
+                    # Rotate the session_token as we close so any saved copy is
+                    # permanently invalidated (defense-in-depth on top of the
+                    # status gate in _get_valid_session). The column is NOT NULL,
+                    # so we rotate to a fresh value that is never handed out.
                     await conn.execute(
                         """
                         UPDATE dine_in_sessions
-                        SET status = $1, ended_at = now()
+                        SET status = $1, ended_at = now(), session_token = gen_random_uuid()::text
                         WHERE id = $2 AND status = 'active'
                         """,
                         new_status, sid,
@@ -1940,7 +2025,8 @@ class DineInSessionService:
                 SET status = 'closed',
                     ended_at = now(),
                     active_users_count = 0,
-                    last_activity_at = now()
+                    last_activity_at = now(),
+                    session_token = gen_random_uuid()::text
                 WHERE id = $1
                 """,
                 session_id,

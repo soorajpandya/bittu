@@ -28,6 +28,13 @@ class QRScanIn(BaseModel):
     session_token: Optional[str] = None  # Client sends existing token for restore
 
 
+class JoinIn(BaseModel):
+    restaurant_id: str
+    table_id: str
+    device_id: str
+    join_pin: str
+
+
 class CartAddIn(BaseModel):
     session_token: str
     item_id: int
@@ -112,6 +119,22 @@ async def qr_scan(body: QRScanIn):
         table_id=body.table_id,
         device_id=body.device_id,
         client_session_token=body.session_token,
+    )
+
+
+@router.post("/qr/join")
+async def qr_join(body: JoinIn):
+    """Join an active table session from a new device using the table PIN.
+
+    Called after /qr/scan returns ``requires_join: true`` (a different device
+    already owns the live session). Validates the per-session PIN and returns
+    the session token.
+    """
+    return await _svc.join_session(
+        restaurant_id=body.restaurant_id,
+        table_id=body.table_id,
+        device_id=body.device_id,
+        join_pin=body.join_pin,
     )
 
 
