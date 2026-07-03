@@ -371,14 +371,15 @@ class DineInSessionService:
             async with DistributedLock(f"dinein_session:{sid}", timeout=10):
                 async with get_transaction() as conn:
                     new_status = "completed" if reason == "completed" else "cancelled"
-                    # Rotate the session_token as we close so any saved copy is
-                    # permanently invalidated (defense-in-depth on top of the
-                    # status gate in _get_valid_session). The column is NOT NULL,
-                    # so we rotate to a fresh value that is never handed out.
+                    # Status becomes terminal, which is what blocks any further
+                    # mutation via _get_valid_session. We deliberately do NOT
+                    # rotate the token here so the customer's payment/bill poll
+                    # can still resolve the (now closed) session and show the
+                    # final paid state.
                     await conn.execute(
                         """
                         UPDATE dine_in_sessions
-                        SET status = $1, ended_at = now(), session_token = gen_random_uuid()::text
+                        SET status = $1, ended_at = now()
                         WHERE id = $2 AND status = 'active'
                         """,
                         new_status, sid,
@@ -2025,8 +2026,7 @@ class DineInSessionService:
                 SET status = 'closed',
                     ended_at = now(),
                     active_users_count = 0,
-                    last_activity_at = now(),
-                    session_token = gen_random_uuid()::text
+                    last_activity_at = now()
                 WHERE id = $1
                 """,
                 session_id,
@@ -2101,15 +2101,40 @@ class DineInSessionService:
     # 4. POST-PAID PAYMENT (public, customer-facing)
     # ══════════════════════════════════════════════════════════
 
+    async def _resolve_session_id_by_token(self, session_token: str) -> str:
+        """Resolve a session id from a token regardless of status.
+
+        Unlike _get_valid_session (which rejects non-active sessions so no
+        further items can be added), this lenient lookup lets the customer's
+        payment/bill poll still resolve a session that was just closed by full
+        payment, so the UI can show the final paid state instead of erroring.
+        """
+        async with get_connection() as conn:
+            row = await conn.fetchrow(
+                "SELECT id FROM dine_in_sessions WHERE session_token = $1",
+                session_token,
+            )
+        if not row:
+            raise NotFoundError("Session", "invalid token")
+        return str(row["id"])
+
     async def get_bill_by_token(self, session_token: str) -> dict:
-        """Public bill snapshot resolved from a session_token (no JWT)."""
-        session = await self._get_valid_session(session_token)
-        return await self.get_session_bill(str(session["id"]))
+        """Public bill snapshot resolved from a session_token (no JWT).
+
+        Lenient on status so a just-paid/closed session still returns its final
+        bill.
+        """
+        session_id = await self._resolve_session_id_by_token(session_token)
+        return await self.get_session_bill(session_id)
 
     async def get_payment_status(self, session_token: str) -> dict:
-        """Poll the payment/settlement state for a QR session (public)."""
-        session = await self._get_valid_session(session_token)
-        session_id = str(session["id"])
+        """Poll the payment/settlement state for a QR session (public).
+
+        Lenient on status: after full payment the session is closed, but the
+        customer is still polling with the same token — so we resolve the
+        session regardless of status and report is_paid from the bill.
+        """
+        session_id = await self._resolve_session_id_by_token(session_token)
         bill = await self.get_session_bill(session_id)
         grand_total = float(bill.get("grand_total") or 0)
         paid = float(bill.get("paid_total") or 0)
