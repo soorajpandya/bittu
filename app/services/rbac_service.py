@@ -67,8 +67,8 @@ class RBACService:
                 "due_payment.*": {}, "feedback.*": {},
                 # Settings
                 "settings.*": {},
-                # Purchase Orders / Vendors / Expenses / Invoices
-                "purchase_order.*": {}, "expense.*": {}, "invoice.*": {},
+                # Purchase Orders / Suppliers / Vendors / Expenses / Invoices
+                "purchase_order.*": {}, "supplier.*": {}, "expense.*": {}, "invoice.*": {},
                 # Audit
                 "audit.*": {},
                 # Delivery (pincodes)
@@ -124,6 +124,8 @@ class RBACService:
                 "settings.read": {},
                 # Purchase Orders
                 "purchase_order.read": {}, "purchase_order.write": {},
+                # Suppliers
+                "supplier.read": {}, "supplier.write": {}, "supplier.delete": {},
                 # Delivery
                 "delivery.read": {}, "delivery.write": {},
                 # Favourites

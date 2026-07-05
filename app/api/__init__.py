@@ -61,6 +61,7 @@ from app.api.v1 import (
     cash_transactions,
     due_payments,
     purchase_orders,
+    suppliers,
     # ── Billing / Admin ──
     billing,
     audit_logs,
@@ -158,6 +159,7 @@ router.include_router(restaurant_settings.router)
 router.include_router(cash_transactions.router)
 router.include_router(due_payments.router)
 router.include_router(purchase_orders.router)
+router.include_router(suppliers.router)
 # ── Billing / Admin ──
 router.include_router(billing.router)
 router.include_router(audit_logs.router)
