@@ -190,14 +190,28 @@ async def _handle_order_confirmed(event: DomainEvent):
         if inv_enabled:
             order_items = [{"item_id": r["item_id"], "quantity": r["quantity"]} for r in items]
             svc = InventoryService()
-            await svc.deduct_for_order(
-                user_id=event.user_id or "",
-                order_id=order_id,
-                order_items=order_items,
-            )
-            logger.info("erp_inventory_deducted", order_id=order_id)
+            # Best-effort: the legacy path guards on the stale `ingredients.current_stock`
+            # column, which the event-sourced inventory does NOT keep in sync (stock-ins
+            # and adjustments only append to `inventory_ledger`). If this raised here it
+            # would abort BEFORE the authoritative ledger write below, so orders would
+            # silently stop deducting once stock is tracked only in the ledger (e.g.
+            # AI-created ingredients start at current_stock=0). Never let it block the
+            # event-sourced deduction — the ledger is the source of truth.
+            try:
+                await svc.deduct_for_order(
+                    user_id=event.user_id or "",
+                    order_id=order_id,
+                    order_items=order_items,
+                )
+                logger.info("erp_inventory_deducted", order_id=order_id)
+            except Exception as exc:
+                logger.warning(
+                    "erp_legacy_inventory_deduct_skipped",
+                    order_id=order_id,
+                    reason=str(exc),
+                )
 
-            # 2 + 3. Inventory ledger + COGS (new ERP layer)
+            # 2 + 3. Inventory ledger + COGS (new ERP layer) — authoritative deduction.
             await _write_ledger_and_cogs(event, order_id, order_items)
 
         # 4. GST Invoice creation (immutable snapshot)
