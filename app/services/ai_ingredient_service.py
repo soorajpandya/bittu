@@ -109,29 +109,41 @@ class AIIngredientService:
                 # Try to find existing ingredient by name (case-insensitive).
                 # Scope to the caller's restaurant OR to legacy rows that have
                 # no restaurant_id yet (so we can heal them in-place below).
+                # Deliberately NOT filtering on deleted_at / is_active so we can
+                # resurrect a previously soft-deleted master instead of orphaning
+                # the new linkage against a row the Inventory page hides.
                 row = await conn.fetchrow(
                     """
-                    SELECT id, restaurant_id, branch_id
+                    SELECT id, restaurant_id, branch_id, deleted_at, is_active
                       FROM ingredients
                      WHERE user_id = $1
                        AND LOWER(name) = LOWER($2)
                        AND (restaurant_id = $3::uuid OR restaurant_id IS NULL)
-                     ORDER BY (restaurant_id IS NOT NULL) DESC, id ASC
+                     ORDER BY (deleted_at IS NULL) DESC,
+                              (restaurant_id IS NOT NULL) DESC,
+                              id ASC
                      LIMIT 1
                     """,
                     user_id, name, restaurant_id,
                 )
                 if row:
                     ingredient_id = row["id"]
-                    # Heal orphan rows created by the pre-fix code: attach to
-                    # the caller's restaurant/branch so /inventory/balances
-                    # (which filters by restaurant_id) can finally see them.
-                    if restaurant_id and row["restaurant_id"] is None:
+                    # Heal the matched master so it is visible on the Inventory
+                    # page after linking:
+                    #  - orphan rows (NULL restaurant) get attached to the caller
+                    #  - soft-deleted / deactivated rows get resurrected, otherwise
+                    #    /ingredients and /inventory/balances filter them out and
+                    #    the freshly-linked ingredient never appears in inventory.
+                    needs_restaurant = bool(restaurant_id and row["restaurant_id"] is None)
+                    needs_revive = row["deleted_at"] is not None or row["is_active"] is False
+                    if needs_restaurant or needs_revive:
                         await conn.execute(
                             """
                             UPDATE ingredients
-                               SET restaurant_id = $2::uuid,
+                               SET restaurant_id = COALESCE(restaurant_id, $2::uuid),
                                    branch_id    = COALESCE(branch_id, $3::uuid),
+                                   deleted_at   = NULL,
+                                   is_active    = TRUE,
                                    updated_at   = NOW()
                              WHERE id = $1
                             """,
