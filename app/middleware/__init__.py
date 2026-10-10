@@ -2,6 +2,7 @@
 Middleware stack: rate limiting, request ID, error handling, audit logging, security headers, subscription check.
 """
 import time
+import secrets
 import uuid
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -23,6 +24,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Inject production security headers into every response."""
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        request.state.csp_nonce = secrets.token_urlsafe(24)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -32,7 +34,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         settings = get_settings()
         if settings.is_production:
             response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
-            response.headers["Content-Security-Policy"] = "default-src 'self'"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; object-src 'none'; base-uri 'none'; "
+                f"script-src 'self' 'nonce-{request.state.csp_nonce}'; "
+                f"style-src 'self' 'nonce-{request.state.csp_nonce}'"
+            )
         return response
 
 
