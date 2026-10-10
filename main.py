@@ -527,14 +527,6 @@ def create_app() -> FastAPI:
     _swagger_static = _os.path.join(_os.path.dirname(swagger_ui_bundle.__file__), "vendor", "swagger-ui-4.15.5")
     app.mount("/_swagger-ui", StaticFiles(directory=_swagger_static), name="swagger_ui_static")
 
-    @app.get("/docs", include_in_schema=False)
-    async def swagger_ui() -> HTMLResponse:
-        return get_swagger_ui_html(
-            openapi_url="/openapi.json",
-            title="BITTU API - Swagger UI",
-            swagger_js_url="/_swagger-ui/swagger-ui-bundle.js",
-            swagger_css_url="/_swagger-ui/swagger-ui.css",
-            swagger_favicon_url="/_swagger-ui/favicon-32x32.png",
     def _with_csp_nonce(request: Request, html: HTMLResponse) -> HTMLResponse:
         nonce = getattr(request.state, "csp_nonce", None)
         if not nonce:
@@ -563,7 +555,15 @@ def create_app() -> FastAPI:
             redoc_js_url="https://cdn.jsdelivr.net/npm/redoc@latest/bundles/redoc.standalone.js",
             redoc_favicon_url="/_swagger-ui/favicon-32x32.png",
             with_google_fonts=False,
-        ).websocket("/ws")
+        ))
+
+    # -- Prometheus metrics (unauthenticated, for scraping) --
+    app.add_route("/metrics", metrics_endpoint, methods=["GET"])
+
+    # -- WebSocket --
+    from fastapi import WebSocket, Query as WSQuery
+
+    @app.websocket("/ws")
     async def websocket_route(
         websocket: WebSocket,
         token: str = WSQuery(default=""),
