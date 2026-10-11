@@ -1589,23 +1589,12 @@ class RzpRouteService:
     # ── Settlement-ready gate ────────────────────────────────────────────
 
     async def assert_settlement_ready(self, *, merchant_id: Optional[str]) -> None:
-        """Block payment intake when the merchant has opted into Route but
-        has not finished onboarding (linked account not activated OR product
-        configuration not activated).
-
-        Merchants without ANY rzp_route_accounts row are treated as legacy
-        (pass through) — a warning is logged so ops can chase migration.
-        Raise ``PermissionError`` to be mapped to HTTP 409 at the boundary.
-        """
+        """Route-only intake requires an activated linked-account product."""
         if not merchant_id:
-            return
+            raise PermissionError("merchant context required for Route payments")
         row = await self._existing_account(merchant_id)
-        if not row:
-            logger.warning(
-                "rzp_route_legacy_merchant_no_account",
-                merchant_id=merchant_id,
-            )
-            return
+        if not row or not row["linked_account_id"]:
+            raise PermissionError("merchant_not_settlement_ready: no Route linked account")
         status = row["status"]
         product_status = row["route_product_status"] if "route_product_status" in row.keys() else None
         # Route linked accounts stay status='created' for their entire
@@ -1652,7 +1641,7 @@ class RzpRouteService:
             # Fall back to platform UUID — recon/poll will promote later.
             merchant_id = "00000000-0000-0000-0000-000000000000"
 
-        status = _coerce_transfer_state(status_override or rzp_entity.get("status"))
+        status = _coerce_transfer_state(status_override or rzp_entity.get("transfer_status") or rzp_entity.get("status"))
 
         on_hold = bool(rzp_entity.get("on_hold") or False)
         on_hold_until_epoch = rzp_entity.get("on_hold_until")
@@ -1832,31 +1821,90 @@ class RzpRouteService:
                 f"product_status={_prod_status!r})"
             )
 
-        transfer_body: dict[str, Any] = {
-            "account": acct["linked_account_id"],
-            "amount": int(amount_paise),
-            "currency": currency,
-            "notes": dict(notes or {}),
-        }
-        if on_hold:
-            transfer_body["on_hold"] = 1
-            if on_hold_until_epoch:
-                transfer_body["on_hold_until"] = int(on_hold_until_epoch)
+        from app.services.razorpay.fee_policy import merchant_transfer_paise
+        from app.services.razorpay.route_safety import payment_lock, guarded_mutation
 
-        idem = (
-            f"rzp_transfer:{merchant_id}:{razorpay_payment_id}:{int(amount_paise)}"
-        )
-        rzp_resp = await route_api.create_transfers_for_payment(
-            razorpay_payment_id,
-            transfers=[transfer_body],
-            idempotency_key=idem,
-            merchant_id=merchant_id,
-        )
+        async with payment_lock(razorpay_payment_id) as conn:
+            payment = await conn.fetchrow(
+                "SELECT merchant_id::text AS merchant_id, amount_paise, currency, captured, razorpay_order_id "
+                "FROM rzp_payments WHERE razorpay_payment_id=$1 ORDER BY created_at DESC LIMIT 1",
+                razorpay_payment_id,
+            )
+            if not payment or payment["merchant_id"] != str(merchant_id):
+                raise PermissionError("payment does not belong to merchant")
+            if not payment["captured"] or currency != "INR" or payment["currency"] != currency:
+                raise ValueError("Route requires a captured INR payment")
+            expected = merchant_transfer_paise(int(payment["amount_paise"]))
+            if amount_paise != expected or expected < 100:
+                raise ValueError("Route transfer must equal the fixed 95% merchant entitlement (minimum 100 paise)")
+            idem = f"rzp_transfer:{merchant_id}:{razorpay_payment_id}:{expected}"
+            # Inspect gateway transfers BEFORE creating: legacy orders may already
+            # contain transfers, and a previous POST may have timed out locally.
+            remote = await route_api.fetch_transfers_for_payment(razorpay_payment_id, merchant_id=merchant_id)
+            existing = [x for x in (remote.get("items") or [])
+                        if (x.get("transfer_status") or x.get("status")) != "failed"]
+            if existing:
+                if any(x.get("recipient") != acct["linked_account_id"] for x in existing):
+                    raise ValueError("payment has transfers to an unexpected linked account")
+                # Preserve original historical allocations. Never top up/reprice
+                # an existing split because today's policy changed.
+                rzp_resp = {"items": existing}
+                allocation = await conn.fetchval(
+                    "SELECT merchant_paise FROM rzp_route_allocations WHERE razorpay_payment_id=$1",
+                    razorpay_payment_id,
+                )
+                if allocation is not None:
+                    if sum(int(x["amount"]) for x in existing) != int(allocation):
+                        raise RuntimeError("gateway transfers differ from saved entitlement; reconciliation required")
+                    # A timed-out POST can succeed remotely. Once verified, close
+                    # the durable intent so operations no longer reports it unknown.
+                    await conn.execute(
+                        "UPDATE rzp_route_operations SET state='succeeded',response=$2::jsonb,updated_at=now() "
+                        "WHERE operation_key=$1 AND resource_key=$3 AND state='unknown'",
+                        idem, json.dumps(rzp_resp), razorpay_payment_id,
+                    )
+            else:
+                refunded = await conn.fetchval(
+                    "SELECT COALESCE(SUM(amount_paise),0) FROM rzp_refunds "
+                    "WHERE razorpay_payment_id=$1 AND status='processed'", razorpay_payment_id,
+                )
+                if refunded:
+                    raise RuntimeError("payment refunded before Route transfer; reconciliation required")
+                if payment["razorpay_order_id"]:
+                    order = await route_api.fetch_transfers_for_order(payment["razorpay_order_id"], merchant_id=merchant_id)
+                    if order.get("items"):
+                        raise RuntimeError("order-owned Route split awaiting payment transfer reconciliation")
+                await conn.execute(
+                    "INSERT INTO rzp_route_allocations(razorpay_payment_id,merchant_id,gross_paise,merchant_paise,currency) "
+                    "VALUES($1,$2::uuid,$3,$4,$5) ON CONFLICT(razorpay_payment_id) DO NOTHING",
+                    razorpay_payment_id, merchant_id, int(payment["amount_paise"]), expected, currency,
+                )
+                transfer_body = {"account": acct["linked_account_id"], "amount": expected,
+                                 "currency": currency, "notes": dict(notes or {})}
+                if on_hold:
+                    transfer_body["on_hold"] = 1
+                    if on_hold_until_epoch:
+                        transfer_body["on_hold_until"] = int(on_hold_until_epoch)
+                rzp_resp = await guarded_mutation(
+                    conn, key=idem, resource_key=razorpay_payment_id, body=transfer_body,
+                    send=lambda: route_api.create_transfers_for_payment(
+                        razorpay_payment_id, transfers=[transfer_body],
+                        idempotency_key=idem, merchant_id=merchant_id,
+                    ),
+                )
+                if not (rzp_resp or {}).get("items"):
+                    raise RuntimeError("Route returned no transfers; reconciliation required")
+                items = rzp_resp["items"]
+                if any(x.get("recipient") != acct["linked_account_id"] for x in items):
+                    raise ValueError("payment has transfers to an unexpected linked account")
+                if (any((x.get("transfer_status") or x.get("status")) == "failed" for x in items)
+                        or sum(int(x["amount"]) for x in items) != expected):
+                    raise RuntimeError("Route transfer failed or has an unexpected amount; reconciliation required")
 
         items = (rzp_resp or {}).get("items") or []
         upserted: list[dict] = []
         for item in items:
-            item.setdefault("source", razorpay_payment_id)
+            item["source"] = razorpay_payment_id
             row = await self.upsert_transfer_from_razorpay(
                 rzp_entity=item, merchant_id_override=merchant_id,
             )
@@ -1877,6 +1925,74 @@ class RzpRouteService:
         )
         return {"transfers": upserted, "raw": rzp_resp}
 
+    async def reverse_refunded_share(self, *, razorpay_payment_id: str, refund_id: str) -> None:
+        """Cumulative proportional reversal; rounding is recovered on final refund.
+
+        The cumulative base is processed gateway refunds plus lost local disputes
+        (chargebacks) on the same payment, so refunds and disputes never
+        double-reverse and the merchant's 95% share is clawed back exactly once.
+        """
+        from app.services.razorpay.route_safety import payment_lock, guarded_mutation
+        async with payment_lock(razorpay_payment_id) as conn:
+            payment = await conn.fetchrow(
+                "SELECT merchant_id::text AS merchant_id,amount_paise FROM rzp_payments "
+                "WHERE razorpay_payment_id=$1 ORDER BY created_at DESC LIMIT 1", razorpay_payment_id,
+            )
+            if not payment:
+                raise LookupError("refunded payment is not mirrored")
+            merchant_id = payment["merchant_id"]
+            total = int(payment["amount_paise"])
+            refunded = int(await conn.fetchval(
+                "SELECT COALESCE(SUM(amount_paise),0) FROM rzp_refunds "
+                "WHERE razorpay_payment_id=$1 AND status='processed'", razorpay_payment_id,
+            ))
+            if await conn.fetchval("SELECT to_regclass('disputes') IS NOT NULL AND to_regclass('payments') IS NOT NULL"):
+                refunded += int(await conn.fetchval(
+                    "SELECT COALESCE(SUM(ROUND(d.amount*100)),0)::bigint FROM disputes d "
+                    "JOIN payments p ON p.id=d.payment_id "
+                    "WHERE p.razorpay_payment_id=$1 AND d.merchant_id=$2::uuid AND d.status='lost'",
+                    razorpay_payment_id, merchant_id,
+                ))
+            if refunded <= 0:
+                return
+            remote = await route_api.fetch_transfers_for_payment(razorpay_payment_id, merchant_id=merchant_id)
+            transfers = [x for x in remote.get("items") or []
+                         if (x.get("transfer_status") or x.get("status")) != "failed"]
+            if transfers:
+                account = await self._existing_account(merchant_id)
+                if not account or any(x.get("recipient") != account["linked_account_id"] for x in transfers):
+                    raise PermissionError("refund transfer belongs to another linked account")
+            for transfer in transfers:
+                target = min(refunded, total) * int(transfer["amount"]) // total
+                reversed_paise = int(transfer.get("amount_reversed") or 0)
+                prior = await conn.fetch(
+                    "SELECT operation_key,state FROM rzp_route_operations WHERE resource_key=$1 "
+                    "AND state IN ('unknown','succeeded')", transfer["id"],
+                )
+                for operation in prior:
+                    if operation["operation_key"].startswith("rzp_refund_reversal:"):
+                        previous_target = int(operation["operation_key"].rsplit(":",1)[1])
+                        if reversed_paise < previous_target:
+                            raise RuntimeError("previous reversal not yet reconciled at gateway")
+                        if operation["state"] == "unknown":
+                            await conn.execute(
+                                "UPDATE rzp_route_operations SET state='succeeded',response='{}'::jsonb,updated_at=now() WHERE operation_key=$1",
+                                operation["operation_key"],
+                            )
+                if target > reversed_paise:
+                    key = f"rzp_refund_reversal:{transfer['id']}:{target}"
+                    body = {"amount": target - reversed_paise,
+                            "notes": {"source": "processed_refunds", "cumulative_target_paise": str(target)}}
+                    await guarded_mutation(
+                        conn, key=key, resource_key=transfer["id"], body=body,
+                        send=lambda: route_api.reverse_transfer(
+                            transfer["id"], amount_paise=body["amount"], notes=body["notes"],
+                            idempotency_key=key, merchant_id=merchant_id,
+                        ),
+                    )
+                    transfer = await route_api.fetch_transfer(transfer["id"], merchant_id=merchant_id)
+                await self.upsert_transfer_from_razorpay(rzp_entity=transfer, merchant_id_override=merchant_id)
+
     async def reverse_transfer(
         self,
         *,
@@ -1889,7 +2005,7 @@ class RzpRouteService:
         # Sanity: transfer must belong to this merchant.
         async with get_service_connection() as conn:
             row = await conn.fetchrow(
-                "SELECT merchant_id::text AS merchant_id, status "
+                "SELECT merchant_id::text AS merchant_id, status, razorpay_payment_id "
                 "FROM rzp_route_transfers WHERE transfer_id = $1",
                 transfer_id,
             )
@@ -1900,17 +2016,20 @@ class RzpRouteService:
         if row["status"] in {"reversed", "failed"}:
             raise ValueError(f"transfer already terminal (status={row['status']!r})")
 
-        idem = f"rzp_transfer_reverse:{transfer_id}:{int(amount_paise or 0)}"
+        idem = f"rzp_transfer_reverse:{transfer_id}:{refund_id or 'manual'}:{int(amount_paise or 0)}"
         merged_notes: dict[str, Any] = dict(notes or {})
         if refund_id:
             merged_notes.setdefault("refund_id", refund_id)
-        rzp_resp = await route_api.reverse_transfer(
-            transfer_id,
-            amount_paise=amount_paise,
-            notes=merged_notes,
-            idempotency_key=idem,
-            merchant_id=merchant_id,
-        )
+        from app.services.razorpay.route_safety import payment_lock, guarded_mutation
+        async with payment_lock(row["razorpay_payment_id"] or transfer_id) as conn:
+            rzp_resp = await guarded_mutation(
+                conn, key=idem, resource_key=transfer_id,
+                body={"amount": amount_paise, "notes": merged_notes},
+                send=lambda: route_api.reverse_transfer(
+                    transfer_id, amount_paise=amount_paise, notes=merged_notes,
+                    idempotency_key=idem, merchant_id=merchant_id,
+                ),
+            )
         # Refetch the transfer to capture the new state.
         try:
             updated = await route_api.fetch_transfer(transfer_id, merchant_id=merchant_id)
@@ -1939,6 +2058,9 @@ class RzpRouteService:
         rzp_resp = await route_api.fetch_transfer(
             transfer_id, merchant_id=merchant_id,
         )
+        account = await self._existing_account(merchant_id)
+        if not account or rzp_resp.get("recipient") != account["linked_account_id"]:
+            raise PermissionError("transfer belongs to another merchant")
         row = await self.upsert_transfer_from_razorpay(
             rzp_entity=rzp_resp, merchant_id_override=merchant_id,
         )

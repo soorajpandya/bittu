@@ -6,7 +6,7 @@ import pytest
 
 from app.services.tax_engine import (
     TaxConfig, TaxConfigError, compute_tax,
-    ItemTaxLine, compute_cart_tax, _line_from_item_row,
+    ItemTaxLine, compute_cart_tax, _line_from_item_row, _q,
     get_tax_config, invalidate_tax_config,
     validate_gst_number, validate_gst_settings_patch,
 )
@@ -264,15 +264,46 @@ def test_cart_store_gst_disabled_zeroes_everything():
     assert res.gst_enabled is False
 
 
-def test_cart_discount_applied_after_tax():
-    """₹10 discount on (burger 100 + thumbs up 40) → 145 - 10 = 135."""
+def test_cart_discount_reduces_taxable_value_pro_rata():
+    """₹10 discount on (burger 100 excl + thumbs up 40 incl): the discount is
+    allocated 7.14 / 2.86 on the subtotal basis and GST is re-derived on the
+    discounted basis — the same policy as compute_tax (tax on 1000−100)."""
     lines = [_line(100), _line(40, inclusive=True)]
     res = compute_cart_tax(lines, discount=10, config=STORE_5)
-    assert res.grand_total == Decimal("135.00")
-    # Per-line tax is unchanged — discount doesn't rewrite the GST split.
-    assert res.cgst_amount == Decimal("3.45")
-    assert res.sgst_amount == Decimal("3.45")
+    burger, thumbs = res.lines
+    assert (burger.discount_amount, thumbs.discount_amount) == (Decimal("7.14"), Decimal("2.86"))
+    # burger: 92.86 taxable + 5% (4.64 → 2.32/2.32) = 97.50
+    assert burger.taxable_amount == Decimal("92.86") and burger.final_price == Decimal("97.50")
+    # thumbs up: MRP 37.14 → taxable 35.37, tax 1.77 → CGST 0.88 / SGST 0.89 (odd paisa to SGST)
+    assert thumbs.final_price == Decimal("37.14") and thumbs.taxable_amount == Decimal("35.37")
+    assert (thumbs.cgst_amount, thumbs.sgst_amount) == (Decimal("0.88"), Decimal("0.89"))
     assert res.discount_amount == Decimal("10.00")
+    # (e) invariants
+    assert res.grand_total == sum(l.final_price for l in res.lines) - res.round_off == Decimal("134.64")
+    assert res.grand_total == res.subtotal - res.discount_amount + (burger.cgst_amount + burger.sgst_amount)
+    assert res.cgst_amount + res.sgst_amount == res.total_tax
+    assert abs(res.cgst_amount - res.sgst_amount) <= Decimal("0.01")
+
+
+def test_cart_discount_allocation_conserves_paise_on_mixed_cart():
+    lines = [_line(99.99), _line(40, inclusive=True), _line(20, enabled=False, rate="0"), _line(0.01)]
+    for disc in ("0.01", "7.77", "33.33", "160.00"):
+        res = compute_cart_tax(lines, discount=disc, config=STORE_5, round_to_rupee=True)
+        assert sum(l.discount_amount for l in res.lines) == res.discount_amount
+        assert res.grand_total == _q(sum(l.final_price for l in res.lines)) + res.round_off
+        excl_tax = sum((l.cgst_amount + l.sgst_amount) for l in res.lines if l.gst_enabled and not l.gst_inclusive)
+        assert res.grand_total == _q(res.subtotal - res.discount_amount + excl_tax) + res.round_off
+        for l in res.lines:
+            assert Decimal("0") <= l.sgst_amount - l.cgst_amount <= Decimal("0.01")
+
+
+def test_compute_tax_and_cart_agree_on_single_exclusive_line_discount():
+    cfg = STORE_5
+    bill = compute_tax("1000", discount="100", config=cfg)
+    cart = compute_cart_tax([_line(1000)], discount=100, config=cfg)
+    assert cart.taxable_amount == bill.taxable_amount == Decimal("900.00")
+    assert cart.total_tax == bill.total_tax == Decimal("45.00")
+    assert cart.grand_total == bill.grand_total == Decimal("945.00")
 
 
 def test_cart_discount_cannot_exceed_total():

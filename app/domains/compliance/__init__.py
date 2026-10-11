@@ -1,1 +1,1 @@
-"""compliance domain — see docs/ARCHITECTURE_V2.md"""
+"""compliance domain â€” see docs/ARCHITECTURE_V2.md"""

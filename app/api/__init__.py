@@ -91,6 +91,10 @@ from app.api.v1 import (
 
 router = APIRouter(prefix="/api/v1")
 
+# Admin onboarding must precede legacy /restaurants GET/POST routes.
+from app.api.v1 import partner_onboarding as _partner_onboarding
+router.include_router(_partner_onboarding.router)
+
 router.include_router(auth.router)
 router.include_router(orders.router)
 router.include_router(payments.router)

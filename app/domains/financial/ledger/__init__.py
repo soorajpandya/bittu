@@ -1,1 +1,1 @@
-"""financial.ledger — see docs/ARCHITECTURE_V2.md"""
+"""financial.ledger â€” see docs/ARCHITECTURE_V2.md"""

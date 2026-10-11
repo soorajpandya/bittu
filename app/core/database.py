@@ -151,19 +151,21 @@ async def bypass_rls():
 
 
 async def _apply_tenant_guc(conn: asyncpg.Connection) -> None:
+    # Session scope is intentional: raw/service connections use autocommit.
+    # asyncpg resets session settings when the connection returns to the pool.
     # `app.rls_bypass = 'on'` is the explicit opt-in checked by the strict
     # `fn_rls_owner_match` (migration 071). Without it, an unset / empty
     # `app.tenant_id` will deny access on RLS-protected tables — fail-closed.
     if _bypass_rls.get():
-        await conn.execute("SELECT set_config('app.tenant_id', '', true)")
-        await conn.execute("SELECT set_config('app.rls_bypass', 'on', true)")
+        await conn.execute("SELECT set_config('app.tenant_id', '', false)")
+        await conn.execute("SELECT set_config('app.rls_bypass', 'on', false)")
         return
-    await conn.execute("SELECT set_config('app.rls_bypass', '', true)")
+    await conn.execute("SELECT set_config('app.rls_bypass', '', false)")
     tid = _current_tenant_id.get()
     if tid:
-        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tid)
+        await conn.execute("SELECT set_config('app.tenant_id', $1, false)", tid)
     else:
-        await conn.execute("SELECT set_config('app.tenant_id', '', true)")
+        await conn.execute("SELECT set_config('app.tenant_id', '', false)")
 
 
 def _observe_pool_wait(txn_kind: str, seconds: float) -> None:

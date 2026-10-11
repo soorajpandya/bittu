@@ -13,7 +13,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.core.auth import UserContext, require_permission
+from app.core.auth import UserContext, require_permission, require_platform_admin
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.services.kyc_service import kyc_service
@@ -557,7 +557,7 @@ async def create_transfer(
         raise HTTPException(status_code=409, detail=str(exc))
 
 
-@router.post("/transfers/{transfer_id}/reverse")
+@router.post("/transfers/{transfer_id}/reverse", dependencies=[Depends(require_platform_admin())])
 async def reverse_transfer(
     transfer_id: str,
     body: ReverseTransferIn = Body(default_factory=ReverseTransferIn),

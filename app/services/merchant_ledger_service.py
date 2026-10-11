@@ -51,6 +51,8 @@ ALLOWED_TXN_TYPES = frozenset({
     "settlement_reversed",
     "fee_deduction",
     "gst_deduction",
+    "fee_reversal",
+    "gst_reversal",
     "refund",
     "chargeback",
     "payout_failure",

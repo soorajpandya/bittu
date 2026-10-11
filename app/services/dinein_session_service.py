@@ -105,18 +105,6 @@ class DineInSessionService:
                 table_id, restaurant_id,
             )
             if not table:
-                # Fallback: just by table_id
-                table = await conn.fetchrow(
-                    """
-                    SELECT rt.id, rt.table_number, rt.capacity, rt.user_id, rt.restaurant_id,
-                           r.id AS rest_id, r.name AS rest_name, r.logo_url, r.phone, r.address, r.city
-                    FROM restaurant_tables rt
-                    LEFT JOIN restaurants r ON r.id = rt.restaurant_id
-                    WHERE rt.id = $1::uuid AND rt.is_active = true
-                    """,
-                    table_id,
-                )
-            if not table:
                 raise NotFoundError("Table", table_id)
 
         # ── Create new session ──
@@ -175,6 +163,16 @@ class DineInSessionService:
                         session_id,
                     )
             else:
+                # New-session creation shares the table lock with waitlist
+                # reservation. Existing-session joins retain the session->table
+                # lock order used by close_session, avoiding a lock-order cycle.
+                await conn.fetchrow("SELECT id FROM restaurant_tables WHERE id=$1::uuid FOR UPDATE", table_id)
+                from app.services.waitlist_tables import assert_table_not_reserved
+                await assert_table_not_reserved(conn, table_id)
+                if await conn.fetchval(
+                    "SELECT id FROM dine_in_sessions WHERE table_id=$1::uuid AND status='active' LIMIT 1", table_id,
+                ):
+                    raise ConflictError("Table session changed; scan again")
                 # New session — mint a short per-visit table PIN for joiners.
                 join_pin = f"{secrets.randbelow(10000):04d}"
                 await conn.execute(

@@ -5,12 +5,13 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Response, Body
+from fastapi import APIRouter, Depends, Query, Response, Body, Header
 from pydantic import BaseModel, Field
 
 from app.core.auth import UserContext, require_permission
 from app.core.exceptions import ValidationError
 from app.services.refund_service import refund_service
+from app.core.database import get_connection
 
 router = APIRouter(prefix="/refunds", tags=["Refunds"])
 
@@ -42,9 +43,11 @@ class _TransitionBody(BaseModel):
 @router.post("/")
 async def create_refund(
     body: _CreateBody,
+    request_key: str = Header(..., alias="X-Idempotency-Key", min_length=1, max_length=200),
     user: UserContext = Depends(require_permission("refunds.write")),
 ):
     return await refund_service.create_and_dispatch(
+        request_key=request_key,
         merchant_id=_mid(user),
         payment_id=body.payment_id,
         amount=body.amount,
@@ -121,6 +124,13 @@ async def transition_refund(
     body: _TransitionBody,
     user: UserContext = Depends(require_permission("refunds.write")),
 ):
+    async with get_connection() as conn:
+        online = await conn.fetchval(
+            "SELECT p.razorpay_payment_id FROM refunds r JOIN payments p ON p.id=r.payment_id "
+            "WHERE r.id=$1 AND r.merchant_id=$2::uuid", refund_id, _mid(user),
+        )
+    if online:
+        raise ValidationError("online refund status is controlled by verified gateway responses")
     return await refund_service.transition(
         refund_id,
         merchant_id=_mid(user),

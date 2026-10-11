@@ -1,1 +1,1 @@
-"""tenancy domain — see docs/ARCHITECTURE_V2.md"""
+"""tenancy domain â€” see docs/ARCHITECTURE_V2.md"""

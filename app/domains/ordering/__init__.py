@@ -1,1 +1,1 @@
-"""ordering domain — see docs/ARCHITECTURE_V2.md"""
+"""ordering domain â€” see docs/ARCHITECTURE_V2.md"""

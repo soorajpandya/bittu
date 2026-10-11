@@ -3,7 +3,7 @@ Merchant Statements — Merchant API (Phase 5).
 
 Prefix:   /merchant-statements
 Audience: a merchant generating/viewing their own period statements over
-the merchant_ledger.
+frozen Route entitlement snapshots. Existing legacy statements keep their original ledger basis.
 """
 from __future__ import annotations
 

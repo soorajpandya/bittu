@@ -367,7 +367,6 @@ domain service writes:
 |---|---|---|---|
 | `outbox_dispatcher` | poll | event_id dedup | yes |
 | `recon_worker` | event / cron | external_ref dedup | yes |
-| `settlement_worker` | cron (T+1) | settlement_batch_id | yes |
 | `payout_worker` | event + manual approve | payout_id | yes |
 | `webhook_processor` | gateway webhook | webhook_id | yes |
 | `snapshot_worker` | cron (hourly) | snapshot_at | yes |

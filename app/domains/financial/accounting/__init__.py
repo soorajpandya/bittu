@@ -1,1 +1,1 @@
-"""financial.accounting — see docs/ARCHITECTURE_V2.md"""
+"""financial.accounting â€” see docs/ARCHITECTURE_V2.md"""

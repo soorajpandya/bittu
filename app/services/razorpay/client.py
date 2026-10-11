@@ -5,11 +5,10 @@ Responsibilities
 ----------------
 * Basic-auth header (key_id : key_secret) constructed once per request.
 * `httpx.AsyncClient` with sane timeouts, kept warm via lazy module-level instance.
-* Exponential backoff w/ jitter on 429/5xx/network errors (configurable).
-* Razorpay request-level idempotency key support: when caller passes
-  `idempotency_key=...`, we set the `X-Razorpay-Idempotency` header AND look
-  up `rzp_api_idempotency` first — if a prior successful response is cached,
-  we return it without ever hitting Razorpay (replay-safe).
+* Exponential backoff for reads; mutations are never blindly retried.
+* Local successful-response cache. This does not guarantee gateway idempotency.
+  Route direct transfers use their endpoint-specific idempotency header;
+  payment transfers/reversals use durable guards in the Route service.
 * Forensic audit: every attempt is recorded in `rzp_api_calls` (append-only,
   partitioned). Sensitive headers are scrubbed.
 * Structured logging via `app.core.logging` (operation, status, attempt,
@@ -250,8 +249,9 @@ class RazorpayClient:
         }
         if json_body is not None:
             headers["Content-Type"] = "application/json"
-        if idempotency_key:
-            headers["X-Razorpay-Idempotency"] = idempotency_key
+        # A local response cache is not gateway-side idempotency.
+        if idempotency_key and method.upper() == "POST" and path == "/v1/transfers":
+            headers["X-Transfer-Idempotency"] = idempotency_key
         if account_id:
             # Used by Route APIs to act on behalf of a linked account.
             headers["X-Razorpay-Account"] = account_id
@@ -275,7 +275,8 @@ class RazorpayClient:
             correlation_id=correlation_id,
         )
 
-        for attempt in range(1, self._max_retries + 2):  # 1 + retries
+        retries = self._max_retries if method.upper() in {"GET", "HEAD"} else 0
+        for attempt in range(1, retries + 2):  # 1 + retries
             t0 = time.perf_counter()
             try:
                 resp = await self._client.request(
@@ -287,7 +288,7 @@ class RazorpayClient:
                 duration_ms = int((time.perf_counter() - t0) * 1000)
                 last_response = resp
 
-                if resp.status_code in RETRYABLE_STATUSES and attempt <= self._max_retries:
+                if resp.status_code in RETRYABLE_STATUSES and attempt <= retries:
                     retry_after = _parse_retry_after(resp.headers.get("retry-after"))
                     sleep_for = _backoff_seconds(attempt, retry_after)
                     logger.warning(
@@ -352,7 +353,7 @@ class RazorpayClient:
             except (httpx.TransportError, httpx.RemoteProtocolError) as exc:
                 last_exc = exc
                 duration_ms = int((time.perf_counter() - t0) * 1000)
-                if attempt > self._max_retries:
+                if attempt > retries:
                     await self._finalise_api_call(
                         api_call_id, response_status=None, response_body=None,
                         response_headers=None, duration_ms=duration_ms,

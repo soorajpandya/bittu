@@ -1,0 +1,558 @@
+[
+  {
+    "id": "north-indian",
+    "label": "North Indian"
+  },
+  {
+    "id": "chinese",
+    "label": "Chinese"
+  },
+  {
+    "id": "fast-food",
+    "label": "Fast Food"
+  },
+  {
+    "id": "south-indian",
+    "label": "South Indian"
+  },
+  {
+    "id": "biryani",
+    "label": "Biryani"
+  },
+  {
+    "id": "pizza",
+    "label": "Pizza"
+  },
+  {
+    "id": "bakery",
+    "label": "Bakery"
+  },
+  {
+    "id": "street-food",
+    "label": "Street Food"
+  },
+  {
+    "id": "burger",
+    "label": "Burger"
+  },
+  {
+    "id": "mughlai",
+    "label": "Mughlai"
+  },
+  {
+    "id": "momos",
+    "label": "Momos"
+  },
+  {
+    "id": "sandwich",
+    "label": "Sandwich"
+  },
+  {
+    "id": "mithai",
+    "label": "Mithai"
+  },
+  {
+    "id": "rolls",
+    "label": "Rolls"
+  },
+  {
+    "id": "beverages",
+    "label": "Beverages"
+  },
+  {
+    "id": "desserts",
+    "label": "Desserts"
+  },
+  {
+    "id": "cafe",
+    "label": "Cafe"
+  },
+  {
+    "id": "healthy-food",
+    "label": "Healthy Food"
+  },
+  {
+    "id": "maharashtrian",
+    "label": "Maharashtrian"
+  },
+  {
+    "id": "tea",
+    "label": "Tea"
+  },
+  {
+    "id": "bengali",
+    "label": "Bengali"
+  },
+  {
+    "id": "ice-cream",
+    "label": "Ice Cream"
+  },
+  {
+    "id": "juices",
+    "label": "Juices"
+  },
+  {
+    "id": "shake",
+    "label": "Shake"
+  },
+  {
+    "id": "shawarma",
+    "label": "Shawarma"
+  },
+  {
+    "id": "gujarati",
+    "label": "Gujarati"
+  },
+  {
+    "id": "italian",
+    "label": "Italian"
+  },
+  {
+    "id": "continental",
+    "label": "Continental"
+  },
+  {
+    "id": "lebanese",
+    "label": "Lebanese"
+  },
+  {
+    "id": "salad",
+    "label": "Salad"
+  },
+  {
+    "id": "andhra",
+    "label": "Andhra"
+  },
+  {
+    "id": "waffle",
+    "label": "Waffle"
+  },
+  {
+    "id": "coffee",
+    "label": "Coffee"
+  },
+  {
+    "id": "kebab",
+    "label": "Kebab"
+  },
+  {
+    "id": "arabian",
+    "label": "Arabian"
+  },
+  {
+    "id": "kerala",
+    "label": "Kerala"
+  },
+  {
+    "id": "asian",
+    "label": "Asian"
+  },
+  {
+    "id": "seafood",
+    "label": "Seafood"
+  },
+  {
+    "id": "pasta",
+    "label": "Pasta"
+  },
+  {
+    "id": "bbq",
+    "label": "BBQ"
+  },
+  {
+    "id": "rajasthani",
+    "label": "Rajasthani"
+  },
+  {
+    "id": "wraps",
+    "label": "Wraps"
+  },
+  {
+    "id": "paan",
+    "label": "Paan"
+  },
+  {
+    "id": "hyderabadi",
+    "label": "Hyderabadi"
+  },
+  {
+    "id": "mexican",
+    "label": "Mexican"
+  },
+  {
+    "id": "bihari",
+    "label": "Bihari"
+  },
+  {
+    "id": "goan",
+    "label": "Goan"
+  },
+  {
+    "id": "assamese",
+    "label": "Assamese"
+  },
+  {
+    "id": "american",
+    "label": "American"
+  },
+  {
+    "id": "mandi",
+    "label": "Mandi"
+  },
+  {
+    "id": "chettinad",
+    "label": "Chettinad"
+  },
+  {
+    "id": "mishti",
+    "label": "Mishti"
+  },
+  {
+    "id": "bar-food",
+    "label": "Bar Food"
+  },
+  {
+    "id": "malwani",
+    "label": "Malwani"
+  },
+  {
+    "id": "odia",
+    "label": "Odia"
+  },
+  {
+    "id": "roast-chicken",
+    "label": "Roast Chicken"
+  },
+  {
+    "id": "tamil",
+    "label": "Tamil"
+  },
+  {
+    "id": "japanese",
+    "label": "Japanese"
+  },
+  {
+    "id": "finger-food",
+    "label": "Finger Food"
+  },
+  {
+    "id": "korean",
+    "label": "Korean"
+  },
+  {
+    "id": "north-eastern",
+    "label": "North Eastern"
+  },
+  {
+    "id": "thai",
+    "label": "Thai"
+  },
+  {
+    "id": "kathiyawadi",
+    "label": "Kathiyawadi"
+  },
+  {
+    "id": "bubble-tea",
+    "label": "Bubble Tea"
+  },
+  {
+    "id": "mangalorean",
+    "label": "Mangalorean"
+  },
+  {
+    "id": "burmese",
+    "label": "Burmese"
+  },
+  {
+    "id": "sushi",
+    "label": "Sushi"
+  },
+  {
+    "id": "lucknowi",
+    "label": "Lucknowi"
+  },
+  {
+    "id": "modern-indian",
+    "label": "Modern Indian"
+  },
+  {
+    "id": "tibetan",
+    "label": "Tibetan"
+  },
+  {
+    "id": "afghan",
+    "label": "Afghan"
+  },
+  {
+    "id": "oriental",
+    "label": "Oriental"
+  },
+  {
+    "id": "pancake",
+    "label": "Pancake"
+  },
+  {
+    "id": "kashmiri",
+    "label": "Kashmiri"
+  },
+  {
+    "id": "middle-eastern",
+    "label": "Middle Eastern"
+  },
+  {
+    "id": "grocery",
+    "label": "Grocery"
+  },
+  {
+    "id": "konkan",
+    "label": "Konkan"
+  },
+  {
+    "id": "european",
+    "label": "European"
+  },
+  {
+    "id": "awadhi",
+    "label": "Awadhi"
+  },
+  {
+    "id": "hot-dogs",
+    "label": "Hot dogs"
+  },
+  {
+    "id": "sindhi",
+    "label": "Sindhi"
+  },
+  {
+    "id": "turkish",
+    "label": "Turkish"
+  },
+  {
+    "id": "naga",
+    "label": "Naga"
+  },
+  {
+    "id": "mediterranean",
+    "label": "Mediterranean"
+  },
+  {
+    "id": "nepalese",
+    "label": "Nepalese"
+  },
+  {
+    "id": "cuisine-varies",
+    "label": "Cuisine Varies"
+  },
+  {
+    "id": "saoji",
+    "label": "Saoji"
+  },
+  {
+    "id": "charcoal-chicken",
+    "label": "Charcoal Chicken"
+  },
+  {
+    "id": "steak",
+    "label": "Steak"
+  },
+  {
+    "id": "frozen-yogurt",
+    "label": "Frozen Yogurt"
+  },
+  {
+    "id": "panini",
+    "label": "Panini"
+  },
+  {
+    "id": "parsi",
+    "label": "Parsi"
+  },
+  {
+    "id": "sichuan",
+    "label": "Sichuan"
+  },
+  {
+    "id": "iranian",
+    "label": "Iranian"
+  },
+  {
+    "id": "grilled-chicken",
+    "label": "Grilled Chicken"
+  },
+  {
+    "id": "french",
+    "label": "French"
+  },
+  {
+    "id": "raw-meats",
+    "label": "Raw Meats"
+  },
+  {
+    "id": "drinks-only",
+    "label": "Drinks Only"
+  },
+  {
+    "id": "vietnamese",
+    "label": "Vietnamese"
+  },
+  {
+    "id": "liquor",
+    "label": "Liquor"
+  },
+  {
+    "id": "greek",
+    "label": "Greek"
+  },
+  {
+    "id": "himachali",
+    "label": "Himachali"
+  },
+  {
+    "id": "bohri",
+    "label": "Bohri"
+  },
+  {
+    "id": "garhwali",
+    "label": "Garhwali"
+  },
+  {
+    "id": "cantonese",
+    "label": "Cantonese"
+  },
+  {
+    "id": "malaysian",
+    "label": "Malaysian"
+  },
+  {
+    "id": "belgian",
+    "label": "Belgian"
+  },
+  {
+    "id": "british",
+    "label": "British"
+  },
+  {
+    "id": "african",
+    "label": "African"
+  },
+  {
+    "id": "spanish",
+    "label": "Spanish"
+  },
+  {
+    "id": "manipuri",
+    "label": "Manipuri"
+  },
+  {
+    "id": "egyptian",
+    "label": "Egyptian"
+  },
+  {
+    "id": "sri-lankan",
+    "label": "Sri Lankan"
+  },
+  {
+    "id": "relief-fund",
+    "label": "Relief fund"
+  },
+  {
+    "id": "bangladeshi",
+    "label": "Bangladeshi"
+  },
+  {
+    "id": "indonesian",
+    "label": "Indonesian"
+  },
+  {
+    "id": "tex-mex",
+    "label": "Tex-Mex"
+  },
+  {
+    "id": "irish",
+    "label": "Irish"
+  },
+  {
+    "id": "singaporean",
+    "label": "Singaporean"
+  },
+  {
+    "id": "south-american",
+    "label": "South American"
+  },
+  {
+    "id": "mongolian",
+    "label": "Mongolian"
+  },
+  {
+    "id": "german",
+    "label": "German"
+  },
+  {
+    "id": "russian",
+    "label": "Russian"
+  },
+  {
+    "id": "brazilian",
+    "label": "Brazilian"
+  },
+  {
+    "id": "pakistani",
+    "label": "Pakistani"
+  },
+  {
+    "id": "australian",
+    "label": "Australian"
+  },
+  {
+    "id": "moroccan",
+    "label": "Moroccan"
+  },
+  {
+    "id": "filipino",
+    "label": "Filipino"
+  },
+  {
+    "id": "hot-pot",
+    "label": "Hot Pot"
+  },
+  {
+    "id": "retail-products",
+    "label": "Retail Products"
+  },
+  {
+    "id": "mizo",
+    "label": "Mizo"
+  },
+  {
+    "id": "portuguese",
+    "label": "Portuguese"
+  },
+  {
+    "id": "indian",
+    "label": "Indian"
+  },
+  {
+    "id": "tripuri",
+    "label": "Tripuri"
+  },
+  {
+    "id": "delight-goodies",
+    "label": "Delight Goodies"
+  },
+  {
+    "id": "meghalayan",
+    "label": "Meghalayan"
+  },
+  {
+    "id": "sikkimese",
+    "label": "Sikkimese"
+  },
+  {
+    "id": "armenian",
+    "label": "Armenian"
+  },
+  {
+    "id": "afghani",
+    "label": "Afghani"
+  }
+]

@@ -585,6 +585,8 @@ POST /api/v1/analytics/funnel                        → Conversion funnel
 
 ### 3.24 Waitlist
 
+See [waitlist safety and rollout](waitlist-safety.md) for branch-aware QR links, required seating assignments, complete-queue reordering, revised permissions, and safe public response fields. Apply migration `087_waitlist_safety.sql` before deploying these changes.
+
 ```
 POST   /api/v1/waitlist                     → {"customer_name": "...", "party_size": 4, "phone": "..."}
 GET    /api/v1/waitlist                     → Active waitlist

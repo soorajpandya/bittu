@@ -1,27 +1,9 @@
-"""
-Merchant Ledger Integration helpers — best-effort, never-raise wrappers
-that wire the existing payment / settlement code paths to the immutable
-merchant_ledger (Phase 1).
+"""Idempotent gross receipt/refund audit helpers for merchant_ledger.
 
-DESIGN CONTRACT
-───────────────
-1.  Every helper here is **best-effort**.  A ledger failure is LOGGED but
-    NEVER re-raised, so it cannot rollback or break the upstream
-    payment / settlement transaction.  The existing journal_entries flow
-    remains the source of truth; merchant_ledger is an additional,
-    parallel record optimised for money-movement queries.
-
-2.  Every helper supplies a deterministic `idempotency_key`, so
-    re-deliveries (retries, webhook replays, polling backfills) do NOT
-    create duplicate ledger entries.
-
-3.  Posts can run inside or outside an outer transaction.  Pass
-    `conn=` to participate; otherwise a fresh transaction is opened.
-
-4.  All helpers no-op when:
-      * merchant_id is missing,
-      * amount is zero or negative,
-      * the underlying service raises (we swallow + log).
+Capture uses strict=True and a shared transaction so missing ledger writes fail
+webhook processing and can recover on retry. Older optional helpers log errors.
+Financial reporting uses Route mirrors and frozen entitlements; this audit ledger
+and the restaurant ERP journal have separate bookkeeping contracts.
 """
 from __future__ import annotations
 
@@ -59,6 +41,7 @@ async def post_payment_received(
     actor_id: Optional[str] = None,
     extra_metadata: Optional[dict[str, Any]] = None,
     conn=None,
+    strict: bool = False,
 ) -> None:
     """
     CREDIT the merchant ledger for a captured/completed payment.
@@ -99,6 +82,9 @@ async def post_payment_received(
                 "error": str(exc),
             },
         )
+        if strict:
+            raise
+
 
 
 # ════════════════════════════════════════════════════════════════════════

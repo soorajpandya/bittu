@@ -41,11 +41,12 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
 
-from app.core.auth import UserContext, require_permission
+from app.core.auth import UserContext, require_permission, require_platform_admin
 from app.services.razorpay import route as _route
 
 
-router = APIRouter(prefix="/razorpay-route/raw", tags=["razorpay-route-raw"])
+router = APIRouter(prefix="/razorpay-route/raw", tags=["razorpay-route-raw"],
+                   dependencies=[Depends(require_platform_admin())])
 
 
 # ── helpers ──────────────────────────────────────────────────────────────

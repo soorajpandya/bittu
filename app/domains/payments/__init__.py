@@ -1,1 +1,1 @@
-"""payments domain — see docs/ARCHITECTURE_V2.md"""
+"""payments domain â€” see docs/ARCHITECTURE_V2.md"""

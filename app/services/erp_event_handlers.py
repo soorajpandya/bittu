@@ -166,7 +166,6 @@ async def _create_journal_entry(
 
 async def _handle_order_confirmed(event: DomainEvent):
     """Deduct ingredient stock, record COGS, create GST invoice when an order is confirmed."""
-    from app.services.inventory_service import InventoryService
 
     order_id = event.payload.get("order_id")
     if not order_id:
@@ -186,32 +185,9 @@ async def _handle_order_confirmed(event: DomainEvent):
             if not items:
                 return
 
-        # 1. Existing inventory deduction (writes to ingredients + inventory_transactions)
+        # The event ledger and master stock are updated atomically by one writer.
         if inv_enabled:
             order_items = [{"item_id": r["item_id"], "quantity": r["quantity"]} for r in items]
-            svc = InventoryService()
-            # Best-effort: the legacy path guards on the stale `ingredients.current_stock`
-            # column, which the event-sourced inventory does NOT keep in sync (stock-ins
-            # and adjustments only append to `inventory_ledger`). If this raised here it
-            # would abort BEFORE the authoritative ledger write below, so orders would
-            # silently stop deducting once stock is tracked only in the ledger (e.g.
-            # AI-created ingredients start at current_stock=0). Never let it block the
-            # event-sourced deduction — the ledger is the source of truth.
-            try:
-                await svc.deduct_for_order(
-                    user_id=event.user_id or "",
-                    order_id=order_id,
-                    order_items=order_items,
-                )
-                logger.info("erp_inventory_deducted", order_id=order_id)
-            except Exception as exc:
-                logger.warning(
-                    "erp_legacy_inventory_deduct_skipped",
-                    order_id=order_id,
-                    reason=str(exc),
-                )
-
-            # 2 + 3. Inventory ledger + COGS (new ERP layer) — authoritative deduction.
             await _write_ledger_and_cogs(event, order_id, order_items)
 
         # 4. GST Invoice creation (immutable snapshot)
@@ -317,9 +293,7 @@ async def _write_ledger_and_cogs(event: DomainEvent, order_id: str, order_items:
     """Write consumption entries to inventory_ledger (event-sourced) and compute COGS.
 
     Delegates ledger writes to InventoryEventService (idempotent dedup_keys,
-    domain-event fan-out) instead of raw INSERTs. Passes mirror_master=False
-    because the legacy InventoryService.deduct_for_order already mutated
-    `ingredients.current_stock` upstream.
+    domain-event fan-out) and mirrors master stock in the same transaction.
     """
     from app.services.inventory_event_service import inventory_event_service
 
@@ -336,8 +310,8 @@ async def _write_ledger_and_cogs(event: DomainEvent, order_id: str, order_items:
             order_id=order_id,
             order_items=order_items,
             user_id=user_id,
-            allow_negative=True,        # legacy path already gated availability
-            mirror_master=False,        # ingredients already mutated
+            allow_negative=False,       # fail closed on insufficient stock
+            mirror_master=True,         # single authoritative stock writer
         )
 
         # 2. Compute COGS from the events we just wrote (cost_per_unit × out_qty).
@@ -379,6 +353,7 @@ async def _write_ledger_and_cogs(event: DomainEvent, order_id: str, order_items:
         )
     except Exception:
         logger.exception("erp_ledger_cogs_failed", order_id=order_id)
+        raise
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -390,20 +365,12 @@ async def _write_ledger_and_cogs(event: DomainEvent, order_id: str, order_items:
 
 async def _handle_order_cancelled(event: DomainEvent):
     """Restore ingredient stock when an order is cancelled."""
-    from app.services.inventory_service import InventoryService
 
     order_id = event.payload.get("order_id")
     if not order_id:
         return
 
     try:
-        svc = InventoryService()
-        await svc.restore_for_order(
-            user_id=event.user_id or "",
-            order_id=order_id,
-        )
-        logger.info("erp_inventory_restored", order_id=order_id)
-
         # Reverse ledger entries + COGS
         await _reverse_ledger_and_cogs(event, order_id)
     except Exception:
@@ -446,8 +413,7 @@ async def _reverse_ledger_and_cogs(event: DomainEvent, order_id: str):
                 cost = float(entry["unit_cost"] or 0)
                 total_cogs_reversed += qty * cost
 
-        # Append reversal events (mirror_master=False — legacy
-        # InventoryService.restore_for_order already mutated ingredients).
+        # Reversals restore both ledger and master stock exactly once.
         for entry in ledger_entries:
             try:
                 await inventory_event_service.reverse_event(
@@ -536,6 +502,7 @@ async def _handle_payment_completed(event: DomainEvent):
             amount=float(amount),
             method=method,
             created_by=event.user_id or "system",
+            payment_kind=event.payload.get("payment_kind"),
         )
 
         if journal_id:

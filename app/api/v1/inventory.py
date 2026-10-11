@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 from decimal import Decimal
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -42,12 +43,13 @@ from app.core.events import (
     INVENTORY_TRANSFERRED_OUT, INVENTORY_TRANSFERRED_IN,
     INVENTORY_RECOUNTED,
 )
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import NotFoundError, ValidationError, InventoryError
 from app.services.activity_log_service import log_activity
 from app.services.inventory_service import InventoryService
 from app.services.inventory_event_service import inventory_event_service
 from app.services.inventory_conversion_service import inventory_conversion_service
 from app.services.inventory_sales_service import inventory_sales_service
+from app.services.inventory_write import inventory_transaction, unit_factor
 
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
 _svc = InventoryService()
@@ -57,8 +59,16 @@ _svc = InventoryService()
 # LEGACY (backward compat — DO NOT CHANGE BEHAVIOUR)
 # ════════════════════════════════════════════════════════════════════════════
 
+class ReceivePurchaseLine(BaseModel):
+    purchase_order_item_id: int
+    quantity_received: Decimal = Field(..., ge=0, description="Cumulative received quantity in the purchase unit")
+    batch_number: Optional[str] = None
+    expiry_date: Optional[date] = None
+
+
 class ReceivePurchaseIn(BaseModel):
-    purchase_order_id: str
+    purchase_order_id: int
+    items: Optional[list[ReceivePurchaseLine]] = Field(None, min_length=1)
 
 
 @router.get("/stock")
@@ -77,13 +87,14 @@ async def receive_purchase_order(
 ):
     result = await _svc.receive_purchase_order(
         user=user, purchase_order_id=body.purchase_order_id,
+        items=[line.model_dump() for line in body.items] if body.items is not None else None,
     )
     await log_activity(
         user_id=user.user_id,
         branch_id=user.branch_id,
         action="inventory.received",
         entity_type="purchase_order",
-        entity_id=body.purchase_order_id,
+        entity_id=str(body.purchase_order_id),
         metadata={},
     )
     return result
@@ -395,7 +406,17 @@ class TransferIn(BaseModel):
 
 @retry_on_serialization_failure()
 async def _create_transfer_txn(body: "TransferIn", user: "UserContext"):
+    if len({line.ingredient_id for line in body.items}) != len(body.items):
+        raise ValidationError("duplicate transfer ingredients; combine their quantities")
     async with get_serializable_transaction() as conn:
+        branches = await conn.fetch(
+            "SELECT id FROM sub_branches WHERE id=ANY($1::uuid[]) AND restaurant_id=$2::uuid",
+            [body.from_branch_id, body.to_branch_id], user.restaurant_id,
+        )
+        if len(branches) != 2:
+            raise ValidationError("both branches must belong to this restaurant")
+        if user.is_branch_user and str(user.branch_id) != body.from_branch_id:
+            raise ValidationError("transfer must originate from your branch")
         transfer_id = await conn.fetchval(
             """
             INSERT INTO stock_transfers
@@ -439,51 +460,63 @@ async def ship_transfer(
     transfer_id: str,
     user: UserContext = Depends(require_permission("inventory.update")),
 ):
-    """Mark transfer as shipped — debit FROM-branch immediately."""
-    async with get_connection() as conn:
+    """Debit all source lines and mark shipped in one locked transaction."""
+    async with inventory_transaction() as (conn, events):
         t = await conn.fetchrow(
-            "SELECT * FROM stock_transfers WHERE id = $1::uuid", transfer_id,
+            "SELECT * FROM stock_transfers WHERE id=$1::uuid AND restaurant_id=$2::uuid FOR UPDATE",
+            transfer_id, user.restaurant_id,
         )
         if not t:
             raise NotFoundError("stock_transfer", transfer_id)
+        if user.is_branch_user and str(t["from_branch_id"]) != str(user.branch_id):
+            raise ValidationError("only the source branch can ship this transfer")
+        if t["status"] in ("in_transit", "received"):
+            return {"transfer_id": transfer_id, "status": t["status"]}
         if t["status"] not in ("draft", "approved"):
             raise ValidationError(f"cannot ship from status {t['status']}")
         items = await conn.fetch(
-            "SELECT * FROM stock_transfer_items WHERE transfer_id = $1::uuid",
+            "SELECT * FROM stock_transfer_items WHERE transfer_id=$1::uuid ORDER BY ingredient_id FOR UPDATE",
             transfer_id,
         )
-
-    for it in items:
-        await inventory_event_service.append_event(
-            restaurant_id=str(t["restaurant_id"]),
-            branch_id=str(t["from_branch_id"]),
-            ingredient_id=it["ingredient_id"],
-            event_type=INVENTORY_TRANSFERRED_OUT,
-            quantity_out=Decimal(str(it["quantity_sent"])),
-            reference_type="stock_transfer",
-            reference_id=str(transfer_id),
-            dedup_key=f"transfer:{transfer_id}:out:{it['ingredient_id']}",
-            correlation_id=str(transfer_id),
-            source="transfer",
-            notes=f"Transfer to branch {t['to_branch_id']}",
-            created_by=user.user_id,
-        )
-
-    async with get_connection() as conn:
+        if not items or len({i["ingredient_id"] for i in items}) != len(items):
+            raise ValidationError("transfer requires distinct ingredient lines")
+        for it in items:
+            ing = await conn.fetchrow(
+                "SELECT id, unit, cost_per_unit FROM ingredients WHERE id=$1 AND restaurant_id=$2::uuid FOR UPDATE",
+                it["ingredient_id"], user.restaurant_id,
+            )
+            if not ing:
+                raise NotFoundError("ingredient", it["ingredient_id"])
+            factor = await unit_factor(conn, restaurant_id=user.restaurant_id, ingredient_id=ing["id"],
+                                       from_unit=it["unit"], to_unit=ing["unit"])
+            quantity = Decimal(str(it["quantity_sent"])) * factor
+            bal = Decimal(str(await conn.fetchval(
+                "SELECT fn_inventory_balance($1,$2::uuid,NULL)", ing["id"], t["from_branch_id"],
+            ) or 0))
+            if bal < quantity:
+                raise InventoryError(f"insufficient stock to transfer {ing['id']}")
+            await inventory_event_service.append_event(
+                conn=conn, event_buffer=events, restaurant_id=str(t["restaurant_id"]),
+                branch_id=str(t["from_branch_id"]), ingredient_id=ing["id"],
+                event_type=INVENTORY_TRANSFERRED_OUT, quantity_out=quantity,
+                unit_cost=ing["cost_per_unit"] or 0,
+                reference_type="stock_transfer", reference_id=transfer_id,
+                dedup_key=f"transfer:{transfer_id}:out:{ing['id']}", correlation_id=transfer_id,
+                source="transfer", created_by=user.user_id,
+            )
         await conn.execute(
-            "UPDATE stock_transfers SET status='in_transit', shipped_at=NOW() "
-            "WHERE id=$1::uuid", transfer_id,
+            "UPDATE stock_transfers SET status='in_transit', shipped_at=NOW() WHERE id=$1::uuid", transfer_id,
         )
     return {"transfer_id": transfer_id, "status": "in_transit"}
 
 
 class ReceiveTransferLine(BaseModel):
     ingredient_id: str
-    quantity_received: Decimal = Field(..., ge=0)
+    quantity_received: Decimal = Field(..., ge=0, description="Cumulative received quantity in the transfer unit")
 
 
 class ReceiveTransferIn(BaseModel):
-    items: Optional[list[ReceiveTransferLine]] = None  # if None → received_qty = sent_qty
+    items: Optional[list[ReceiveTransferLine]] = Field(None, min_length=1)  # None receives all remaining
 
 
 @router.post("/transfers/{transfer_id}/receive")
@@ -492,60 +525,63 @@ async def receive_transfer(
     body: ReceiveTransferIn,
     user: UserContext = Depends(require_permission("inventory.update")),
 ):
-    """Mark transfer as received — credit TO-branch (per line if provided)."""
-    async with get_connection() as conn:
+    """Receive cumulative line totals; omitted lines remain in transit."""
+    async with inventory_transaction() as (conn, events):
         t = await conn.fetchrow(
-            "SELECT * FROM stock_transfers WHERE id = $1::uuid", transfer_id,
+            "SELECT * FROM stock_transfers WHERE id=$1::uuid AND restaurant_id=$2::uuid FOR UPDATE",
+            transfer_id, user.restaurant_id,
         )
         if not t:
             raise NotFoundError("stock_transfer", transfer_id)
-        if t["status"] != "in_transit":
+        if user.is_branch_user and str(t["to_branch_id"]) != str(user.branch_id):
+            raise ValidationError("only the destination branch can receive this transfer")
+        if t["status"] not in ("in_transit", "received"):
             raise ValidationError(f"cannot receive from status {t['status']}")
         items = await conn.fetch(
-            "SELECT * FROM stock_transfer_items WHERE transfer_id = $1::uuid",
+            "SELECT * FROM stock_transfer_items WHERE transfer_id=$1::uuid ORDER BY ingredient_id FOR UPDATE",
             transfer_id,
         )
-
-    received_map = (
-        {l.ingredient_id: l.quantity_received for l in (body.items or [])}
-        if body.items else {}
-    )
-
-    for it in items:
-        recv_qty = received_map.get(
-            it["ingredient_id"], Decimal(str(it["quantity_sent"])),
-        )
-        recv_qty = Decimal(str(recv_qty))
-        if recv_qty <= 0:
-            continue
-        await inventory_event_service.append_event(
-            restaurant_id=str(t["restaurant_id"]),
-            branch_id=str(t["to_branch_id"]),
-            ingredient_id=it["ingredient_id"],
-            event_type=INVENTORY_TRANSFERRED_IN,
-            quantity_in=recv_qty,
-            reference_type="stock_transfer",
-            reference_id=str(transfer_id),
-            dedup_key=f"transfer:{transfer_id}:in:{it['ingredient_id']}",
-            correlation_id=str(transfer_id),
-            source="transfer",
-            notes=f"Transfer from branch {t['from_branch_id']}",
-            created_by=user.user_id,
-        )
-        async with get_connection() as conn:
-            await conn.execute(
-                "UPDATE stock_transfer_items SET quantity_received=$1 "
-                "WHERE transfer_id=$2::uuid AND ingredient_id=$3",
-                float(recv_qty), transfer_id, it["ingredient_id"],
+        requested = None if body.items is None else {line.ingredient_id: line.quantity_received for line in body.items}
+        if requested is not None:
+            if len(requested) != len(body.items):
+                raise ValidationError("duplicate transfer receipt lines")
+            if set(requested) - {it["ingredient_id"] for it in items}:
+                raise ValidationError("receipt contains an ingredient outside this transfer")
+        complete = True
+        for it in items:
+            sent = Decimal(str(it["quantity_sent"]))
+            previous = Decimal(str(it["quantity_received"] or 0))
+            target = sent if requested is None else requested.get(it["ingredient_id"], previous)
+            if target < previous or target > sent:
+                raise ValidationError("received quantity must be between previous receipt and quantity sent")
+            complete = complete and target == sent
+            delta = target - previous
+            if delta == 0:
+                continue
+            ing = await conn.fetchrow(
+                "SELECT id, unit, cost_per_unit FROM ingredients WHERE id=$1 AND restaurant_id=$2::uuid FOR UPDATE",
+                it["ingredient_id"], user.restaurant_id,
             )
-
-    async with get_connection() as conn:
+            if not ing:
+                raise NotFoundError("ingredient", it["ingredient_id"])
+            factor = await unit_factor(conn, restaurant_id=user.restaurant_id, ingredient_id=ing["id"],
+                                       from_unit=it["unit"], to_unit=ing["unit"])
+            await inventory_event_service.append_event(
+                conn=conn, event_buffer=events, restaurant_id=str(t["restaurant_id"]),
+                branch_id=str(t["to_branch_id"]), ingredient_id=ing["id"],
+                event_type=INVENTORY_TRANSFERRED_IN, quantity_in=delta * factor,
+                unit_cost=ing["cost_per_unit"] or 0,
+                reference_type="stock_transfer", reference_id=transfer_id,
+                dedup_key=f"transfer:{transfer_id}:in:{ing['id']}:{target.normalize()}",
+                correlation_id=transfer_id, source="transfer", created_by=user.user_id,
+            )
+            await conn.execute("UPDATE stock_transfer_items SET quantity_received=$1 WHERE id=$2::uuid", target, it["id"])
+        status = "received" if complete else "in_transit"
         await conn.execute(
-            "UPDATE stock_transfers SET status='received', received_at=NOW(), "
-            "received_by=$1 WHERE id=$2::uuid",
-            user.user_id, transfer_id,
+            "UPDATE stock_transfers SET status=$1, received_at=CASE WHEN $1='received' THEN COALESCE(received_at,NOW()) "
+            "ELSE NULL END, received_by=$2 WHERE id=$3::uuid", status, user.user_id, transfer_id,
         )
-    return {"transfer_id": transfer_id, "status": "received"}
+    return {"transfer_id": transfer_id, "status": status}
 
 
 @router.get("/transfers")
@@ -634,16 +670,29 @@ async def submit_count_item(
     count_id: str, body: CountItemIn,
     user: UserContext = Depends(require_permission("inventory.update")),
 ):
-    async with get_connection() as conn:
-        await conn.execute(
-            """
-            UPDATE inventory_count_items
-               SET counted_qty = $1, unit = COALESCE($2, unit),
-                   counted_by = $3, counted_at = NOW()
-             WHERE count_id = $4::uuid AND ingredient_id = $5
-            """,
-            float(body.counted_qty), body.unit, user.user_id,
+    async with inventory_transaction() as (conn, events):
+        count = await conn.fetchrow(
+            "SELECT * FROM inventory_counts WHERE id=$1::uuid AND restaurant_id=$2::uuid FOR UPDATE",
+            count_id, user.restaurant_id,
+        )
+        if not count:
+            raise NotFoundError("inventory_count", count_id)
+        if user.is_branch_user and str(count["branch_id"]) != str(user.branch_id):
+            raise ValidationError("stock count belongs to another branch")
+        if count["status"] != "in_progress":
+            raise ValidationError("only in-progress stock counts can be edited")
+        item = await conn.fetchrow(
+            "SELECT unit FROM inventory_count_items WHERE count_id=$1::uuid AND ingredient_id=$2",
             count_id, body.ingredient_id,
+        )
+        if not item:
+            raise NotFoundError("inventory_count_item", body.ingredient_id)
+        factor = await unit_factor(conn, restaurant_id=user.restaurant_id, ingredient_id=body.ingredient_id,
+                                   from_unit=body.unit, to_unit=item["unit"])
+        await conn.execute(
+            "UPDATE inventory_count_items SET counted_qty=$1, counted_by=$2, counted_at=NOW() "
+            "WHERE count_id=$3::uuid AND ingredient_id=$4",
+            body.counted_qty * factor, user.user_id, count_id, body.ingredient_id,
         )
     return {"ok": True}
 
@@ -654,46 +703,51 @@ async def finalize_count(
     user: UserContext = Depends(require_permission("inventory.update")),
 ):
     """Approve count → emit RECOUNT events for every variance."""
-    async with get_connection() as conn:
+    async with inventory_transaction() as (conn, events):
         c = await conn.fetchrow(
-            "SELECT * FROM inventory_counts WHERE id = $1::uuid", count_id,
+            "SELECT * FROM inventory_counts WHERE id=$1::uuid AND restaurant_id=$2::uuid FOR UPDATE",
+            count_id, user.restaurant_id,
         )
         if not c:
             raise NotFoundError("inventory_count", count_id)
+        if user.is_branch_user and str(c["branch_id"]) != str(user.branch_id):
+            raise ValidationError("stock count belongs to another branch")
+        if c["status"] == "approved":
+            return {"count_id": count_id, "variances_applied": 0, "status": "approved"}
         if c["status"] not in ("in_progress", "completed"):
             raise ValidationError(f"cannot finalize from status {c['status']}")
         items = await conn.fetch(
             "SELECT * FROM inventory_count_items "
-            "WHERE count_id = $1::uuid AND counted_qty IS NOT NULL",
+            "WHERE count_id = $1::uuid AND counted_qty IS NOT NULL ORDER BY ingredient_id",
             count_id,
         )
 
-    applied = 0
-    for it in items:
-        variance = Decimal(str(it["variance"] or 0))
-        if variance == 0:
-            continue
-        ledger_type = "adjustment_in" if variance > 0 else "adjustment_out"
-        await inventory_event_service.append_event(
-            restaurant_id=str(c["restaurant_id"]),
-            branch_id=str(c["branch_id"]) if c["branch_id"] else None,
-            ingredient_id=it["ingredient_id"],
-            event_type=INVENTORY_RECOUNTED,
-            ledger_type=ledger_type,
-            quantity_in=abs(variance) if variance > 0 else Decimal("0"),
-            quantity_out=abs(variance) if variance < 0 else Decimal("0"),
-            unit_cost=Decimal(str(it["unit_cost"] or 0)),
-            reference_type="inventory_count",
-            reference_id=str(count_id),
-            dedup_key=f"count:{count_id}:ing:{it['ingredient_id']}",
-            correlation_id=str(count_id),
-            source="recount",
-            notes=f"Stock-take {c['count_number']} variance",
-            created_by=user.user_id,
-        )
-        applied += 1
+        applied = 0
+        for it in items:
+            variance = Decimal(str(it["variance"] or 0))
+            if variance == 0:
+                continue
+            ledger_type = "adjustment_in" if variance > 0 else "adjustment_out"
+            await inventory_event_service.append_event(
+                conn=conn, event_buffer=events,
+                restaurant_id=str(c["restaurant_id"]),
+                branch_id=str(c["branch_id"]) if c["branch_id"] else None,
+                ingredient_id=it["ingredient_id"],
+                event_type=INVENTORY_RECOUNTED,
+                ledger_type=ledger_type,
+                quantity_in=abs(variance) if variance > 0 else Decimal("0"),
+                quantity_out=abs(variance) if variance < 0 else Decimal("0"),
+                unit_cost=Decimal(str(it["unit_cost"] or 0)),
+                reference_type="inventory_count",
+                reference_id=str(count_id),
+                dedup_key=f"count:{count_id}:ing:{it['ingredient_id']}",
+                correlation_id=str(count_id),
+                source="recount",
+                notes=f"Stock-take {c['count_number']} variance",
+                created_by=user.user_id,
+            )
+            applied += 1
 
-    async with get_connection() as conn:
         await conn.execute(
             "UPDATE inventory_counts SET status='approved', approved_by=$1, "
             "approved_at=NOW(), completed_at=NOW(), completed_by=$1 "

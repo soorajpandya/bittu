@@ -1,5 +1,10 @@
 """
-Escrow Ledger API.
+Escrow Ledger API — DEPRECATED (read-only history).
+
+Razorpay Route pays the merchant's 95% directly, so Bittu never custodies
+settlement funds and no new escrow holds are created. These endpoints remain
+for historical entries; `scripts/escrow_zero_out.py` releases legacy holds.
+They will return 410 in a later release.
 
   GET  /escrow/balance               Held balance (+ open holds total)
   GET  /escrow/entries               Paginated, filterable history
@@ -27,7 +32,8 @@ from app.core.exceptions import ValidationError
 from app.core.logging import get_logger
 from app.services.escrow_service import escrow_service
 
-router = APIRouter(prefix="/escrow", tags=["Escrow Ledger"])
+# deprecated=True flags every route in OpenAPI; behaviour is unchanged.
+router = APIRouter(prefix="/escrow", tags=["Escrow Ledger (deprecated)"], deprecated=True)
 logger = get_logger(__name__)
 
 

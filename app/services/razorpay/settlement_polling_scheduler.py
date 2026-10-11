@@ -46,7 +46,7 @@ async def _candidate_merchants() -> list[tuple[str, str]]:
             "FROM rzp_route_accounts "
             "WHERE merchant_id IS NOT NULL "
             "  AND linked_account_id IS NOT NULL "
-            "  AND status = 'activated'"
+            "  AND route_product_status = 'activated' AND status NOT IN ('suspended', 'rejected')"
         )
     return [(r["merchant_id"], r["linked_account_id"]) for r in rows]
 
@@ -61,35 +61,23 @@ async def _pull_settlements_for_merchant(
     from_ts = int(
         (datetime.now(timezone.utc) - timedelta(days=lookback_days)).timestamp()
     )
-    try:
-        resp = await rzp_settlements_api.list_settlements(
-            count=page_size, skip=0, from_ts=from_ts,
-            merchant_id=merchant_id,
-            account_id=linked_account_id,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "rzp_settlement_polling_list_failed",
-            merchant_id=merchant_id, linked_account_id=linked_account_id,
-            error=str(exc),
-        )
-        return 0
-
-    items = (resp or {}).get("items") or []
     upserted = 0
-    for entity in items:
-        try:
+    skip = 0
+    while True:
+        resp = await rzp_settlements_api.list_settlements(
+            count=page_size, skip=skip, from_ts=from_ts,
+            merchant_id=merchant_id, account_id=linked_account_id,
+        )
+        items = (resp or {}).get("items") or []
+        for entity in items:
             await rzp_settlement_service.upsert_from_razorpay(
                 rzp_entity=entity, merchant_id_override=merchant_id,
             )
             upserted += 1
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "rzp_settlement_polling_upsert_failed",
-                merchant_id=merchant_id,
-                linked_account_id=linked_account_id,
-                settlement_id=entity.get("id"),
-            )
+        if len(items) < page_size:
+            break
+        skip += page_size
+
     return upserted
 
 
@@ -139,12 +127,40 @@ async def _scheduler_loop(interval_sec: int, lookback_days: int) -> None:
             raise
 
 
+async def _post_ledger_for_processed(merchant_id: str, *, lookback_days: int) -> int:
+    """Entitlement-ledger payout legs for every processed settlement in the
+    window. Idempotent per (settlement, payment), so re-running is free."""
+    from app.core.database import get_service_connection
+    from app.services.razorpay import ledgers
+
+    async with get_service_connection() as conn:
+        ids = await conn.fetch(
+            "SELECT settlement_id FROM rzp_settlements WHERE merchant_id=$1::uuid "
+            "AND status::text='processed' AND created_at >= now() - ($2::int * interval '1 day')",
+            merchant_id, lookback_days,
+        )
+    posted = 0
+    for row in ids:
+        try:
+            result = await ledgers.apply_settlement_processed(
+                settlement_id=row["settlement_id"], merchant_id=merchant_id,
+            )
+            posted += int(result.get("posted") or 0)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "rzp_settlement_polling_ledger_failed",
+                merchant_id=merchant_id, settlement_id=row["settlement_id"],
+            )
+    return posted
+
+
 async def run_once(*, lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> dict:
     """One-shot tick. Used by the loop AND by super-admin manual triggers."""
     started = datetime.now(timezone.utc)
     merchants = await _candidate_merchants()
     settlements_total = 0
     recon_total = 0
+    ledger_total = 0
     for mid, linked_account_id in merchants:
         settlements_total += await _pull_settlements_for_merchant(
             mid, linked_account_id,
@@ -152,11 +168,13 @@ async def run_once(*, lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> dict:
         )
         recon = await _pull_recon_for_merchant(mid, linked_account_id)
         recon_total += int(recon.get("inserted") or 0)
+        ledger_total += await _post_ledger_for_processed(mid, lookback_days=lookback_days)
     elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
     result = {
         "merchants": len(merchants),
         "settlements_upserted": settlements_total,
         "recon_rows_inserted": recon_total,
+        "ledger_legs_posted": ledger_total,
         "elapsed_ms": elapsed_ms,
     }
     logger.info("rzp_settlement_polling_tick", **result)

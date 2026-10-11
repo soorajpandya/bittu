@@ -26,40 +26,16 @@ import json
 import time
 import uuid
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
 import asyncpg
 
 from app.services.tax_engine import (
-    compute_tax, compute_cart_tax, get_tax_config,
+    ItemTaxLine, compute_tax, compute_cart_tax, get_tax_config,
     _line_from_item_row,
 )
-
-# ── Background-task registry ──────────────────────────────────────────────
-# Holds strong references to fire-and-forget tasks so the event loop's GC
-# doesn't cancel them mid-flight. Tasks remove themselves on completion.
-_background_tasks: set[asyncio.Task] = set()
-
-
-def _fire_and_forget(coro, *, name: str | None = None) -> None:
-    """Schedule a coroutine to run independently of the current request.
-
-    Used for post-commit accounting/ledger writes that are best-effort and
-    must NOT block the HTTP response. Failures are swallowed by the coro
-    itself (all callers here use the *_integration wrappers, which log and
-    never re-raise).
-    """
-    try:
-        task = asyncio.create_task(coro, name=name)
-    except RuntimeError:
-        # No running loop (e.g. test synchronous teardown); run inline.
-        # This should never happen in a real request.
-        import asyncio as _aio
-        _aio.get_event_loop().run_until_complete(coro)
-        return
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+from app.services.razorpay.fee_policy import classify_method, normalize_payment_method
 
 from app.core.auth import UserContext
 from app.core.database import get_connection, get_serializable_transaction, get_transaction
@@ -701,16 +677,11 @@ class OrderService:
             payment_status_value = None
             post_commit_payment_meta: Optional[dict] = None
             if payment_method:
-                # Normalise to the payment_method enum (cash, upi, card, wallet, online).
-                _PM_ALIASES = {
-                    "cash": "cash", "counter": "cash", "cod": "cash",
-                    "upi": "upi", "qr_pay": "upi", "qr": "upi", "qr_code": "upi",
-                    "card": "card", "swipe": "card", "credit": "card", "debit": "card",
-                    "wallet": "wallet",
-                    "online": "online", "razorpay": "online", "gateway": "online", "netbanking": "online",
-                }
-                pm_norm = _PM_ALIASES.get(str(payment_method).strip().lower(), "cash")
-                pay_status = "pending" if pm_norm == "online" else "completed"
+                # Normalise to the payment_method enum via the shared alias map;
+                # only gateway ("online") payments wait for the Razorpay webhook.
+                pm_norm = normalize_payment_method(payment_method)
+                payment_kind = classify_method(pm_norm, "pos")
+                pay_status = "pending" if payment_kind == "razorpay" else "completed"
                 paid_at = None if pay_status == "pending" else datetime.now(timezone.utc)
                 payment_id = str(uuid.uuid4())
                 payment_status_value = pay_status
@@ -740,12 +711,10 @@ class OrderService:
                             "UPDATE orders SET status = 'Confirmed', updated_at = now() WHERE id = $1",
                             order_id,
                         )
-                        # Defer merchant-ledger + escrow posts until AFTER
-                        # this transaction commits. These are best-effort
-                        # (failures logged, never re-raised) and idempotent
-                        # on payment_id, so it is safe to run them outside
-                        # the request's hot path. Saves ~20 DB round-trips
-                        # of cross-region latency from the checkout response.
+                        # Cash and direct (own-terminal upi/card/wallet) receipts
+                        # are posted to the merchant ledger after this
+                        # transaction commits. No escrow hold: Bittu never
+                        # custodies these funds.
                         post_commit_payment_meta = {
                             "merchant_id": user.restaurant_id,
                             "payment_id": payment_id,
@@ -754,6 +723,7 @@ class OrderService:
                             "order_id": order_id,
                             "branch_id": tenant.get("branch_id"),
                             "actor_id": user.user_id,
+                            "extra_metadata": {"payment_kind": payment_kind, "source": "pos_checkout"},
                         }
                 except Exception as exc:
                     # Don't fail checkout if the payments insert blows up — log and continue.
@@ -808,27 +778,16 @@ class OrderService:
             # If UniqueViolationError is raised here, the entire transaction
             # (including the order INSERT) is rolled back by asyncpg automatically.
 
-        # ── Post-commit, fire-and-forget: merchant ledger + escrow hold ──
-        # Runs OUTSIDE the request transaction (and outside the response
-        # path). These calls do ~20 DB round-trips combined; with cross-
-        # region DB latency that is multiple seconds per checkout. Both
-        # *_integration helpers are best-effort with deterministic
-        # idempotency keys on payment_id, so backgrounding them is safe:
-        #   * a duplicate run is a no-op at the DB level
-        #   * a failure is logged inside the helper, never raised
+        # ── Post-commit: merchant ledger receipt (awaited, best-effort) ──
+        # Runs outside the request transaction so a ledger failure can never
+        # roll back a completed sale, but it is awaited (not fire-and-forget)
+        # so the write is durable before the response leaves. Idempotent on
+        # payment_id; the helper logs and never raises.
         if post_commit_payment_meta is not None:
             from app.services.merchant_ledger_integration import (
                 post_payment_received,
             )
-            from app.services.escrow_integration import hold_payment_in_escrow
-            _fire_and_forget(
-                post_payment_received(**post_commit_payment_meta),
-                name=f"ledger.payment_received:{post_commit_payment_meta['payment_id']}",
-            )
-            _fire_and_forget(
-                hold_payment_in_escrow(**post_commit_payment_meta),
-                name=f"escrow.hold:{post_commit_payment_meta['payment_id']}",
-            )
+            await post_payment_received(**post_commit_payment_meta)
 
         # ── Razorpay payment-intent (online methods only) ──
         # Gateway calls MUST run OUTSIDE the serializable transaction.
@@ -945,7 +904,8 @@ class OrderService:
         async with get_serializable_transaction() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT id, subtotal, tax_amount, total_amount, status, user_id, branch_id
+                SELECT id, subtotal, tax_amount, total_amount, status, user_id, branch_id,
+                       restaurant_id, metadata
                 FROM orders
                 WHERE id = $1 AND user_id = $2
                 FOR UPDATE
@@ -962,35 +922,94 @@ class OrderService:
             if str(row["status"]).lower() in {"cancelled", "completed"}:
                 raise ValidationError("Cannot apply discount to completed/cancelled orders")
 
-            subtotal = Decimal(str(row["subtotal"] or 0))
-            tax_amount = Decimal(str(row["tax_amount"] or 0))
             pct = Decimal(str(discount_percent))
-            discount_amount = (subtotal * pct) / Decimal("100")
-            new_total = subtotal - discount_amount + tax_amount
-            if new_total < Decimal("0"):
-                new_total = Decimal("0")
+            if pct < 0 or pct > 100:
+                raise ValidationError("discount_percent must be between 0 and 100")
+
+            # Recompute the whole bill through the tax engine from the
+            # persisted per-line GST snapshot (M066) so the discount reduces
+            # the taxable value and GST is re-derived — identical to checkout.
+            item_rows = await conn.fetch(
+                """
+                SELECT id, total_price, gst_enabled, gst_inclusive, gst_rate
+                FROM order_items WHERE order_id = $1 ORDER BY id
+                """,
+                order_id,
+            )
+            if not item_rows:
+                raise ValidationError("Order has no line items to discount")
+            tax_cfg = await get_tax_config(conn, str(row["restaurant_id"]) if row["restaurant_id"] else user.restaurant_id)
+            tax_lines = [
+                ItemTaxLine(
+                    line_total=Decimal(str(ir["total_price"] or 0)),
+                    gst_enabled=bool(ir["gst_enabled"]) if ir["gst_enabled"] is not None else tax_cfg.gst_enabled,
+                    gst_inclusive=bool(ir["gst_inclusive"]) if ir["gst_inclusive"] is not None else tax_cfg.tax_inclusive,
+                    gst_rate=Decimal(str(ir["gst_rate"])) if ir["gst_rate"] is not None else tax_cfg.gst_percentage,
+                )
+                for ir in item_rows
+            ]
+            subtotal = sum((l.line_total for l in tax_lines), Decimal("0"))
+            discount_amount = (subtotal * pct / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            breakdown = compute_cart_tax(tax_lines, discount=discount_amount, config=tax_cfg)
+
+            metadata = row["metadata"]
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except Exception:  # noqa: BLE001
+                    metadata = {}
+            metadata = dict(metadata or {})
+            metadata["tax"] = breakdown.to_response()
+            metadata["discount"] = {"percent": float(pct), "amount": float(breakdown.discount_amount), "reason": reason or None}
 
             notes = reason or ""
             await conn.execute(
                 """
                 UPDATE orders
-                SET discount_amount = $1,
-                    total_amount = $2,
-                    notes = CASE WHEN COALESCE($3, '') = '' THEN notes ELSE CONCAT(COALESCE(notes, ''), '\n[discount] ', $3) END,
+                SET subtotal = $1,
+                    discount_amount = $2,
+                    tax_amount = $3,
+                    cgst_amount = $4,
+                    sgst_amount = $5,
+                    round_off = $6,
+                    total_amount = $7,
+                    metadata = $8::jsonb,
+                    notes = CASE WHEN COALESCE($9, '') = '' THEN notes ELSE CONCAT(COALESCE(notes, ''), '\n[discount] ', $9) END,
                     updated_at = NOW()
-                WHERE id = $4
+                WHERE id = $10
                 """,
-                float(discount_amount),
-                float(new_total),
+                float(breakdown.subtotal),
+                float(breakdown.discount_amount),
+                float(breakdown.total_tax),
+                float(breakdown.cgst_amount),
+                float(breakdown.sgst_amount),
+                float(breakdown.round_off),
+                float(breakdown.grand_total),
+                json.dumps(metadata),
                 notes,
                 order_id,
             )
+            for ir, line_tax in zip(item_rows, breakdown.lines):
+                await conn.execute(
+                    """
+                    UPDATE order_items
+                    SET taxable_amount = $1, cgst_amount = $2, sgst_amount = $3
+                    WHERE id = $4
+                    """,
+                    float(line_tax.taxable_amount),
+                    float(line_tax.cgst_amount),
+                    float(line_tax.sgst_amount),
+                    ir["id"],
+                )
 
             updated = await conn.fetchrow(
-                "SELECT id, subtotal, tax_amount, discount_amount, total_amount, status, updated_at FROM orders WHERE id = $1",
+                "SELECT id, subtotal, tax_amount, cgst_amount, sgst_amount, discount_amount, round_off, "
+                "total_amount, status, updated_at FROM orders WHERE id = $1",
                 order_id,
             )
-            return dict(updated) if updated else {}
+            result = dict(updated) if updated else {}
+            result["tax"] = breakdown.to_response()
+            return result
 
     # ── UPDATE ORDER STATUS ──
 

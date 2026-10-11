@@ -20,6 +20,7 @@ from app.core.database import get_connection, get_serializable_transaction
 from app.core.events import INVENTORY_CONVERTED_IN, INVENTORY_CONVERTED_OUT
 from app.core.exceptions import InventoryError, NotFoundError, ValidationError
 from app.core.logging import get_logger
+from app.services.inventory_write import inventory_transaction, unit_factor
 from app.services.inventory_event_service import inventory_event_service
 
 logger = get_logger(__name__)
@@ -162,7 +163,7 @@ class InventoryConversionService:
         if produced_quantity <= 0:
             raise ValidationError("produced_quantity must be positive")
 
-        async with get_serializable_transaction() as conn:
+        async with inventory_transaction() as (conn, events):
             out = await conn.fetchrow(
                 "SELECT id, name, cost_per_unit FROM ingredients "
                 "WHERE id=$1 AND restaurant_id=$2::uuid",
@@ -178,6 +179,21 @@ class InventoryConversionService:
             )
             if not resolved:
                 raise ValidationError("conversion has no input ingredients")
+
+            if len({line["ingredient_id"] for line in resolved}) != len(resolved):
+                raise ValidationError("duplicate conversion inputs; combine their quantities")
+            # Lock all involved ingredients in a stable order before checking stock.
+            locked = await conn.fetch(
+                "SELECT id, unit, cost_per_unit FROM ingredients WHERE restaurant_id=$1::uuid "
+                "AND id=ANY($2::text[]) ORDER BY id FOR UPDATE", restaurant_id,
+                sorted({output_ingredient_id, *(line["ingredient_id"] for line in resolved)}),
+            )
+            ing_meta = {row["id"]: dict(row) for row in locked}
+            for line in resolved:
+                if line["ingredient_id"] not in ing_meta:
+                    raise NotFoundError("ingredient", line["ingredient_id"])
+                if line["qty"] <= 0:
+                    raise ValidationError("conversion input quantities must be positive")
 
             # Verify availability
             input_cost = Decimal("0")
@@ -212,41 +228,43 @@ class InventoryConversionService:
                 notes, created_by,
             )
 
-        correlation = str(conv_id)
-        # Consume inputs
-        for line in resolved:
+            correlation = str(conv_id)
+            # Consume inputs
+            for line in resolved:
+                await inventory_event_service.append_event(
+                    conn=conn, event_buffer=events,
+                    restaurant_id=restaurant_id, branch_id=branch_id,
+                    ingredient_id=line["ingredient_id"],
+                    event_type=INVENTORY_CONVERTED_OUT,
+                    quantity_out=line["qty"],
+                    reference_type="inventory_conversion",
+                    reference_id=correlation,
+                    dedup_key=f"conversion:{correlation}:out:{line['ingredient_id']}",
+                    correlation_id=correlation,
+                    source="conversion",
+                    notes=f"Conversion {correlation} input",
+                    created_by=created_by,
+                )
+
+            # Produce output (unit cost = total input cost / produced qty)
+            out_unit_cost = (
+                input_cost / produced_quantity if produced_quantity else Decimal("0")
+            )
             await inventory_event_service.append_event(
+                conn=conn, event_buffer=events,
                 restaurant_id=restaurant_id, branch_id=branch_id,
-                ingredient_id=line["ingredient_id"],
-                event_type=INVENTORY_CONVERTED_OUT,
-                quantity_out=line["qty"],
+                ingredient_id=output_ingredient_id,
+                event_type=INVENTORY_CONVERTED_IN,
+                quantity_in=produced_quantity,
+                unit_cost=out_unit_cost,
                 reference_type="inventory_conversion",
                 reference_id=correlation,
-                dedup_key=f"conversion:{correlation}:out:{line['ingredient_id']}",
+                dedup_key=f"conversion:{correlation}:in",
                 correlation_id=correlation,
                 source="conversion",
-                notes=f"Conversion {correlation} input",
+                notes=f"Conversion {correlation} output: {out['name']}",
                 created_by=created_by,
             )
-
-        # Produce output (unit cost = total input cost / produced qty)
-        out_unit_cost = (
-            input_cost / produced_quantity if produced_quantity else Decimal("0")
-        )
-        await inventory_event_service.append_event(
-            restaurant_id=restaurant_id, branch_id=branch_id,
-            ingredient_id=output_ingredient_id,
-            event_type=INVENTORY_CONVERTED_IN,
-            quantity_in=produced_quantity,
-            unit_cost=out_unit_cost,
-            reference_type="inventory_conversion",
-            reference_id=correlation,
-            dedup_key=f"conversion:{correlation}:in",
-            correlation_id=correlation,
-            source="conversion",
-            notes=f"Conversion {correlation} output: {out['name']}",
-            created_by=created_by,
-        )
 
         return {
             "conversion_id": correlation,

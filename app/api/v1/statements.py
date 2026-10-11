@@ -19,7 +19,7 @@ Endpoints:
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.core.auth import UserContext, require_permission
@@ -107,7 +107,7 @@ async def _cached_summary(
     user: UserContext,
 ):
     restaurant_id = _rid(user)
-    effective_branch = branch_id or _bid(user)
+    effective_branch = _bid(user) or branch_id
     try:
         return await statement_service.get_summary(
             restaurant_id=restaurant_id,
@@ -115,6 +115,8 @@ async def _cached_summary(
             from_date=from_date,
             to_date=to_date,
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("statement_summary_failed", error=str(exc), user_id=user.user_id)
         raise HTTPException(status_code=500, detail="Failed to load statement summary")
@@ -147,7 +149,7 @@ async def get_transactions(
     user: UserContext = Depends(require_permission("statements.read")),
 ):
     restaurant_id     = _rid(user)
-    effective_branch  = branch_id or _bid(user)
+    effective_branch  = _bid(user) or branch_id
     try:
         return await statement_service.get_transactions(
             restaurant_id=restaurant_id,
@@ -162,6 +164,8 @@ async def get_transactions(
             limit=limit,
             offset=offset,
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("statement_transactions_failed", error=str(exc), user_id=user.user_id)
         raise HTTPException(status_code=500, detail="Failed to load transactions")
@@ -175,8 +179,8 @@ async def get_transactions(
     "/settlements",
     summary="Paginated settlement batch list",
     description=(
-        "Lists all Bittu settlement batches with status, amounts, and transaction count.\n"
-        "Filter by status, date range, or settlement cycle (T+0 / T+1)."
+        "Lists Razorpay settlement mirrors with status, amounts, and reconciliation count.\n"
+        "Filter by status and date range. Settlement cycles are managed by Razorpay."
     ),
 )
 async def list_settlements(
@@ -192,7 +196,7 @@ async def list_settlements(
     user: UserContext = Depends(require_permission("statements.read")),
 ):
     restaurant_id    = _rid(user)
-    effective_branch = branch_id or _bid(user)
+    effective_branch = _bid(user) or branch_id
     try:
         return await statement_service.get_settlements(
             restaurant_id=restaurant_id,
@@ -206,6 +210,8 @@ async def list_settlements(
             limit=limit,
             offset=offset,
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("list_settlements_failed", error=str(exc), user_id=user.user_id)
         raise HTTPException(status_code=500, detail="Failed to load settlements")
@@ -223,9 +229,9 @@ async def list_settlements(
         "- Settlement metadata + status\n"
         "- Fee breakdown with formula string\n"
         "- All included transactions\n"
-        "- Complete status timeline\n"
+        "- Observed current status (prior transition history may be unavailable)\n"
         "- Bank reference number (when available)\n"
-        "- Retry history + failure reasons"
+        "- Reconciliation availability"
     ),
 )
 async def get_settlement_detail(
@@ -237,9 +243,12 @@ async def get_settlement_detail(
         return await statement_service.get_settlement_detail(
             settlement_id=settlement_id,
             restaurant_id=restaurant_id,
+            branch_id=_bid(user),
         )
     except NotFoundError as exc:
         raise _handle_not_found(exc)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("settlement_detail_failed", settlement_id=settlement_id, error=str(exc))
         raise HTTPException(status_code=500, detail="Failed to load settlement detail")
@@ -254,7 +263,7 @@ async def get_settlement_detail(
     summary="Pending and in-flight settlements",
     description=(
         "All settlements in pending / processing / sent-to-bank state "
-        "with their expected settlement ETA.\n\n"
+        "using gateway-owned settlement timing.\n\n"
         "Designed for the 'Pending' tab on mobile — fast and minimal."
     ),
 )
@@ -263,12 +272,14 @@ async def get_pending(
     user: UserContext = Depends(require_permission("statements.read")),
 ):
     restaurant_id    = _rid(user)
-    effective_branch = branch_id or _bid(user)
+    effective_branch = _bid(user) or branch_id
     try:
         return await statement_service.get_pending(
             restaurant_id=restaurant_id,
             branch_id=effective_branch,
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("pending_settlements_failed", error=str(exc), user_id=user.user_id)
         raise HTTPException(status_code=500, detail="Failed to load pending settlements")
@@ -280,12 +291,10 @@ async def get_pending(
 
 @router.get(
     "/timeline/{settlement_id}",
-    summary="Immutable event timeline for a settlement",
+    summary="Observed Razorpay settlement state",
     description=(
-        "Returns ordered list of all status transitions and events for a settlement:\n"
-        "- created → processing_started → bank_transfer_initiated → settled/failed\n"
-        "- Each event carries timestamp, actor, and structured metadata\n"
-        "- Timeline rows are immutable (append-only audit log)"
+        "Returns the current observed mirror state and its known timestamp. "
+        "The response marks history_complete=false when prior transitions are unavailable."
     ),
 )
 async def get_settlement_timeline(
@@ -297,9 +306,12 @@ async def get_settlement_timeline(
         return await statement_service.get_settlement_timeline(
             settlement_id=settlement_id,
             restaurant_id=restaurant_id,
+            branch_id=_bid(user),
         )
     except NotFoundError as exc:
         raise _handle_not_found(exc)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("timeline_failed", settlement_id=settlement_id, error=str(exc))
         raise HTTPException(status_code=500, detail="Failed to load settlement timeline")
@@ -330,7 +342,7 @@ async def export_statement(
     user: UserContext = Depends(require_permission("statements.export")),
 ):
     restaurant_id    = _rid(user)
-    effective_branch = branch_id or _bid(user)
+    effective_branch = _bid(user) or branch_id
     try:
         return await statement_service.export_statement(
             restaurant_id=restaurant_id,
@@ -339,6 +351,8 @@ async def export_statement(
             to_date=to_date,
             settlement_status=settlement_status,
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("statement_export_failed", error=str(exc), user_id=user.user_id)
         raise HTTPException(status_code=500, detail="Failed to generate statement export")
@@ -371,6 +385,8 @@ async def debug_context(
             result["payments_by_status"] = {r["status"]: r["cnt"] for r in counts}
             total = await conn.fetchval("SELECT COUNT(*) FROM payments WHERE restaurant_id = $1::uuid", rid) if rid else 0
             result["total_payments"] = total
+    except HTTPException:
+        raise
     except Exception as exc:
         result["db_error"] = str(exc)
     return result
@@ -382,7 +398,7 @@ async def debug_context(
     description=(
         "Returns the real-time fee breakdown under the 5 % gross-deduction model:\n"
         "  gross × 5.00 %    = total deduction\n"
-        "  gross × 1.1682 %  = Razorpay cut (auto-deducted)\n"
+        "  gateway estimate = environment-configured preview; actual fee comes from Razorpay\n"
         "  remainder ÷ 1.18  = Bittu platform fee (reverse-GST extracted)\n"
         "  remainder − fee   = GST on fee (residual, paisa-exact)\n"
         "  net = gross − total deduction (95 % of gross)\n\n"
@@ -391,9 +407,10 @@ async def debug_context(
 )
 async def fee_calculator(
     amount: float = Query(..., gt=0, description="Gross amount to calculate fee for"),
+    method: Optional[str] = Query(None),
     user: UserContext = Depends(require_permission("statements.read")),
 ):
-    return statement_service.calculate_fee(amount)
+    return statement_service.calculate_fee(amount, method)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -406,7 +423,7 @@ async def fee_calculator(
     description=(
         "Advances a settlement through its lifecycle:\n"
         "  pending → processing → sent_to_bank → settled | failed\n\n"
-        "On 'settled': creates accounting journal entry + updates daily closing.\n"
+        "Retired: manual status changes return 410.\n"
         "Requires `statements.admin` permission."
     ),
 )
@@ -417,7 +434,7 @@ async def advance_settlement(
     user: UserContext = Depends(require_permission("statements.admin")),
 ):
     """
-    410 Gone. Settlements are now sourced live from Razorpay and follow
+    410 Gone. Settlement mirrors are updated by Razorpay webhooks and follow
     Razorpay's own lifecycle (`created → processing → processed | failed`).
     There is no manually-advanceable state on the Bittu side anymore.
     """
@@ -441,7 +458,7 @@ async def advance_settlement(
     summary="[Internal] Enqueue a completed payment for settlement",
     description=(
         "Called internally by the payment service when a payment completes.\n"
-        "Creates or appends to today's pending settlement batch for the restaurant.\n"
+        "Retired: returns 410. Route transfers happen on capture.\n"
         "Idempotent: duplicate calls for the same payment_id are safe (returns existing)."
     ),
 )
@@ -451,24 +468,4 @@ async def enqueue_payment(
     x_idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
     user: UserContext = Depends(require_permission("statements.admin")),
 ):
-    restaurant_id = body.restaurant_id or _rid(user)
-    branch_id     = body.branch_id     or _bid(user)
-    actor_id      = user.owner_id if user.is_branch_user else user.user_id
-    try:
-        return await statement_service.enqueue_payment_for_settlement(
-            payment_id=payment_id,
-            order_id=body.order_id,
-            restaurant_id=restaurant_id,
-            branch_id=branch_id,
-            gross_amount=body.gross_amount,
-            payment_method=body.payment_method,
-            customer_name=body.customer_name,
-            order_reference=body.order_reference,
-            cycle=body.cycle,
-            actor_id=actor_id,
-        )
-    except ValidationError as exc:
-        raise _handle_validation(exc)
-    except Exception as exc:
-        logger.error("enqueue_payment_failed", payment_id=payment_id, error=str(exc))
-        raise HTTPException(status_code=500, detail="Failed to enqueue payment for settlement")
+    raise HTTPException(status_code=410, detail="Legacy settlement enqueue is retired; Razorpay Route owns settlement.")

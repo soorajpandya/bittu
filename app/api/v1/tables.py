@@ -2,15 +2,16 @@
 import orjson
 import uuid
 from typing import Optional
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from app.core.auth import UserContext, require_permission, get_current_user_optional
-from app.core.database import get_connection
+from app.core.database import get_connection, get_transaction
 from app.core.logging import get_logger
 from app.core.redis import cache_get, cache_set, cache_delete
 from app.core.events import DomainEvent, emit_and_publish, TABLE_STATUS_CHANGED
 from app.services.activity_log_service import log_activity
+from app.services.waitlist_tables import assert_table_scope, assert_table_not_reserved
 from app.services.table_service import TableSessionService
 from app.services.dinein_session_service import DineInSessionService
 
@@ -42,11 +43,13 @@ async def _resolve_active_dinein_session_id(
         return str(dinein["id"])
 
     legacy = await conn.fetchrow(
-        "SELECT table_id FROM table_sessions WHERE id = $1 AND user_id = $2",
+        "SELECT table_id,session_token,is_active FROM table_sessions WHERE id = $1 AND user_id = $2",
         session_id,
         owner_id,
     )
     table_id_candidate: Optional[str] = None
+    if legacy and not legacy["is_active"]:
+        return session_id
     if legacy:
         table_id_candidate = str(legacy["table_id"])
     else:
@@ -67,11 +70,13 @@ async def _resolve_active_dinein_session_id(
         SELECT id
         FROM dine_in_sessions
         WHERE table_id = $1 AND user_id = $2 AND status = 'active'
+          AND ($3::text IS NULL OR session_token=$3)
         ORDER BY created_at DESC
         LIMIT 1
         """,
         table_id_candidate,
         owner_id,
+        legacy["session_token"] if legacy else None,
     )
     return str(active["id"]) if active else session_id
 
@@ -128,9 +133,9 @@ async def list_tables(
     """List all tables for the current user's restaurant."""
     try:
         owner_id = user.owner_id if user.is_branch_user else user.user_id
-        cache_key = f"tables_list:{owner_id}"
+        cache_key = f"tables_list:{owner_id}:{user.restaurant_id}:{user.branch_id}"
         try:
-            cached = await cache_get(cache_key)
+            cached = None  # Occupancy and reservations are authoritative database state.
             if cached:
                 return orjson.loads(cached)
         except Exception:
@@ -146,7 +151,8 @@ async def list_tables(
                 SELECT t.id, t.user_id, t.restaurant_id, t.table_number, t.capacity,
                        t.status, t.is_active, t.is_occupied, t.occupied_since,
                        t.session_token, t.current_order_id, t.created_at, t.updated_at,
-                       s.id AS active_session_id
+                       s.id AS active_session_id,
+                       EXISTS(SELECT 1 FROM waitlist_entries w WHERE w.assigned_table_id=t.id AND w.status='notified' AND w.expires_at>now()) AS is_reserved
                 FROM restaurant_tables t
                 LEFT JOIN LATERAL (
                     SELECT id
@@ -157,10 +163,10 @@ async def list_tables(
                     ORDER BY created_at DESC
                     LIMIT 1
                 ) s ON TRUE
-                WHERE t.user_id = $1
+                WHERE t.user_id = $1 AND t.restaurant_id=$2::uuid AND t.branch_id IS NOT DISTINCT FROM $3::uuid
                 ORDER BY t.table_number ASC
                 """,
-                owner_id,
+                owner_id, user.restaurant_id, user.branch_id,
             )
         # Normalize legacy status values for frontend ('blank'→'available', 'running'→'occupied').
         _STATUS_MAP = {"blank": "available", "running": "occupied"}
@@ -172,6 +178,8 @@ async def list_tables(
             # Belt-and-braces: if is_occupied true, force 'occupied'.
             if d.get("is_occupied"):
                 d["status"] = "occupied"
+            if d.get("is_reserved") and not d.get("is_occupied"):
+                d["status"] = "reserved"
             # Expose the active session id under both keys so older FE
             # builds that read `session_id` keep working alongside new ones
             # that read `active_session_id`.
@@ -204,12 +212,13 @@ async def create_table(
                 """
                 SELECT 1 FROM restaurant_tables
                 WHERE user_id = $1
+                  AND restaurant_id=$3::uuid AND branch_id IS NOT DISTINCT FROM $4::uuid
                   AND LOWER(table_number) = LOWER($2)
                   AND is_active = true
                 LIMIT 1
                 """,
                 owner_id,
-                body.table_number,
+                body.table_number, user.restaurant_id, user.branch_id,
             )
             if dup:
                 from fastapi.responses import JSONResponse
@@ -219,8 +228,8 @@ async def create_table(
                 )
             row = await conn.fetchrow(
                 """
-                INSERT INTO restaurant_tables (user_id, restaurant_id, table_number, capacity, status, is_active)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                INSERT INTO restaurant_tables (user_id, restaurant_id, table_number, capacity, status, is_active, branch_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::uuid)
                 RETURNING *
                 """,
                 owner_id,
@@ -229,6 +238,7 @@ async def create_table(
                 body.capacity,
                 body.status,
                 body.is_active,
+                user.branch_id,
             )
             result = dict(row)
             await log_activity(
@@ -281,6 +291,8 @@ async def update_table(
     user: UserContext = Depends(require_permission("table.manage")),
 ):
     """Update a restaurant table. Accepts both PATCH and PUT (FE compat)."""
+    async with get_connection() as scope_conn:
+        await assert_table_scope(scope_conn, user, table_id)
     try:
         owner_id = user.owner_id if user.is_branch_user else user.user_id
         updates = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -291,7 +303,13 @@ async def update_table(
         set_clauses = ", ".join(f"{k} = ${i+2}" for i, k in enumerate(updates))
         values = list(updates.values())
 
-        async with get_connection() as conn:
+        async with get_transaction() as conn:
+            current = await conn.fetchrow("SELECT * FROM restaurant_tables WHERE id=$1::uuid FOR UPDATE", table_id)
+            await assert_table_scope(conn, user, table_id)
+            await assert_table_not_reserved(conn, table_id)
+            if current["is_occupied"] or await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM table_sessions WHERE table_id=$1::uuid AND is_active) OR EXISTS(SELECT 1 FROM dine_in_sessions WHERE table_id=$1::uuid AND status='active')", table_id):
+                raise HTTPException(409, "Close the active session before changing or deleting this table")
             # Block renames that would collide with another active table.
             if "table_number" in updates:
                 dup = await conn.fetchval(
@@ -299,13 +317,14 @@ async def update_table(
                     SELECT 1 FROM restaurant_tables
                     WHERE user_id = $1
                       AND id <> $2
+                      AND restaurant_id=$4::uuid AND branch_id IS NOT DISTINCT FROM $5::uuid
                       AND LOWER(table_number) = LOWER($3)
                       AND is_active = true
                     LIMIT 1
                     """,
                     owner_id,
                     table_id,
-                    updates["table_number"],
+                    updates["table_number"], user.restaurant_id, user.branch_id,
                 )
                 if dup:
                     from fastapi.responses import JSONResponse
@@ -351,6 +370,8 @@ async def update_table(
             except Exception:
                 logger.exception("emit_table_status_update_failed", table_id=table_id)
             return result
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning("update_table_failed", error=str(e), user_id=user.user_id)
         from fastapi.responses import JSONResponse
@@ -363,9 +384,17 @@ async def delete_table(
     user: UserContext = Depends(require_permission("table.manage")),
 ):
     """Delete a restaurant table."""
+    async with get_connection() as scope_conn:
+        await assert_table_scope(scope_conn, user, table_id)
     try:
         owner_id = user.owner_id if user.is_branch_user else user.user_id
-        async with get_connection() as conn:
+        async with get_transaction() as conn:
+            current = await conn.fetchrow("SELECT * FROM restaurant_tables WHERE id=$1::uuid FOR UPDATE", table_id)
+            await assert_table_scope(conn, user, table_id)
+            await assert_table_not_reserved(conn, table_id)
+            if current["is_occupied"] or await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM table_sessions WHERE table_id=$1::uuid AND is_active) OR EXISTS(SELECT 1 FROM dine_in_sessions WHERE table_id=$1::uuid AND status='active')", table_id):
+                raise HTTPException(409, "Close the active session before changing or deleting this table")
             result = await conn.execute(
                 "DELETE FROM restaurant_tables WHERE id = $1 AND user_id = $2",
                 table_id, owner_id,
@@ -399,6 +428,8 @@ async def delete_table(
             except Exception:
                 logger.exception("emit_table_status_delete_failed", table_id=table_id)
             return {"status": "deleted"}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning("delete_table_failed", error=str(e), user_id=user.user_id)
         from fastapi.responses import JSONResponse
@@ -497,6 +528,8 @@ async def admin_place_order(
     admin app (/tables/cart/add flow).  Links the order to session_orders so
     subsequent payment calls compute grand_total correctly.
     """
+    async with get_connection() as scope_conn:
+        await assert_table_scope(scope_conn, user, session_id)
     owner_id = user.owner_id if user.is_branch_user else user.user_id
     async with get_connection() as conn:
         resolved_session_id = await _resolve_active_dinein_session_id(
@@ -519,6 +552,8 @@ async def get_cart(
     session_id: str,
     user: UserContext = Depends(require_permission("table.read")),
 ):
+    async with get_connection() as scope_conn:
+        await assert_table_scope(scope_conn, user, session_id)
     owner_id = user.owner_id if user.is_branch_user else user.user_id
     async with get_connection() as conn:
         resolved_session_id = await _resolve_active_dinein_session_id(
@@ -534,6 +569,8 @@ async def remove_from_cart(
     body: RemoveCartItemIn,
     user: UserContext = Depends(require_permission("table.start")),
 ):
+    async with get_connection() as conn:
+        await assert_table_scope(conn, user, body.session_id)
     return await _svc.remove_from_cart(
         user=user,
         session_id=body.session_id,
@@ -546,6 +583,8 @@ async def end_session(
     session_id: str,
     user: UserContext = Depends(require_permission("table.close")),
 ):
+    async with get_connection() as scope_conn:
+        await assert_table_scope(scope_conn, user, session_id)
     result = await _svc.end_session(user=user, session_id=session_id)
     await log_activity(
         user_id=user.user_id,
@@ -678,6 +717,8 @@ async def get_session_bill(
     user: UserContext = Depends(require_permission("billing.generate")),
 ):
     """POS alias: get full bill for a table session."""
+    async with get_connection() as scope_conn:
+        await assert_table_scope(scope_conn, user, session_id)
     owner_id = user.owner_id if user.is_branch_user else user.user_id
     async with get_connection() as conn:
         resolved_session_id = await _resolve_active_dinein_session_id(
@@ -695,6 +736,8 @@ async def split_bill(
     user: UserContext = Depends(require_permission("billing.generate")),
 ):
     """POS alias: split session bill equally/by-item/by-user."""
+    async with get_connection() as scope_conn:
+        await assert_table_scope(scope_conn, user, session_id)
     owner_id = user.owner_id if user.is_branch_user else user.user_id
     async with get_connection() as conn:
         resolved_session_id = await _resolve_active_dinein_session_id(
@@ -718,6 +761,8 @@ async def add_session_payment(
     user: UserContext = Depends(require_permission("payment.create")),
 ):
     """POS alias: record partial/full payment against session."""
+    async with get_connection() as scope_conn:
+        await assert_table_scope(scope_conn, user, session_id)
     actor = user.owner_id if user.is_branch_user else user.user_id
     async with get_connection() as conn:
         resolved_session_id = await _resolve_active_dinein_session_id(
@@ -757,6 +802,8 @@ async def mark_paid_and_vacate(
     Prefers the active dine-in session; if none exists, falls back to ending the
     active legacy table_sessions row (which also frees the table).
     """
+    async with get_connection() as scope_conn:
+        await assert_table_scope(scope_conn, user, session_id)
     actor = user.owner_id if user.is_branch_user else user.user_id
     async with get_connection() as conn:
         resolved_session_id = await _resolve_active_dinein_session_id(
@@ -963,6 +1010,8 @@ async def get_active_session_for_table(
 
     Used by the FE to re-resolve when its cached session id is missing.
     """
+    async with get_connection() as scope_conn:
+        await assert_table_scope(scope_conn, user, table_id)
     owner_id = user.owner_id if user.is_branch_user else user.user_id
     async with get_connection() as conn:
         row = await conn.fetchrow(
@@ -1027,4 +1076,6 @@ async def vacate_table(
     the active session server-side from ``table_id``. Use this when the FE
     doesn't have (or lost) the session id.
     """
+    async with get_connection() as scope_conn:
+        await assert_table_scope(scope_conn, user, table_id)
     return await mark_paid_and_vacate(session_id=table_id, body=body, user=user)

@@ -17,9 +17,8 @@ Detection categories (see migration 069 for the enum-like comment):
                                         merchant but no rzp_route_transfers row
   - transfer_without_payment            transfer with razorpay_payment_id
                                         absent from rzp_payments
-  - amount_mismatch_payment_transfer    transfer.amount_paise vs payment.amount_paise
-                                        diverges from the configured fee split
-                                        by more than `MAX_FEE_SHARE_PCT`
+  - amount_mismatch_payment_transfer    aggregate transfers differ from the
+                                        frozen merchant entitlement
   - transfer_without_settlement         transfer.status='processed' and older
                                         than T+settlement_grace_days but no
                                         recipient_settlement_id
@@ -38,11 +37,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 
-# Default tolerance — Bittu fee is configurable per-merchant via
-# `fee_service.compute_fee`, so we cannot hard-code the expected split here.
-# Instead we tolerate up to `MAX_FEE_SHARE_PCT` of the payment as legitimate
-# Bittu fee + GST. Anything beyond that is flagged.
-MAX_FEE_SHARE_PCT = 20  # 20% — generous upper bound; real share is ~6-8%.
+# New transfers are checked against their frozen, exact paise entitlement.
 SETTLEMENT_GRACE_DAYS = 4
 
 
@@ -283,23 +278,16 @@ class RzpReconciliationService:
             rows = await conn.fetch(
                 """
                 WITH joined AS (
-                  SELECT t.transfer_id, t.razorpay_payment_id, t.merchant_id,
-                         t.amount_paise   AS transfer_paise,
-                         p.amount_paise   AS payment_paise
-                    FROM rzp_route_transfers t
-                    JOIN rzp_payments p
-                      ON p.razorpay_payment_id = t.razorpay_payment_id
-                   WHERE t.created_at >= $2
-                     AND t.created_at <  $3
-                     AND t.status IN ('created', 'processed')
-                     AND p.status = 'captured'
+                  SELECT MIN(t.transfer_id) AS transfer_id, a.razorpay_payment_id, a.merchant_id,
+                         COALESCE(SUM(t.amount_paise) FILTER (WHERE t.status::text <> 'failed'),0) AS transfer_paise,
+                         a.merchant_paise AS payment_paise
+                    FROM rzp_route_allocations a
+                    LEFT JOIN rzp_route_transfers t ON t.razorpay_payment_id=a.razorpay_payment_id
+                   WHERE a.created_at >= $2 AND a.created_at < $3
+                   GROUP BY a.razorpay_payment_id,a.merchant_id,a.merchant_paise
                 ), bad AS (
-                  SELECT j.*,
-                         (j.payment_paise - j.transfer_paise) AS fee_share_paise
-                    FROM joined j
-                   WHERE j.transfer_paise > j.payment_paise
-                      OR (j.payment_paise - j.transfer_paise) * 100
-                         > j.payment_paise * $4
+                  SELECT j.*, (j.payment_paise-j.transfer_paise) AS fee_share_paise
+                  FROM joined j WHERE j.transfer_paise <> j.payment_paise
                 )
                 INSERT INTO rzp_reconciliation_discrepancies
                     (run_id, merchant_id, restaurant_id, discrepancy_type,
@@ -316,14 +304,13 @@ class RzpReconciliationService:
                        b.transfer_paise,
                        b.fee_share_paise,
                        jsonb_build_object(
-                          'note', 'transfer amount diverges from payment amount beyond fee bound',
-                          'max_fee_share_pct', $4
+                          'note', 'aggregate transfer differs from frozen merchant entitlement'
                        )
                   FROM bad b
                 ON CONFLICT DO NOTHING
                 RETURNING 1
                 """,
-                run_id, window_from, window_to, MAX_FEE_SHARE_PCT,
+                run_id, window_from, window_to,
             )
         return len(rows)
 

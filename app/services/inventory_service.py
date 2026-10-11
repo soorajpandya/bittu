@@ -20,13 +20,15 @@ from app.core.database import get_connection, get_serializable_transaction
 from app.core.redis import DistributedLock, LockError, cache_delete_pattern
 from app.core.events import (
     DomainEvent, emit_and_publish,
-    INVENTORY_DEDUCTED, INVENTORY_RESTORED, INVENTORY_LOW_STOCK,
+    INVENTORY_DEDUCTED, INVENTORY_RESTORED, INVENTORY_LOW_STOCK, INVENTORY_PURCHASED,
 )
 from app.core.tenant import tenant_where_clause, tenant_insert_fields
 from app.core.exceptions import (
     NotFoundError, InventoryError, LockAcquisitionError, ValidationError,
 )
 from app.core.logging import get_logger
+from app.services.inventory_event_service import inventory_event_service
+from app.services.inventory_write import inventory_transaction, unit_factor
 
 logger = get_logger(__name__)
 
@@ -214,65 +216,96 @@ class InventoryService:
     # ── PURCHASE ORDER RECEIVE ──
 
     async def receive_purchase_order(
-        self,
-        user: UserContext,
-        purchase_order_id: str,
+        self, user: UserContext, purchase_order_id: int,
+        items: Optional[list[dict]] = None,
     ) -> dict:
-        """Mark a purchase order as received and increase stock."""
-        async with get_serializable_transaction() as conn:
+        """Receive approved POs. Explicit quantities are cumulative in PO units.
+
+        Omitted lines stay unchanged; items=None receives all remaining stock.
+        Repeating a cumulative receipt is a no-op, including after completion.
+        """
+        clause, params = tenant_where_clause(user)
+        params.append(int(purchase_order_id))
+        async with inventory_transaction() as (conn, events):
             po = await conn.fetchrow(
-                "SELECT id, status, user_id FROM purchase_orders WHERE id = $1 AND user_id = $2 FOR UPDATE",
-                purchase_order_id,
-                user.owner_id if user.is_branch_user else user.user_id,
+                f"SELECT * FROM purchase_orders WHERE {clause} AND id=${len(params)} FOR UPDATE",
+                *params,
             )
             if not po:
                 raise NotFoundError("Purchase order", purchase_order_id)
-            if po["status"] == "received":
-                raise ValidationError("Purchase order already received")
-
-            items = await conn.fetch(
-                "SELECT * FROM purchase_order_items WHERE purchase_order_id = $1",
-                purchase_order_id,
+            if po["approval_status"] != "approved":
+                raise ValidationError("purchase order must be approved before receiving stock")
+            if po["status"] in ("cancelled", "rejected"):
+                raise ValidationError("cannot receive a cancelled or rejected purchase order")
+            lines = await conn.fetch(
+                "SELECT * FROM purchase_order_items WHERE purchase_order_id=$1 ORDER BY ingredient_id, id FOR UPDATE",
+                int(purchase_order_id),
             )
-
-            for item in items:
-                await conn.execute(
-                    """
-                    UPDATE ingredients
-                    SET current_stock = current_stock + $1,
-                        stock_quantity = stock_quantity + $1,
-                        cost_per_unit = CASE WHEN $2 > 0 THEN $2 ELSE cost_per_unit END,
-                        updated_at = now()
-                    WHERE id = $3
-                    """,
-                    float(item["quantity"]),
-                    float(item["unit_cost"]),
-                    str(item["ingredient_id"]),
+            if not lines:
+                raise ValidationError("purchase order has no items")
+            requested = None if items is None else {int(i["purchase_order_item_id"]): i for i in items}
+            if requested is not None:
+                if len(requested) != len(items):
+                    raise ValidationError("duplicate purchase order receipt lines")
+                if set(requested) - {i["id"] for i in lines}:
+                    raise ValidationError("receipt contains an item outside this purchase order")
+            updated = 0
+            complete = True
+            for line in lines:
+                ordered = Decimal(str(line["quantity_ordered"] if line["quantity_ordered"] is not None else line["quantity"] or 0))
+                previous = Decimal(str(line["quantity_received"] or 0))
+                request = (requested or {}).get(line["id"], {})
+                target = ordered if requested is None else Decimal(str(request.get("quantity_received", previous)))
+                if not target.is_finite() or target < previous or target > ordered:
+                    raise ValidationError("received quantity must be between the previous receipt and ordered quantity")
+                complete = complete and target == ordered
+                delta = target - previous
+                if delta == 0:
+                    continue
+                ing = await conn.fetchrow(
+                    "SELECT id, unit, restaurant_id, track_batches FROM ingredients "
+                    "WHERE id=$1 AND restaurant_id=$2::uuid FOR UPDATE",
+                    line["ingredient_id"], user.restaurant_id,
                 )
-
-                await conn.execute(
-                    """
-                    INSERT INTO inventory_transactions
-                        (restaurant_id, ingredient_id, type, quantity, reference_id, performed_by, notes)
-                    VALUES (
-                        (SELECT restaurant_id FROM ingredients WHERE id = $1),
-                        $1, 'purchase'::inventory_txn_type, $2, $3, $4,
-                        'Purchase order received'
-                    )
-                    """,
-                    str(item["ingredient_id"]),
-                    float(item["quantity"]),
-                    purchase_order_id,
-                    user.user_id,
+                if not ing:
+                    raise NotFoundError("ingredient", line["ingredient_id"])
+                factor = await unit_factor(conn, restaurant_id=user.restaurant_id, ingredient_id=ing["id"],
+                                           from_unit=line["unit"], to_unit=ing["unit"])
+                quantity = delta * factor
+                cost = Decimal(str(line["unit_price"] if line["unit_price"] is not None else line["unit_cost"] or 0)) / factor
+                branch_id = str(po["branch_id"]) if po["branch_id"] else None
+                batch_id = None
+                if ing["track_batches"]:
+                    batch_id = str(await conn.fetchval(
+                        """INSERT INTO inventory_batches
+                           (restaurant_id, branch_id, ingredient_id, batch_number,
+                            received_quantity, remaining_quantity, unit, unit_cost, expiry_date, created_by)
+                           VALUES ($1::uuid,$2::uuid,$3,$4,$5,0,$6,$7,$8,$9) RETURNING id""",
+                        user.restaurant_id, branch_id, ing["id"],
+                        request.get("batch_number") or f"PO-{purchase_order_id}-{line['id']}-{target}",
+                        quantity, ing["unit"], cost, request.get("expiry_date"), user.user_id,
+                    ))
+                await inventory_event_service.append_event(
+                    conn=conn, event_buffer=events, restaurant_id=user.restaurant_id,
+                    branch_id=branch_id, ingredient_id=ing["id"], event_type=INVENTORY_PURCHASED,
+                    quantity_in=quantity, unit_cost=cost, batch_id=batch_id,
+                    reference_type="purchase_order", reference_id=str(purchase_order_id),
+                    dedup_key=f"po:{purchase_order_id}:item:{line['id']}:received:{target.normalize()}",
+                    source="purchase_order", created_by=user.user_id,
                 )
-
+                await conn.execute("UPDATE purchase_order_items SET quantity_received=$1 WHERE id=$2", target, line["id"])
+                await conn.execute(
+                    "UPDATE ingredients SET cost_per_unit=CASE WHEN $1>0 THEN $1 ELSE cost_per_unit END WHERE id=$2",
+                    cost, ing["id"],
+                )
+                updated += 1
+            status = "received" if complete else "partial"
             await conn.execute(
-                "UPDATE purchase_orders SET status = 'received', received_at = now() WHERE id = $1",
-                purchase_order_id,
+                "UPDATE purchase_orders SET status=$1, received_at=CASE WHEN $1='received' THEN COALESCE(received_at,NOW()) "
+                "ELSE NULL END, updated_at=NOW() WHERE id=$2", status, int(purchase_order_id),
             )
-
         await cache_delete_pattern("inventory:*")
-        return {"status": "received", "items_updated": len(items)}
+        return {"status": status, "items_updated": updated}
 
     # ── GET STOCK LEVELS ──
 

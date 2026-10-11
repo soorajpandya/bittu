@@ -1,9 +1,9 @@
 """
 Merchant Ledger API — Razorpay-derived (read-only).
 
-The merchant-facing ledger is now a synthetic projection over the live
-Razorpay state (payments → CREDIT, settlements → DEBIT, refunds → DEBIT,
-plus a virtual DEBIT for Bittu's 5% commission on every captured payment).
+The merchant-facing ledger is now a synthetic projection over the local
+Razorpay mirrors (payments → CREDIT, settlements → DEBIT, refunds → DEBIT,
+less the original total deduction for each resolved capture).
 
   GET  /merchant-ledger/balance              Current running balance
   GET  /merchant-ledger/entries              Paginated history
@@ -92,7 +92,7 @@ async def get_entry(
 async def consistency_check(
     user: UserContext = Depends(require_permission("merchant_ledger.admin")),
 ):
-    """Recompute the projection from live Razorpay state and verify invariants."""
+    """Recompute the projection from local Razorpay mirrors and verify invariants."""
     return await merchant_finance_service.ledger_consistency_check(_merchant_id(user))
 
 
@@ -102,7 +102,7 @@ async def manual_adjustment(
     user: UserContext = Depends(require_permission("merchant_ledger.admin")),
 ):
     """
-    410 Gone. The merchant ledger is now projected live from Razorpay and
+    410 Gone. The merchant ledger is now projected from local Razorpay mirrors and
     is no longer a writable store. Adjustments must be made against the
     underlying Razorpay entity (refund a payment, dispute a settlement,
     etc.) and they will surface here automatically.
@@ -111,7 +111,7 @@ async def manual_adjustment(
         status_code=410,
         detail=(
             "Manual ledger adjustments are disabled. The merchant ledger is "
-            "now derived live from Razorpay; mutate the underlying Razorpay "
+            "now derived from local Razorpay mirrors; mutate the underlying Razorpay "
             "entity instead."
         ),
     )

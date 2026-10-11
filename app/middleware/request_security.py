@@ -41,6 +41,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import re
 import time
 from typing import Optional
 from urllib.parse import quote
@@ -84,7 +85,12 @@ _SKIP_PREFIXES = (
 )
 
 
-def _is_skipped(path: str) -> bool:
+def _is_skipped(path: str, method: str = "GET") -> bool:
+    uid = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
+    public_get = rf"(?:/q/{uid}|/api/v1/waitlist/(?:qr/{uid}(?:\.png)?|display/{uid}|status/{uid}|push/vapid-key|sw\.js|assets/[a-zA-Z0-9_.-]+))"
+    public_post = rf"/api/v1/waitlist/(?:public/{uid}|push/subscribe/{uid})"
+    if (method == "GET" and re.fullmatch(public_get, path)) or (method == "POST" and re.fullmatch(public_post, path)):
+        return True
     return any(path == p or path.startswith(p) for p in _SKIP_PREFIXES)
 
 
@@ -175,7 +181,15 @@ class RequestSecurityMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         path = request.url.path
-        if _is_skipped(path):
+        if _is_skipped(path, request.method):
+            return await call_next(request)
+
+        # Dedicated admin onboarding uses revocable cookie sessions + CSRF or
+        # validated JWT + tenant grants. Do not require the merchant-device HMAC.
+        # Restrict exemption to actual onboarding routes; never exempt arbitrary
+        # merchant endpoints merely because a cookie/header is present.
+        from app.services.partner_onboarding.paths import is_onboarding_request
+        if is_onboarding_request(request):
             return await call_next(request)
 
         # WebSocket upgrades & CORS preflight bypass.

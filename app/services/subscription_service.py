@@ -23,6 +23,13 @@ from app.core.config import get_settings
 from app.core.database import get_connection, get_service_connection
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.logging import get_logger
+from app.services.razorpay.fee_policy import (
+    FEE_BASIS,
+    GST_RATE,
+    PLATFORM_FEE_BASE_RATE,
+    TOTAL_DEDUCTION_RATE,
+    rate_card,
+)
 from app.services.razorpay import orders as rzp_orders
 from app.services.razorpay import subscriptions as rzp_subscriptions
 from app.services.razorpay.payments import (
@@ -69,7 +76,7 @@ PLAN_CATALOG: dict[str, dict[str, Any]] = {
         "subscription_amount": 0,
         "subscription_interval": None,
         "device_fee_amount": 0,
-        "transaction_fee_percent": 1.75,
+        "transaction_fee_percent": round(float(PLATFORM_FEE_BASE_RATE * 100), 4),
         "reconciliation": "automatic",
         "payments": "integrated",
         "payment_gated": False,
@@ -81,7 +88,7 @@ PLAN_CATALOG: dict[str, dict[str, Any]] = {
         "subscription_amount": 0,
         "subscription_interval": None,
         "device_fee_amount": 30000,
-        "transaction_fee_percent": 1.75,
+        "transaction_fee_percent": round(float(PLATFORM_FEE_BASE_RATE * 100), 4),
         "reconciliation": "automatic",
         "payments": "integrated",
         "payment_gated": False,
@@ -113,6 +120,8 @@ def _plan_public(meta: dict[str, Any]) -> dict[str, Any]:
         if _requires_device(meta)
         else None
     )
+    integrated = meta["payments"] == "integrated"
+    rates = rate_card() if integrated else None
     return {
         "id": meta["id"],
         "name": meta["name"],
@@ -122,7 +131,16 @@ def _plan_public(meta: dict[str, Any]) -> dict[str, Any]:
             "interval": meta["subscription_interval"],
         },
         "device_fee": device,
+        # All percentages below come from fee_policy so plans, rate cards,
+        # statements and tax invoices print identical numbers.
         "transaction_fee_percent": meta["transaction_fee_percent"],
+        "transaction_fee_basis": FEE_BASIS if integrated else None,
+        "gst_rate_percent": float(GST_RATE * 100) if integrated else None,
+        "gst_on_fee_percent": round(float((TOTAL_DEDUCTION_RATE - PLATFORM_FEE_BASE_RATE) * 100), 4) if integrated else None,
+        "total_deduction_percent": float(TOTAL_DEDUCTION_RATE * 100) if integrated else None,
+        "merchant_share_percent": float((1 - TOTAL_DEDUCTION_RATE) * 100) if integrated else None,
+        "gateway_charges_included": integrated,
+        "rate_card": rates,
         "reconciliation": meta["reconciliation"],
         "payments": meta["payments"],
         "payment_gated": meta["payment_gated"],

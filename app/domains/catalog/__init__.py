@@ -1,1 +1,1 @@
-"""catalog domain — see docs/ARCHITECTURE_V2.md"""
+"""catalog domain â€” see docs/ARCHITECTURE_V2.md"""

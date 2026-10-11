@@ -175,10 +175,18 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("rzp_kyc_batch_scheduler_start_failed", error=str(exc))
 
+    from app.services.waitlist_scheduler import start_waitlist_scheduler
+    waitlist_task = start_waitlist_scheduler()
+
     logger.info("startup_complete", db=db_ok, redis=redis_ok)
     yield
 
     # --- shutdown ---
+    waitlist_task.cancel()
+    try:
+        await waitlist_task
+    except asyncio.CancelledError:
+        pass
     if snapshot_task is not None:
         snapshot_task.cancel()
         try:
@@ -318,7 +326,7 @@ def create_app() -> FastAPI:
         # requested headers back in `Access-Control-Allow-Headers` even
         # with `allow_credentials=True`.
         allow_headers=["*"],
-        expose_headers=["X-Request-ID"],
+        expose_headers=["X-Request-ID", "ETag"],
         max_age=600,
     )
 
@@ -498,8 +506,8 @@ def create_app() -> FastAPI:
     from uuid import UUID as _UUID
 
     @app.get("/q/{restaurant_id}", include_in_schema=False)
-    async def _qr_short(restaurant_id: _UUID):
-        return await _qr_landing(restaurant_id)
+    async def _qr_short(restaurant_id: _UUID, request: Request, branch_id: _UUID | None = None):
+        return await _qr_landing(restaurant_id, branch_id, request)
 
     # -- Pin OpenAPI version to 3.0.3 --
     # FastAPI emits 3.1.0 by default, which the bundled Swagger UI 4.15.5

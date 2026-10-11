@@ -1,1 +1,1 @@
-"""identity domain — see docs/ARCHITECTURE_V2.md"""
+"""identity domain â€” see docs/ARCHITECTURE_V2.md"""

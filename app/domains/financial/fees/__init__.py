@@ -1,1 +1,1 @@
-"""financial.fees — see docs/ARCHITECTURE_V2.md"""
+"""financial.fees â€” see docs/ARCHITECTURE_V2.md"""

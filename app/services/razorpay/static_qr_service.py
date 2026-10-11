@@ -687,7 +687,15 @@ async def handle_webhook_payment_event(
     # ₹1 (100 paise) — skip those captures silently.
     transfer_result: Optional[dict] = None
     if status == "captured" and amount_paise > 0:
-        merchant_share_paise = (amount_paise * 95) // 100
+        # Mirror only after resolving the QR to a local merchant-owned record.
+        from app.services.razorpay.webhook_dispatcher import _upsert_rzp_payment
+        await _upsert_rzp_payment(
+            entity=payment_entity, envelope=envelope, signature=None,
+            merchant_id=str(static_qr_row["merchant_id"]), branch_id=None,
+            internal_order_id=None, rzp_order_uuid=None, status="captured", captured=True,
+        )
+        from app.services.razorpay.fee_policy import merchant_transfer_paise
+        merchant_share_paise = merchant_transfer_paise(amount_paise)
         commission_paise = amount_paise - merchant_share_paise
         if merchant_share_paise < 100:
             logger.warning(
@@ -733,6 +741,7 @@ async def handle_webhook_payment_event(
                     razorpay_payment_id=razorpay_payment_id,
                     gross_paise=amount_paise,
                 )
+                raise
 
     # Realtime fan-out.
     if status == "captured":

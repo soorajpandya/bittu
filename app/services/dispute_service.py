@@ -26,8 +26,15 @@ from app.core.database import get_connection, get_transaction
 from app.core.exceptions import NotFoundError, ValidationError, ConflictError
 from app.core.logging import get_logger
 from app.services.audit_service import audit_service
+from app.services.razorpay import ledgers
+from app.services.razorpay.fee_policy import rupees_to_paise
 
 logger = get_logger(__name__)
+
+# notes.route_reversal_state sub-state for lost disputes on Route payments.
+ROUTE_REVERSAL_PENDING = "recovery_pending"
+ROUTE_REVERSAL_DONE = "reversed"
+ROUTE_REVERSAL_NA = "not_applicable"
 
 _KINDS = ("chargeback", "customer_complaint", "fraud", "service_issue", "duplicate", "other")
 _ALLOWED_TRANSITIONS = {
@@ -272,6 +279,44 @@ class DisputeService:
                     entry_json = json.loads(entry_json)
                 ledger_entry_id = entry_json.get("id") if entry_json else None
 
+                # Gateway payments: credit back Bittu's fee + GST on the
+                # charged-back proportion so the net debit is the merchant's
+                # share. Cumulative base = processed refunds + lost disputes.
+                if row["payment_id"]:
+                    allocation = await ledgers.frozen_allocation_for_payment(c, row["payment_id"])
+                    if allocation is not None:
+                        recovered = rupees_to_paise(row["amount"])
+                        prior = await c.fetchval(
+                            """
+                            SELECT COALESCE(SUM(ROUND(amount * 100)), 0)::bigint FROM (
+                                SELECT amount FROM refunds
+                                WHERE payment_id = $1::uuid AND merchant_id = $2::uuid AND status = 'succeeded'
+                                UNION ALL
+                                SELECT amount FROM disputes
+                                WHERE payment_id = $1::uuid AND merchant_id = $2::uuid
+                                  AND status = 'lost' AND id <> $3
+                            ) recovered
+                            """,
+                            str(row["payment_id"]), str(row["merchant_id"]), int(row["id"]),
+                        )
+                        await ledgers.post_recovery_fee_reversal(
+                            conn=c,
+                            merchant_id=str(row["merchant_id"]),
+                            payment_id=str(row["payment_id"]),
+                            recovered_paise=recovered,
+                            cumulative_recovered_paise=int(prior) + recovered,
+                            gross_paise=allocation["gross_paise"],
+                            merchant_paise=allocation["merchant_paise"],
+                            key_prefix=f"dispute:{row['dispute_uuid']}",
+                            source_type="dispute",
+                            order_id=str(row["order_id"]) if row["order_id"] else None,
+                            created_by=str(actor_admin_id or actor_user_id) if (actor_admin_id or actor_user_id) else None,
+                        )
+                        notes_patch = {**(notes_patch or {}), "route_reversal_state": ROUTE_REVERSAL_PENDING,
+                                       "razorpay_payment_id": allocation["razorpay_payment_id"]}
+                    else:
+                        notes_patch = {**(notes_patch or {}), "route_reversal_state": ROUTE_REVERSAL_NA}
+
             updated = await c.fetchrow(
                 """
                 UPDATE disputes
@@ -322,7 +367,43 @@ class DisputeService:
             resource_id=str(dispute_id),
             payload={"from": cur, "to": new_status, "outcome": outcome},
         )
+        if new_status == "lost":
+            # Outside the DB transaction: gateway HTTP must never hold locks.
+            result = await self._reverse_route_for_lost(result)
         return result
+
+    async def _reverse_route_for_lost(self, dispute: dict) -> dict:
+        """Claw back the merchant's share of a lost dispute from the Route
+        linked account. On failure the dispute stays `lost` with
+        notes.route_reversal_state='recovery_pending' and the error is raised
+        so the webhook retries; a replay retries the reversal."""
+        notes = dispute.get("notes") or {}
+        if notes.get("route_reversal_state") != ROUTE_REVERSAL_PENDING:
+            return dispute
+        rzp_payment_id = notes.get("razorpay_payment_id")
+        if not rzp_payment_id:
+            return dispute
+        from app.services.razorpay.route_service import rzp_route_service
+        try:
+            await rzp_route_service.reverse_refunded_share(
+                razorpay_payment_id=rzp_payment_id, refund_id=f"dispute:{dispute['id']}",
+            )
+        except Exception as exc:
+            logger.exception(
+                "dispute_route_reversal_failed", dispute_id=dispute["id"], razorpay_payment_id=rzp_payment_id,
+            )
+            async with get_connection() as c:
+                await c.execute(
+                    "UPDATE disputes SET notes = notes || $2::jsonb WHERE id = $1",
+                    int(dispute["id"]), json.dumps({"route_reversal_error": str(exc)[:500]}),
+                )
+            raise
+        async with get_connection() as c:
+            row = await c.fetchrow(
+                "UPDATE disputes SET notes = (notes - 'route_reversal_error') || $2::jsonb WHERE id = $1 RETURNING *",
+                int(dispute["id"]), json.dumps({"route_reversal_state": ROUTE_REVERSAL_DONE}),
+            )
+        return _row_to_dispute(row) if row else dispute
 
     # ────────────────────────────────────────────────────────────────
     # Assign / note
@@ -583,6 +664,9 @@ class DisputeService:
         # 4. Transition iff target is strictly newer than current.
         cur = existing["status"]
         if local_target == cur or cur in _TERMINAL:
+            if cur == "lost":
+                # Replay after a failed Route clawback: retry the reversal.
+                return await self._reverse_route_for_lost(existing)
             return existing
         if local_target not in _ALLOWED_TRANSITIONS.get(cur, set()):
             # Either already ahead or invalid transition — leave as-is.

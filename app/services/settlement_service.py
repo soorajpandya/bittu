@@ -48,13 +48,14 @@ def _quantize(val) -> Decimal:
     return Decimal(str(val)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-# Methods that go through payment gateway (not cash)
-ONLINE_METHODS = {"upi", "card", "credit_card", "debit_card", "online", "wallet", "bank_transfer", "neft", "rtgs"}
+# Gateway-routed methods are decided by the shared classifier; POS "direct"
+# collections (merchant's own UPI/card terminal) never pass through PG clearing.
+from app.services.razorpay.fee_policy import classify_method
 
 
-def is_online_payment(method: str) -> bool:
+def is_online_payment(method: str, source: Optional[str] = None) -> bool:
     """Check if a payment method goes through a payment gateway."""
-    return (method or "").lower() in ONLINE_METHODS
+    return classify_method(method, source) == "razorpay"
 
 
 class SettlementService:

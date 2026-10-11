@@ -1,1 +1,1 @@
-"""erp domain — see docs/ARCHITECTURE_V2.md"""
+"""erp domain â€” see docs/ARCHITECTURE_V2.md"""

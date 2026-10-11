@@ -49,6 +49,7 @@ from app.core.events import (
 )
 from app.core.exceptions import InventoryError, NotFoundError, ValidationError
 from app.core.logging import get_logger
+from app.services.inventory_write import inventory_transaction, unit_factor
 from app.core.redis import cache_delete_pattern
 
 logger = get_logger(__name__)
@@ -110,6 +111,7 @@ class InventoryEventService:
         publish: bool = True,
         mirror_master: bool = True,               # also mutate ingredients.current_stock
         conn=None,                                # reuse an outer transaction if provided
+        event_buffer=None,                        # published by the owner after commit
     ) -> str:
         """
         Append a single inventory event to `inventory_ledger` via the
@@ -117,6 +119,11 @@ class InventoryEventService:
 
         Returns the canonical `event_id` (UUID).
         """
+        quantity_in, quantity_out = Decimal(str(quantity_in)), Decimal(str(quantity_out))
+        if not quantity_in.is_finite() or not quantity_out.is_finite() or quantity_in < 0 or quantity_out < 0:
+            raise ValidationError("inventory quantities must be finite and non-negative")
+        if quantity_in > 0 and quantity_out > 0:
+            raise ValidationError("an inventory event must have only one direction")
         if quantity_in == 0 and quantity_out == 0:
             raise ValidationError("inventory event requires non-zero quantity")
 
@@ -127,15 +134,33 @@ class InventoryEventService:
         import json
         from contextlib import asynccontextmanager
 
+        owns_transaction = conn is None
+        if not owns_transaction and publish and event_buffer is None:
+            raise ValueError("outer inventory transactions must supply an event_buffer")
+
         @asynccontextmanager
         async def _conn_ctx():
             if conn is not None:
-                yield conn
+                yield conn, event_buffer
             else:
-                async with get_connection() as c:
-                    yield c
+                async with inventory_transaction() as (c, events):
+                    yield c, events
 
-        async with _conn_ctx() as conn:
+        async with _conn_ctx() as (conn, events):
+            # Serialize the dedup check AND all derived stock mutations.
+            ingredient = await conn.fetchrow(
+                "SELECT id FROM ingredients WHERE id=$1 AND restaurant_id=$2::uuid FOR UPDATE",
+                ingredient_id, restaurant_id,
+            )
+            if not ingredient:
+                raise NotFoundError("ingredient", ingredient_id)
+            if dedup_key:
+                existing = await conn.fetchval(
+                    "SELECT event_id FROM inventory_ledger WHERE restaurant_id=$1::uuid AND dedup_key=$2",
+                    restaurant_id, dedup_key,
+                )
+                if existing:
+                    return str(existing)
             event_id = await conn.fetchval(
                 """
                 SELECT fn_inventory_append_event(
@@ -170,48 +195,36 @@ class InventoryEventService:
                     float(delta), ingredient_id,
                 )
 
-            # Batch bookkeeping (FEFO consumption / receipt)
+            # Batch updates and ledger writes commit or roll back together.
             if batch_id:
-                await conn.execute(
-                    """
-                    UPDATE inventory_batches
-                       SET remaining_quantity = GREATEST(remaining_quantity + $1, 0),
-                           status = CASE
-                               WHEN remaining_quantity + $1 <= 0 THEN 'depleted'
-                               ELSE status
-                           END,
-                           updated_at = NOW()
-                     WHERE id = $2::uuid
-                    """,
-                    float(delta), batch_id,
+                updated = await conn.fetchval(
+                    """UPDATE inventory_batches
+                          SET remaining_quantity = remaining_quantity + $1,
+                              status = CASE WHEN remaining_quantity + $1 = 0 THEN 'depleted'
+                                            WHEN status = 'depleted' THEN 'active' ELSE status END,
+                              updated_at = NOW()
+                        WHERE id=$2::uuid AND ingredient_id=$3 AND restaurant_id=$4::uuid
+                          AND branch_id IS NOT DISTINCT FROM $5::uuid
+                          AND remaining_quantity + $1 >= 0
+                        RETURNING id""",
+                    delta, batch_id, ingredient_id, restaurant_id, branch_id,
                 )
+                if not updated:
+                    raise InventoryError("batch not found in this branch or insufficient batch stock")
 
-        if publish:
-            await emit_and_publish(DomainEvent(
-                event_type=event_type,
-                payload={
-                    "event_id": str(event_id),
-                    "ingredient_id": ingredient_id,
-                    "branch_id": branch_id,
-                    "quantity_in": float(quantity_in),
-                    "quantity_out": float(quantity_out),
-                    "unit_cost": float(unit_cost),
-                    "reference_type": reference_type,
-                    "reference_id": reference_id,
-                    "correlation_id": correlation_id,
-                    "batch_id": batch_id,
-                    "source": source,
-                },
-                restaurant_id=restaurant_id,
-                branch_id=branch_id,
-                user_id=created_by,
-                correlation_id=correlation_id,
-            ))
-
-        # Cache invalidation is best-effort; don't block the caller on a
-        # Redis SCAN + per-key DELETE round-trip storm.
-        import asyncio as _asyncio
-        _asyncio.create_task(cache_delete_pattern(f"inv:bal:{ingredient_id}:*"))
+            if publish:
+                events.append(DomainEvent(
+                    event_type=event_type,
+                    payload={
+                        "event_id": str(event_id), "ingredient_id": ingredient_id,
+                        "branch_id": branch_id, "quantity_in": float(quantity_in),
+                        "quantity_out": float(quantity_out), "unit_cost": float(unit_cost),
+                        "reference_type": reference_type, "reference_id": reference_id,
+                        "correlation_id": correlation_id, "batch_id": batch_id, "source": source,
+                    },
+                    restaurant_id=restaurant_id, branch_id=branch_id,
+                    user_id=created_by, correlation_id=correlation_id,
+                ))
         return str(event_id)
 
     async def reverse_event(
@@ -223,41 +236,37 @@ class InventoryEventService:
         created_by: Optional[str] = None,
     ) -> str:
         """Reverse a previously appended event (idempotent)."""
-        ltype = EVENT_TO_LEDGER.get(reversal_event_type, "restock_cancelled_order")
-        async with get_connection() as conn:
-            new_id = await conn.fetchval(
-                "SELECT fn_inventory_reverse_event($1::uuid, $2, $3, $4)",
-                original_event_id, ltype, notes, created_by,
+        async with inventory_transaction() as (conn, events):
+            original = await conn.fetchrow(
+                "SELECT * FROM inventory_ledger WHERE event_id=$1::uuid FOR UPDATE",
+                original_event_id,
             )
-            row = await conn.fetchrow(
-                """
-                SELECT restaurant_id, branch_id, ingredient_id,
-                       quantity_in, quantity_out
-                  FROM inventory_ledger WHERE event_id = $1::uuid
-                """,
-                new_id,
+            if not original:
+                raise NotFoundError("inventory_event", original_event_id)
+            if original["reversed_by"]:
+                return str(original["reversed_by"])
+            new_id = await self.append_event(
+                conn=conn, event_buffer=events,
+                restaurant_id=str(original["restaurant_id"]),
+                branch_id=str(original["branch_id"]) if original["branch_id"] else None,
+                ingredient_id=original["ingredient_id"], event_type=reversal_event_type,
+                quantity_in=original["quantity_out"], quantity_out=original["quantity_in"],
+                unit_cost=original["unit_cost"] or 0,
+                batch_id=str(original["batch_id"]) if original["batch_id"] else None,
+                reference_type=original["reference_type"], reference_id=original["reference_id"],
+                correlation_id=str(original["correlation_id"]) if original["correlation_id"] else None,
+                dedup_key=f"reversal:{original_event_id}", source="reversal",
+                notes=notes, created_by=created_by,
             )
-            if row:
-                delta = Decimal(str(row["quantity_in"])) - Decimal(str(row["quantity_out"]))
-                if delta != 0:
-                    await conn.execute(
-                        "UPDATE ingredients SET current_stock = COALESCE(current_stock,0)+$1, "
-                        "stock_quantity = COALESCE(stock_quantity,0)+$1, updated_at=NOW() WHERE id=$2",
-                        float(delta), row["ingredient_id"],
-                    )
-                await emit_and_publish(DomainEvent(
-                    event_type=reversal_event_type,
-                    payload={
-                        "event_id": str(new_id),
-                        "reverses_event": original_event_id,
-                        "ingredient_id": row["ingredient_id"],
-                        "branch_id": str(row["branch_id"]) if row["branch_id"] else None,
-                    },
-                    restaurant_id=str(row["restaurant_id"]) if row["restaurant_id"] else None,
-                    branch_id=str(row["branch_id"]) if row["branch_id"] else None,
-                    user_id=created_by,
-                ))
-        return str(new_id)
+            await conn.execute(
+                "UPDATE inventory_ledger SET reverses_event=$1::uuid WHERE event_id=$2::uuid",
+                original_event_id, new_id,
+            )
+            await conn.execute(
+                "UPDATE inventory_ledger SET reversed_by=$1::uuid WHERE event_id=$2::uuid",
+                new_id, original_event_id,
+            )
+        return new_id
 
     # ═════════════════════════════════════════════════════════════════════════
     # SECTION 3 — CALCULATION ENGINE
@@ -470,116 +479,112 @@ class InventoryEventService:
         Raises InventoryError if any ingredient would go negative
         (unless `allow_negative=True`).
         """
-        correlation = order_id  # use order_id as correlation_id
         consumed: list[dict] = []
         low_stock_alerts: list[dict] = []
+        async with inventory_transaction() as (conn, events):
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                               f"inventory:order:{order_id}")
+            # An order's entire consumption is atomic, including all batch splits.
+            # Check before availability so a retry succeeds even if stock ran out.
+            existing = await conn.fetch(
+                "SELECT event_id, ingredient_id, quantity_out FROM inventory_ledger "
+                "WHERE restaurant_id=$1::uuid AND reference_type='order' "
+                "AND reference_id=$2 AND transaction_type='consumption'",
+                restaurant_id, order_id,
+            )
+            if existing:
+                return {"consumed": [dict(r) for r in existing], "already_consumed": True}
 
-        async with get_serializable_transaction() as conn:
-            # 1. Aggregate required quantities across all order items
-            required: dict[str, Decimal] = {}
+            lines = []
             for oi in order_items:
-                item_id = oi.get("item_id")
                 qty = Decimal(str(oi.get("quantity", 1)))
-                if not item_id:
+                if qty <= 0:
+                    raise ValidationError("order quantities must be positive")
+                if not oi.get("item_id"):
                     continue
-                recipe = await self._resolve_recipe(
-                    conn, restaurant_id=restaurant_id, item_id=item_id,
-                )
-                for line in recipe:
-                    ing_id = line["ingredient_id"]
-                    required[ing_id] = (
-                        required.get(ing_id, Decimal("0"))
-                        + line["qty_per_unit"] * qty
-                    )
-
-            if not required:
+                recipe = await self._resolve_recipe(conn, restaurant_id=restaurant_id,
+                                                    item_id=oi["item_id"])
+                lines.extend({**line, "required": line["qty_per_unit"] * qty} for line in recipe)
+            if not lines:
                 return {"consumed": [], "skipped_no_recipe": True}
-
-            # 2. Lock ingredient rows + verify availability
-            ing_ids = list(required.keys())
-            ing_rows = await conn.fetch(
-                """
-                SELECT id, name, unit, minimum_stock, reorder_point, cost_per_unit
-                  FROM ingredients
-                 WHERE id = ANY($1::text[])
-                 FOR UPDATE
-                """,
-                ing_ids,
+            ing_ids = sorted({line["ingredient_id"] for line in lines})
+            rows = await conn.fetch(
+                "SELECT id, name, unit, minimum_stock, reorder_point, cost_per_unit, track_batches "
+                "FROM ingredients WHERE id=ANY($1::text[]) AND restaurant_id=$2::uuid "
+                "ORDER BY id FOR UPDATE", ing_ids, restaurant_id,
             )
-            ing_meta = {r["id"]: dict(r) for r in ing_rows}
+            ingredients = {row["id"]: dict(row) for row in rows}
+            required = {}
+            for line in lines:
+                ing_id = line["ingredient_id"]
+                if ing_id not in ingredients:
+                    raise NotFoundError("ingredient", ing_id)
+                factor = await unit_factor(conn, restaurant_id=restaurant_id, ingredient_id=ing_id,
+                                           from_unit=line["unit"], to_unit=ingredients[ing_id]["unit"])
+                need = line["required"] * factor
+                if need <= 0:
+                    raise ValidationError("recipe quantities must be positive")
+                required[ing_id] = required.get(ing_id, Decimal("0")) + need
 
-            for ing_id, need in required.items():
-                meta = ing_meta.get(ing_id)
-                if not meta:
-                    continue
-                # Live balance from ledger (branch-scoped if available)
-                bal = await conn.fetchval(
-                    "SELECT fn_inventory_balance($1, $2::uuid, NULL)",
-                    ing_id, branch_id,
-                )
-                bal = Decimal(str(bal or 0))
+            for ing_id in ing_ids:
+                need = required[ing_id]
+                meta = ingredients[ing_id]
+                bal = Decimal(str(await conn.fetchval(
+                    "SELECT fn_inventory_balance($1, $2::uuid, NULL)", ing_id, branch_id,
+                ) or 0))
                 if bal < need and not allow_negative:
-                    raise InventoryError(
-                        f"insufficient stock for {meta['name']}: "
-                        f"need {need}, have {bal}"
+                    raise InventoryError(f"insufficient stock for {meta['name']}: need {need}, have {bal}")
+                allocations = [(None, need, Decimal(str(meta["cost_per_unit"] or 0)))]
+                if meta["track_batches"]:
+                    batches = await conn.fetch(
+                        """SELECT id, remaining_quantity, unit_cost, unit FROM inventory_batches
+                           WHERE restaurant_id=$1::uuid AND ingredient_id=$2
+                             AND branch_id IS NOT DISTINCT FROM $3::uuid
+                             AND status='active' AND remaining_quantity > 0
+                             AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)
+                           ORDER BY expiry_date ASC NULLS LAST, received_date, id FOR UPDATE""",
+                        restaurant_id, ing_id, branch_id,
                     )
-
-            # 3. Append one CONSUMED event per ingredient (idempotent)
-            #    Reuse the same `conn` so the FK lock acquired by inventory_ledger
-            #    INSERT (FOR KEY SHARE on ingredients) sees the outer FOR UPDATE
-            #    lock as its own and doesn't block.
-            for ing_id, need in required.items():
-                meta = ing_meta.get(ing_id, {})
-                dedup = f"order:{order_id}:ing:{ing_id}"
-                event_id = await self.append_event(
-                    restaurant_id=restaurant_id,
-                    branch_id=branch_id,
-                    ingredient_id=ing_id,
-                    event_type=INVENTORY_CONSUMED,
-                    quantity_out=need,
-                    unit_cost=Decimal(str(meta.get("cost_per_unit") or 0)),
-                    reference_type="order",
-                    reference_id=order_id,
-                    dedup_key=dedup,
-                    correlation_id=correlation,
-                    source="order",
-                    notes=f"Order {order_id} consumption: {meta.get('name','')}",
-                    created_by=user_id,
-                    publish=False,  # one batched fan-out below
-                    mirror_master=mirror_master,
-                    conn=conn,
-                )
-                new_bal = await self.get_balance(ing_id, branch_id=branch_id)
-                consumed.append({
-                    "event_id": event_id,
-                    "ingredient_id": ing_id,
-                    "ingredient_name": meta.get("name"),
-                    "consumed": float(need),
-                    "remaining": float(new_bal),
-                })
-                # Low-stock detection
-                min_stock = Decimal(str(meta.get("minimum_stock") or 0))
-                reorder = Decimal(str(meta.get("reorder_point") or 0))
-                threshold = max(min_stock, reorder)
-                if threshold > 0 and new_bal <= threshold:
-                    low_stock_alerts.append({
-                        "ingredient_id": ing_id,
-                        "ingredient_name": meta.get("name"),
-                        "current": float(new_bal),
-                        "threshold": float(threshold),
-                    })
-
-        # 4. Fan-out events
-        await emit_and_publish(DomainEvent(
-            event_type=INVENTORY_CONSUMED,
-            payload={"order_id": order_id, "consumed": consumed},
-            restaurant_id=restaurant_id, branch_id=branch_id,
-            user_id=user_id, correlation_id=correlation,
-        ))
+                    allocations = []
+                    remaining = need
+                    for batch in batches:
+                        if remaining <= 0:
+                            break
+                        factor = await unit_factor(conn, restaurant_id=restaurant_id, ingredient_id=ing_id,
+                                                   from_unit=batch["unit"], to_unit=meta["unit"])
+                        # Batch quantities are normalized to the stock unit at receipt.
+                        if factor != 1:
+                            raise ValidationError("batch unit must match ingredient stock unit")
+                        take = min(remaining, Decimal(str(batch["remaining_quantity"])))
+                        allocations.append((str(batch["id"]), take, Decimal(str(batch["unit_cost"] or 0))))
+                        remaining -= take
+                    if remaining > 0:
+                        raise InventoryError(f"insufficient unexpired batch stock for {meta['name']}")
+                event_ids = []
+                for batch_id, quantity, cost in allocations:
+                    event_ids.append(await self.append_event(
+                        conn=conn, event_buffer=events,
+                        restaurant_id=restaurant_id, branch_id=branch_id, ingredient_id=ing_id,
+                        event_type=INVENTORY_CONSUMED, quantity_out=quantity, unit_cost=cost,
+                        batch_id=batch_id, reference_type="order", reference_id=order_id,
+                        dedup_key=f"order:{order_id}:ing:{ing_id}:batch:{batch_id or 'none'}",
+                        correlation_id=order_id, source="order", created_by=user_id,
+                        mirror_master=mirror_master,
+                    ))
+                # Read our own writes, before commit, on the same connection.
+                new_bal = Decimal(str(await conn.fetchval(
+                    "SELECT fn_inventory_balance($1, $2::uuid, NULL)", ing_id, branch_id,
+                ) or 0))
+                consumed.append({"event_id": event_ids[0], "event_ids": event_ids,
+                                 "ingredient_id": ing_id, "ingredient_name": meta["name"],
+                                 "consumed": float(need), "remaining": float(new_bal)})
+                threshold = max(Decimal(str(meta["minimum_stock"] or 0)),
+                                Decimal(str(meta["reorder_point"] or 0)))
+                if new_bal <= threshold:
+                    low_stock_alerts.append({"ingredient_id": ing_id, "ingredient_name": meta["name"],
+                                             "current": float(new_bal), "threshold": float(threshold)})
         for alert in low_stock_alerts:
-            await self._raise_low_stock_alert(
-                restaurant_id=restaurant_id, branch_id=branch_id, alert=alert,
-            )
+            await self._raise_low_stock_alert(restaurant_id=restaurant_id, branch_id=branch_id, alert=alert)
         return {"consumed": consumed, "low_stock": low_stock_alerts}
 
     async def restock_cancelled_order(

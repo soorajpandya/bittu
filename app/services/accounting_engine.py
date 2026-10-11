@@ -31,14 +31,17 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # ── System account codes ─────────────────────────────────────────────────────
-# Maps logical names → (system_code, account_code fallback)
+# Maps logical names → (system_code, account_code fallback). Every logical
+# account owns a distinct code (migration 091); see _assert_distinct_codes.
 SYSTEM_ACCOUNTS = {
     "CASH":                 ("CASH_ACCOUNT",        "1001"),
-    "BANK":                 ("UPI_ACCOUNT",         "1002"),
+    "UPI":                  ("UPI_ACCOUNT",         "1002"),
     "CARD":                 ("CARD_ACCOUNT",        "1003"),
-    "ACCOUNTS_RECEIVABLE":  ("ACCOUNTS_RECEIVABLE", "1003"),
     "INVENTORY_FOOD":       ("INVENTORY_FOOD",      "1004"),
     "INVENTORY_BEVERAGE":   ("INVENTORY_BEVERAGE",  "1005"),
+    "PG_CLEARING":          ("PG_CLEARING",         "1006"),
+    "ACCOUNTS_RECEIVABLE":  ("ACCOUNTS_RECEIVABLE", "1007"),
+    "BANK":                 ("BANK_ACCOUNT",        "1008"),
     "ACCOUNTS_PAYABLE":     ("ACCOUNTS_PAYABLE",    "2001"),
     "CGST_PAYABLE":         ("CGST_PAYABLE",        "2002"),
     "SGST_PAYABLE":         ("SGST_PAYABLE",        "2003"),
@@ -49,7 +52,6 @@ SYSTEM_ACCOUNTS = {
     "COGS_BEVERAGE":        ("COGS_BEVERAGE",       "5002"),
     "DISCOUNT_EXPENSE":     ("DISCOUNT_EXPENSE",    "5006"),
     "SALES_RETURNS":        ("SALES_RETURNS",       "5007"),
-    "PG_CLEARING":          ("PG_CLEARING",         "1006"),
     "GATEWAY_CHARGES":      ("GATEWAY_CHARGES",     "5011"),
     "GATEWAY_TAX":          ("GATEWAY_TAX",         "5012"),
     "RENT_EXPENSE":         ("RENT_EXPENSE",        "5020"),
@@ -58,6 +60,22 @@ SYSTEM_ACCOUNTS = {
     "MISC_EXPENSE":         ("MISC_EXPENSE",        "5030"),
     "WASTAGE_EXPENSE":      ("WASTAGE_EXPENSE",     "5040"),
 }
+
+
+def _assert_distinct_codes(mapping: dict) -> None:
+    """Fail at import if two logical accounts share a system_code or account_code."""
+    for idx, label in ((0, "system_code"), (1, "account_code")):
+        seen: dict[str, str] = {}
+        for logical, pair in mapping.items():
+            key = pair[idx]
+            if key in seen:
+                raise RuntimeError(
+                    f"SYSTEM_ACCOUNTS: {label} {key!r} is shared by {seen[key]} and {logical}"
+                )
+            seen[key] = logical
+
+
+_assert_distinct_codes(SYSTEM_ACCOUNTS)
 
 VALID_REFERENCE_TYPES = {
     "order", "payment", "refund", "discount",
@@ -425,13 +443,15 @@ class AccountingEngine:
         amount: float,
         method: str = "cash",
         created_by: str = "system",
+        payment_kind: Optional[str] = None,
     ) -> Optional[str]:
         """
         Payment received → settles the receivable.
 
         For cash: DR Cash, CR Accounts Receivable (immediate)
-        For online (upi/card/etc): DR PG Clearing, CR Accounts Receivable
+        For gateway (razorpay): DR PG Clearing, CR Accounts Receivable
           (money sits in gateway clearing until settlement arrives)
+        For direct (own UPI/card terminal): DR UPI/Card receipts, CR AR
         """
         from app.services.settlement_service import is_online_payment
 
@@ -439,7 +459,7 @@ class AccountingEngine:
         if amt <= 0:
             return None
 
-        if is_online_payment(method):
+        if is_online_payment(method, payment_kind):
             # Online payment → money goes to PG Clearing (not bank yet)
             debit_account = "PG_CLEARING"
             debit_desc = f"Gateway capture ({method})"
@@ -874,7 +894,10 @@ class AccountingEngine:
     def _payment_method_account(method: str) -> str:
         """Map payment method string to system account code."""
         method = (method or "cash").lower()
-        if method in ("upi", "bank", "bank_transfer", "neft", "rtgs"):
+        # Merchant's own UPI terminal -> UPI receipts; bank transfers -> bank.
+        if method == "upi":
+            return "UPI"
+        if method in ("bank", "bank_transfer", "neft", "rtgs"):
             return "BANK"
         if method in ("card", "credit_card", "debit_card"):
             return "CARD"

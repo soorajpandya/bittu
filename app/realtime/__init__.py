@@ -32,6 +32,7 @@ class WSConnection:
     user_id: str
     branch_id: Optional[str] = None
     channels: set = field(default_factory=set)
+    can_read_waitlist: bool = False
     connected_at: float = field(default_factory=time.time)
 
 
@@ -74,6 +75,8 @@ class ConnectionManager:
         conns = self._channels.get(channel, set()).copy()
         dead: list[WSConnection] = []
         for c in conns:
+            if str(payload.get("event", "")).startswith("waitlist.") and not c.can_read_waitlist:
+                continue
             try:
                 await c.ws.send_json(payload)
             except Exception:
@@ -84,6 +87,8 @@ class ConnectionManager:
     async def send_to_user(self, user_id: str, payload: dict):
         conns = list(self._users.get(user_id, []))
         for c in conns:
+            if str(payload.get("event", "")).startswith("waitlist.") and not c.can_read_waitlist:
+                continue
             try:
                 await c.ws.send_json(payload)
             except Exception:
@@ -252,16 +257,16 @@ async def ws_endpoint(websocket: WebSocket, token: Optional[str] = None):
         return
 
     conn = WSConnection(ws=websocket, user_id=user_id, branch_id=user_ctx.branch_id)
+    from app.services.rbac_service import rbac_service
+    conn.can_read_waitlist = (await rbac_service.check_permission(user_ctx, "waitlist.read")).allowed
     await manager.connect(conn)
 
     # Auto-subscribe to branch channel if the user belongs to one
     if user_ctx.branch_id:
         await manager.subscribe(conn, f"branch:{user_ctx.branch_id}")
 
-    # Auto-subscribe ALL authenticated staff (owner, manager, branch staff)
-    # to restaurant-wide channel so they receive table.status_changed and
-    # other restaurant-scoped events without manual subscribe.
-    if user_ctx.restaurant_id:
+    # Restaurant-wide payloads are reserved for the restaurant owner.
+    if _can_subscribe(user_ctx, f"restaurant:{user_ctx.restaurant_id}"):
         await manager.subscribe(conn, f"restaurant:{user_ctx.restaurant_id}")
 
     logger.info("ws_connected", user_id=user_id, branch_id=user_ctx.branch_id)
@@ -327,30 +332,15 @@ async def ws_endpoint(websocket: WebSocket, token: Optional[str] = None):
 # ──────────────────────────────────────────────────────────────
 
 def _can_subscribe(user_ctx, channel: str) -> bool:
-    """Basic channel ACL — users can only subscribe to their own branch or entities they access."""
+    """Fail closed: entity channels have no independent authorization model."""
+    if not isinstance(channel, str):
+        return False
     if channel.startswith("branch:"):
-        branch_id = channel.split(":", 1)[1]
-        if user_ctx.branch_id and user_ctx.branch_id == branch_id:
-            return True
-        # Owners can subscribe to any of their branches (validated at router level)
-        if user_ctx.role == "owner":
-            return True
-        return False
-
+        return bool(user_ctx.branch_id and channel == f"branch:{user_ctx.branch_id}")
     if channel.startswith("restaurant:"):
-        # Any authenticated user in the restaurant can listen to
-        # restaurant-wide events (table status, kitchen tickets, etc.).
-        rid = channel.split(":", 1)[1]
-        if user_ctx.restaurant_id and user_ctx.restaurant_id == rid:
-            return True
-        if user_ctx.role in ("owner", "manager"):
-            return True
-        return False
-
-    if channel.startswith("entity:"):
-        # Entity channels are fine — the event payload itself is filtered
-        return True
-
+        return bool(user_ctx.restaurant_id and user_ctx.role == "owner"
+                    and not user_ctx.is_branch_user
+                    and channel == f"restaurant:{user_ctx.restaurant_id}")
     return False
 
 

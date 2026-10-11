@@ -40,7 +40,7 @@ from app.core.exceptions import (
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.services.merchant_ledger_integration import post_payment_received
-from app.services.escrow_integration import hold_payment_in_escrow
+from app.services.razorpay.fee_policy import is_cash_method
 
 logger = get_logger(__name__)
 
@@ -103,7 +103,7 @@ class PaymentService:
             payment_id = str(uuid.uuid4())
             razorpay_order_id = None
 
-            if method == "cash":
+            if is_cash_method(method):
                 # Cash payments are immediately completed
                 status = PaymentStatus.COMPLETED.value
                 paid_at = datetime.now(timezone.utc)
@@ -136,7 +136,7 @@ class PaymentService:
             )
 
             # For cash, also update order status
-            if method == "cash":
+            if is_cash_method(method):
                 await conn.execute(
                     "UPDATE orders SET status = 'Confirmed', updated_at = now() WHERE id = $1",
                     order_id,
@@ -155,18 +155,6 @@ class PaymentService:
                     actor_id=user.user_id,
                     conn=conn,
                 )
-                # Phase 2: place the same amount into escrow until T+N
-                # cron releases it.  Best-effort, idempotent on payment_id.
-                await hold_payment_in_escrow(
-                    merchant_id=user.restaurant_id,
-                    payment_id=payment_id,
-                    amount=payment_amount,
-                    method=method,
-                    order_id=order_id,
-                    branch_id=tenant.get("branch_id"),
-                    actor_id=user.user_id,
-                    conn=conn,
-                )
 
         # Audit log
         await self._audit_payment(
@@ -175,7 +163,7 @@ class PaymentService:
         )
 
         await emit_and_publish(DomainEvent(
-            event_type=PAYMENT_COMPLETED if method == "cash" else PAYMENT_INITIATED,
+            event_type=PAYMENT_COMPLETED if is_cash_method(method) else PAYMENT_INITIATED,
             payload={
                 "payment_id": payment_id,
                 "order_id": order_id,

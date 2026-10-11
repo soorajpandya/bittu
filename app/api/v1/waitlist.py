@@ -19,14 +19,16 @@ from pathlib import Path
 from typing import Optional
 from uuid import UUID
 import io
+import html as html_lib
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.core.auth import UserContext, require_permission
 from app.core.cache import cached_route, invalidate_prefix
-from app.core.database import get_connection
+from app.core.database import get_service_connection, use_tenant
 from app.services.waitlist_service import WaitlistService
 
 router = APIRouter(prefix="/waitlist", tags=["Dine-In"])
@@ -74,6 +76,7 @@ class NotifyNextRequest(BaseModel):
 
 
 class PublicAddEntryRequest(BaseModel):
+    branch_id: Optional[UUID] = None
     customer_name: str = Field(..., min_length=1, max_length=100)
     party_size: int = Field(..., ge=1, le=50)
     phone: str = Field(..., min_length=6, max_length=20)
@@ -85,7 +88,7 @@ class PublicAddEntryRequest(BaseModel):
 @router.post("")
 async def add_to_waitlist(
     body: AddEntryRequest,
-    user: UserContext = Depends(require_permission("waitlist.read")),
+    user: UserContext = Depends(require_permission("waitlist.manage")),
 ):
     """Add a customer to the waitlist."""
     result = await _svc.add_entry(
@@ -141,8 +144,7 @@ async def notify_next(
     user: UserContext = Depends(require_permission("waitlist.manage")),
 ):
     """Find best-fit customer for available table and notify them.
-    Falls back to notifying the next waiter without a table assignment if
-    no tables are currently free (or none are configured)."""
+    Returns a conflict when no available table fits; does not notify without a reservation."""
     result = await _svc.notify_next(user, table_id=body.table_id)
     if not result:
         raise HTTPException(404, "No customers waiting on the queue")
@@ -152,7 +154,7 @@ async def notify_next(
 
 @router.post("/expire-check")
 async def expire_check(
-    user: UserContext = Depends(require_permission("waitlist.read")),
+    user: UserContext = Depends(require_permission("waitlist.manage")),
 ):
     """Check and expire overdue notified entries."""
     expired = await _svc.expire_overdue(user)
@@ -197,7 +199,7 @@ async def skip_customer(
 @router.patch("/{entry_id}/cancel")
 async def cancel_entry(
     entry_id: UUID,
-    user: UserContext = Depends(require_permission("waitlist.read")),
+    user: UserContext = Depends(require_permission("waitlist.manage")),
 ):
     """Cancel a waitlist entry."""
     result = await _svc.cancel_entry(user, entry_id)
@@ -246,20 +248,19 @@ async def add_to_waitlist_public(restaurant_id: UUID, body: PublicAddEntryReques
     """
     result = await _svc.add_entry_public(
         restaurant_id=restaurant_id,
+        branch_id=body.branch_id,
         customer_name=body.customer_name,
         party_size=body.party_size,
         phone=body.phone,
         notes=body.notes,
     )
-    # Staff queue cache is tenant-scoped and has a 10s TTL; no cross-tenant
-    # invalidation needed here — staff sees the new entry within one cycle.
     return result
 
 
 @router.get("/display/{restaurant_id}")
-async def display_screen(restaurant_id: UUID):
+async def display_screen(restaurant_id: UUID, branch_id: Optional[UUID] = None):
     """Public display screen data — shows 'now serving' and queue."""
-    return await _svc.get_display_data(restaurant_id)
+    return await _svc.get_display_data(restaurant_id, branch_id)
 
 
 @router.get("/status/{entry_id}")
@@ -274,14 +275,13 @@ async def entry_status(entry_id: UUID):
 # ── QR code + customer-facing landing page (public, no auth) ─
 
 def _public_base(request: Request) -> str:
-    """Public scheme://host derived from forwarded headers (nginx-aware)."""
-    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
-    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
-    return f"{proto}://{host}"
+    """Use the configured public origin, never client-supplied forwarded hosts."""
+    from app.core.config import get_settings
+    return get_settings().PUBLIC_API_BASE_URL.rstrip("/")
 
 
 @router.get("/qr/{restaurant_id}.png")
-async def qr_png(restaurant_id: UUID, request: Request):
+async def qr_png(restaurant_id: UUID, request: Request, branch_id: Optional[UUID] = None):
     """
     Returns a printable PNG QR code that points at the customer self-add page
     for this restaurant. Print this and stick it on the host stand.
@@ -291,7 +291,10 @@ async def qr_png(restaurant_id: UUID, request: Request):
     except ImportError:  # pragma: no cover
         raise HTTPException(500, "qrcode library not installed on server")
 
+    context = await _svc.public_context(restaurant_id, branch_id)
     target = f"{_public_base(request)}/q/{restaurant_id}"
+    if context.branch_id:
+        target += f"?branch_id={context.branch_id}"
     img = qrcode.make(target, box_size=10, border=2)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -303,14 +306,15 @@ async def qr_png(restaurant_id: UUID, request: Request):
 
 
 @router.get("/qr/{restaurant_id}", response_class=HTMLResponse)
-async def qr_landing_page(restaurant_id: UUID):
+async def qr_landing_page(restaurant_id: UUID, branch_id: Optional[UUID] = None, request: Request = None):
     """
     Public landing page customers reach by scanning the printed QR code.
     Self-contained HTML — posts to /api/v1/waitlist/public/{rid} and then
     polls /api/v1/waitlist/status/{entry_id} for live position updates.
     """
+    context = await _svc.public_context(restaurant_id, branch_id)
     restaurant_name = "the restaurant"
-    async with get_connection() as conn:
+    async with get_service_connection() as conn:
         row = await conn.fetchrow(
             "SELECT name FROM restaurants WHERE id = $1", restaurant_id,
         )
@@ -319,23 +323,30 @@ async def qr_landing_page(restaurant_id: UUID):
         restaurant_name = row["name"] or restaurant_name
 
     rid = str(restaurant_id)
-    safe_name = (
-        restaurant_name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    )
-    html = _QR_LANDING_HTML.replace("__RID__", rid).replace("__NAME__", safe_name)
-    return HTMLResponse(content=html)
+    safe_name = html_lib.escape(restaurant_name, quote=True)
+    nonce = getattr(request.state, "csp_nonce", "") if request else ""
+    html = (_QR_LANDING_HTML.replace("__RID__", rid).replace("__BID__", context.branch_id or "")
+            .replace("__NONCE__", nonce).replace("__NAME__", safe_name))
+    return HTMLResponse(content=html, headers={"Cache-Control": "no-store"})
 
 
 # ── Web Push (VAPID) — customer browser notifications ────────
 
 class PushKeysModel(BaseModel):
-    p256dh: str
-    auth: str
+    p256dh: str = Field(..., min_length=87, max_length=88)
+    auth: str = Field(..., min_length=22, max_length=24)
 
 
 class PushSubscribeRequest(BaseModel):
-    endpoint: str = Field(..., min_length=10)
+    endpoint: str = Field(..., min_length=10, max_length=2048)
     keys: PushKeysModel
+    push_token: str = Field(..., min_length=32, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_subscription(self):
+        from app.services.push_service import validate_subscription
+        validate_subscription(self.endpoint, self.keys.p256dh, self.keys.auth)
+        return self
 
 
 @router.get("/push/vapid-key")
@@ -349,21 +360,27 @@ async def push_vapid_key():
 @router.post("/push/subscribe/{entry_id}")
 async def push_subscribe(entry_id: UUID, body: PushSubscribeRequest, request: Request):
     """Public: register a Web Push subscription for a waitlist entry."""
-    async with get_connection() as conn:
+    async with get_service_connection() as conn:
         row = await conn.fetchrow(
-            "SELECT restaurant_id FROM waitlist_entries WHERE id = $1", entry_id,
+            "SELECT restaurant_id,user_id,push_token_hash,status FROM waitlist_entries WHERE id = $1", entry_id,
         )
     if not row:
         raise HTTPException(404, "Entry not found")
+    import hashlib
+    if not row["push_token_hash"] or not secrets.compare_digest(row["push_token_hash"], hashlib.sha256(body.push_token.encode()).hexdigest()):
+        raise HTTPException(403, "Invalid customer push token")
+    if row["status"] not in {"waiting", "notified"}:
+        raise HTTPException(409, "Waitlist entry is no longer active")
     from app.services.push_service import save_subscription
-    await save_subscription(
-        entry_id=str(entry_id),
-        restaurant_id=str(row["restaurant_id"]),
-        endpoint=body.endpoint,
-        p256dh=body.keys.p256dh,
-        auth=body.keys.auth,
-        user_agent=request.headers.get("user-agent"),
-    )
+    async with use_tenant(row["user_id"]):
+        await save_subscription(
+            entry_id=str(entry_id),
+            restaurant_id=str(row["restaurant_id"]),
+            endpoint=body.endpoint,
+            p256dh=body.keys.p256dh,
+            auth=body.keys.auth,
+            user_agent=request.headers.get("user-agent"),
+        )
     return {"ok": True}
 
 
@@ -414,8 +431,10 @@ self.addEventListener('push', function(event){
 self.addEventListener('notificationclick', function(event){
   event.notification.close();
   event.waitUntil(clients.matchAll({type:'window', includeUncontrolled:true}).then(function(list){
-    for (var i=0;i<list.length;i++){ var c=list[i]; if(c.url.indexOf('/api/v1/waitlist/qr/')>=0){ return c.focus(); } }
-    if (clients.openWindow) return clients.openWindow('/');
+    var target = new URL(event.notification.data.url || '/q/', self.location.origin);
+    if(target.origin !== self.location.origin || !target.pathname.startsWith('/q/')) return;
+    for (var i=0;i<list.length;i++){ var c=list[i]; if(c.url === target.href){ return c.focus(); } }
+    if (clients.openWindow) return clients.openWindow(target.href);
   }));
 });
 """
@@ -433,7 +452,7 @@ _QR_LANDING_HTML = """<!doctype html>
   <link rel="preload" as="font" type="font/otf" href="/api/v1/waitlist/assets/gilroy-light.otf" crossorigin />
   <link rel="preload" as="font" type="font/otf" href="/api/v1/waitlist/assets/gilroy-extrabold.otf" crossorigin />
   <link rel="preload" as="audio" href="/api/v1/waitlist/assets/ding.mp3" />
-  <style>
+  <style nonce="__NONCE__">
     @font-face{font-family:'Gilroy';src:url('/api/v1/waitlist/assets/gilroy-light.otf') format('opentype');
                font-weight:300 500;font-style:normal;font-display:swap}
     @font-face{font-family:'Gilroy';src:url('/api/v1/waitlist/assets/gilroy-extrabold.otf') format('opentype');
@@ -601,10 +620,10 @@ _QR_LANDING_HTML = """<!doctype html>
             <button type="button" id="plus" aria-label="increase">+</button>
           </div>
           <button class="submit" id="go" type="submit">Join Queue</button>
-          <div id="err" class="error" style="display:none"></div>
+          <div id="err" class="error" hidden></div>
         </form>
       </div>
-      <div id="status-view" class="status" style="display:none">
+      <div id="status-view" class="status" hidden>
         <p class="greet" id="hi">Welcome!</p>
         <h1>You're in the queue</h1>
         <div><span class="pill waiting" id="st">Waiting</span></div>
@@ -617,7 +636,7 @@ _QR_LANDING_HTML = """<!doctype html>
           <div class="cell"><div class="k">Party</div><div class="v" id="meta-party">—</div></div>
           <div class="cell"><div class="k">At</div><div class="v" id="meta-name">__NAME__</div></div>
         </div>
-        <div class="ready" id="ready" style="display:none"></div>
+        <div class="ready" id="ready" hidden></div>
         <p class="hint"><span class="dot"></span> Live updates · keep this page open</p>
       </div>
     </div>
@@ -637,10 +656,13 @@ _QR_LANDING_HTML = """<!doctype html>
 
 <audio id="ding" src="/api/v1/waitlist/assets/ding.mp3" preload="auto"></audio>
 
-<script>
+<script nonce="__NONCE__">
 (function(){
+  document.querySelectorAll('[hidden]').forEach(function(el){ el.hidden=false; el.style.display='none'; });
   var RID = "__RID__";
-  var RNAME = "__NAME__";
+  var BID = "__BID__";
+  var STORAGE_KEY = "wl_"+RID+"_"+(BID || "main");
+  var RNAME = document.getElementById('meta-name').textContent;
   var party = 2;
   var lastStatus = null;
   var audioUnlocked = false;
@@ -679,7 +701,7 @@ _QR_LANDING_HTML = """<!doctype html>
       var r = await fetch('/api/v1/waitlist/public/'+RID, {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({customer_name:name, phone:phone, party_size:party})
+        body: JSON.stringify({customer_name:name, phone:phone, party_size:party, branch_id:BID || null})
       });
       var data = await r.json();
       if(!r.ok){
@@ -689,7 +711,8 @@ _QR_LANDING_HTML = """<!doctype html>
       }
       data.customer_name = data.customer_name || name;
       data.party_size = data.party_size || party;
-      localStorage.setItem('wl_'+RID, data.id);
+      localStorage.setItem(STORAGE_KEY, data.id);
+      localStorage.setItem(STORAGE_KEY+"_push", data.push_token);
       showStatus(data);
       startPolling(data.id);
       enablePush(data.id);
@@ -712,14 +735,14 @@ _QR_LANDING_HTML = """<!doctype html>
     st.textContent = statusLabel; st.className = 'pill '+(e.status||'waiting');
     var eta = document.getElementById('eta');
     if(e.status === 'waiting'){
-      eta.innerHTML = e.estimated_wait_minutes ? ('Estimated wait <b>~'+e.estimated_wait_minutes+' min</b>') : 'Calculating wait time…';
+      eta.innerHTML = e.estimated_wait_minutes !== null && e.estimated_wait_minutes !== undefined ? ('Estimated wait <b>~'+e.estimated_wait_minutes+' min</b>') : 'Calculating wait time…';
     } else { eta.textContent = ''; }
     var ready = document.getElementById('ready');
     ready.className = 'ready';
     if(e.status === 'notified'){
       ready.style.display='block';
-      var tbl = e.table_number ? (' — Table '+e.table_number) : '';
-      ready.innerHTML = '<span class="big">Your table is ready'+tbl+'</span>Please head to the host stand.';
+      var tbl = (e.table_number || e.assigned_table_number) ? (' — Table '+(e.table_number || e.assigned_table_number)) : '';
+      ready.textContent = 'Your table is ready'+tbl+'. Please head to the host stand.';
       if(lastStatus !== 'notified') triggerReady(e);
     } else if(e.status === 'seated'){
       ready.style.display='block'; ready.className='ready info';
@@ -738,7 +761,7 @@ _QR_LANDING_HTML = """<!doctype html>
     var c = document.getElementById('celebrate');
     var tbl = e.table_number ? ('Table '+e.table_number+' is yours.') : 'Please head to the host stand.';
     document.getElementById('cele-title').textContent = 'Your table is ready!';
-    document.getElementById('cele-body').innerHTML = tbl+' <b>'+RNAME+'</b> is waiting for you.';
+    document.getElementById('cele-body').textContent = tbl+' '+RNAME+' is waiting for you.';
     c.classList.add('on');
     document.getElementById('cele-ok').onclick = function(){ c.classList.remove('on'); };
     // Replay sound twice more for emphasis
@@ -756,11 +779,11 @@ _QR_LANDING_HTML = """<!doctype html>
   }
 
   // Resume if customer already joined on this device
-  var existing = localStorage.getItem('wl_'+RID);
+  var existing = new URLSearchParams(location.search).get('entry_id') || localStorage.getItem(STORAGE_KEY);
   if(existing){
     fetch('/api/v1/waitlist/status/'+existing).then(function(r){
       if(r.ok) return r.json();
-      localStorage.removeItem('wl_'+RID); return null;
+      localStorage.removeItem(STORAGE_KEY); return null;
     }).then(function(d){
       if(d && (d.status==='waiting'||d.status==='notified')){
         // Don't auto-fire ding on page reload if already notified
@@ -768,7 +791,7 @@ _QR_LANDING_HTML = """<!doctype html>
         showStatus(d);
         startPolling(existing);
         enablePush(existing);
-      } else if(d){ localStorage.removeItem('wl_'+RID); }
+      } else if(d){ localStorage.removeItem(STORAGE_KEY); }
     }).catch(function(){});
   }
 
@@ -789,8 +812,10 @@ _QR_LANDING_HTML = """<!doctype html>
         perm = await Notification.requestPermission();
         if(perm !== 'granted') return;
       }
-      var reg = await navigator.serviceWorker.register('/api/v1/waitlist/sw.js', {scope:'/api/v1/waitlist/'});
-      await navigator.serviceWorker.ready;
+      var reg = await navigator.serviceWorker.register('/api/v1/waitlist/sw.js', {scope: location.pathname.startsWith('/q/') ? '/q/' : '/api/v1/waitlist/qr/'});
+      await Promise.race([navigator.serviceWorker.ready, new Promise(function(_, reject){
+        setTimeout(function(){ reject(new Error('Service worker activation timed out')); }, 10000);
+      })]);
       var keyResp = await fetch('/api/v1/waitlist/push/vapid-key');
       if(!keyResp.ok) return;
       var keyData = await keyResp.json();
@@ -803,7 +828,7 @@ _QR_LANDING_HTML = """<!doctype html>
       await fetch('/api/v1/waitlist/push/subscribe/'+entryId, {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({endpoint: s.endpoint, keys: s.keys})
+        body: JSON.stringify({endpoint: s.endpoint, keys: s.keys, push_token: localStorage.getItem(STORAGE_KEY+"_push")})
       });
     } catch(e){ /* ignore — polling still works */ }
   }

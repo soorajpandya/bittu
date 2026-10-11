@@ -1,1 +1,1 @@
-"""financial.disputes — see docs/ARCHITECTURE_V2.md"""
+"""financial.disputes â€” see docs/ARCHITECTURE_V2.md"""

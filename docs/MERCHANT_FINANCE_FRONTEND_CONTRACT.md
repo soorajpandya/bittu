@@ -1,21 +1,36 @@
-# Merchant Finance — Frontend Contract (v2, Razorpay-backed)
+# Merchant Finance — Frontend Contract (v3, Route mirror)
 
-> **Source of truth**: live Razorpay REST API, scoped per merchant via the
-> `X-Razorpay-Account` linked-account header. There is **no** Supabase wallet
-> or ledger table behind these endpoints anymore — every read is a live
-> Razorpay call (cached 30–60 s).
+> **Source of truth**: the local Razorpay mirror tables (`rzp_payments`,
+> `rzp_route_allocations`, `rzp_route_transfers`, `rzp_settlements`,
+> `rzp_settlement_payments`, `rzp_refunds`), updated by webhooks and polling,
+> plus the local `payments`/`refunds` tables for cash and direct POS receipts.
+> Reads are served by `merchant_finance_service` over `finance_queries.PAYMENTS_CTE`;
+> nothing is fetched live from Razorpay on request. Responses are cached 30–60 s.
 >
-> **Commission model**: Bittu retains a flat **5%** of every captured payment.
-> The split is applied at projection time:
+> **Commercial model**: customer pays ₹100 → merchant receives **₹95** via
+> Razorpay Route. The 5% total deduction is frozen per payment in
+> `rzp_route_allocations.merchant_paise` (rounded once, integer paise) and is
+> **never** repriced for history. There is no back-computation from
+> settlements.
+>
+> **GST basis (full_consideration)**: Bittu's taxable supply is the whole 5%:
 >
 > ```
-> merchant_amount   = razorpay_settlement.amount   (what hit merchant's bank)
-> gross_amount      = merchant_amount / 0.95       (back-computed)
-> commission_amount = gross_amount - merchant_amount
+> total_deduction = gross − merchant_entitlement          (5.00 on ₹100)
+> bittu_fee       = round_half_up(total_deduction / 1.18)  (4.24 — taxable value)
+> gst_on_fee      = total_deduction − bittu_fee            (0.76 — 18% GST)
+> razorpay_cut    = gateway charges (Bittu's cost, informational; estimate until
+>                   rzp_payments.fee_paise is known) — never reduces the taxable fee
+> platform_margin / platform_loss = total_deduction − razorpay_cut (±)
 > ```
+>
+> **Payment kinds** (`payment_kind` / `source` on every row):
+> `razorpay` (gateway, 5% deduction), `cash` and `direct` (merchant's own
+> UPI/card/wallet terminal recorded at the POS) — the latter two carry **no**
+> deduction, no escrow and are reported as settled on receipt.
 >
 > All monetary values are **rupees as JSON numbers** (2dp). Currency is INR
-> unless stated. All timestamps are ISO 8601 in UTC.
+> unless stated. All timestamps are ISO 8601 in UTC; date filters are IST days.
 
 ---
 
@@ -87,17 +102,25 @@ Wallet snapshot with Bittu commission applied.
 }
 ```
 
-Field semantics:
+Field semantics (activity fields use the requested window; balances are lifetime through `to`):
 
-| Field                 | Meaning                                                                          |
-| --------------------- | -------------------------------------------------------------------------------- |
-| `gross_sales`         | Sum of all captured payments (customer-facing total).                            |
-| `settled_amount`      | Sum of `processed` settlements (merchant's share already paid out).              |
-| `platform_commission` | `gross_sales × 5%` — Bittu's cut on the window.                                  |
-| `pending_settlement`  | `gross_sales × 95% − settled_amount`, clamped ≥ 0.                               |
-| `refunds`             | Sum of refunds in `processed / pending / created / initiated`.                   |
-| `available_balance`   | `settled_amount − refunds`, clamped ≥ 0. Money already at the merchant's bank.   |
-| `transaction_count`   | Number of captured payments in the window.                                       |
+| Field                      | Meaning                                                                                      |
+| -------------------------- | -------------------------------------------------------------------------------------------- |
+| `gross_sales`              | `cash_sales + direct_sales + online_sales` in the window.                                    |
+| `cash_sales` / `direct_sales` / `online_sales` | By payment kind. `direct` = own-terminal UPI/card/wallet recorded at POS. |
+| `merchant_earned`          | Σ frozen online entitlement (95% per payment, historical rates preserved).                   |
+| `total_deduction`          | Σ (gross − entitlement) on **online** rows only. `platform_commission` is a legacy alias.   |
+| `deduction_basis`          | Always `online_only`.                                                                        |
+| `settled_amount`           | Online bank payouts confirmed by a merchant-attributed processed settlement + cash/direct net of their refunds. |
+| `online_settled_amount`    | Online payouts only.                                                                          |
+| `pending_settlement`       | `merchant_earned − online_settled_lifetime − merchant_refund_share`, clamped ≥ 0.           |
+| `available_balance`        | Processed Route transfers not yet swept to bank, net of merchant refund share, clamped ≥ 0.   |
+| `balance_discrepancy`      | Negative part of the pending computation (reconciliation signal).                            |
+| `cash_balance` / `direct_balance` | Lifetime receipts less recorded refunds for that kind.                                |
+| `refunds` / `cash_refunds` / `direct_refunds` / `merchant_refund_share` | Gross refunds; merchant share uses the original proportion. |
+| `unresolved_payment_count` | Online payments without a frozen allocation — money fields are `null` for them.               |
+| `wallet_status`            | `active` / `pending_kyc` / `kyc_rejected` / `suspended` (reported separately, never zeroes liabilities). |
+| `transaction_count`        | Rows in the window across all kinds.                                                          |
 
 ---
 

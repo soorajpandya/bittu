@@ -1,53 +1,28 @@
+"""Merchant finance read model over local Razorpay mirrors and frozen allocations.
+
+Merchant bank liability is the original online entitlement less proportional
+processed refunds and confirmed bank payouts. Cash stays outside clearing.
+Transfers explain funding progress; gateway fee breakdowns require actual fees.
+KYC state controls payment eligibility, never hides an existing liability.
+These projections do not post ERP journals or alter immutable audit ledgers.
 """
-Razorpay-backed merchant finance projection layer.
 
-Source of truth: the **local Razorpay mirror tables**:
-
-* ``rzp_route_accounts``       — merchant linked-account state (KYC gate)
-* ``rzp_route_transfers``      — real net money sent to the merchant's linked
-                                  account; the authoritative "what the
-                                  merchant has earned" stream.
-* ``rzp_settlements``          — Razorpay-side settlement headers (utr,
-                                  status, settled_at) for the linked account.
-* ``rzp_settlement_payments``  — per-settlement line items (which
-                                  payments/refunds/adjustments rolled into
-                                  this settlement).
-* ``rzp_payments``             — gross payment events (used for the
-                                  Transactions tab + gross-sales context).
-* ``rzp_refunds``              — refund debits.
-
-Activation model
-----------------
-A merchant is **Route-active** iff ``rzp_route_accounts.status='activated'``
-AND ``linked_account_id IS NOT NULL`` for that ``merchant_id``.
-
-* **Route-active**  → all numbers come from ``rzp_route_transfers``
-  (the actual amount Razorpay moved to the linked account). Commission is
-  derived as ``payment_amount − transfer_amount`` (real, not synthetic).
-* **Pre-onboarded** → wallet endpoints return ``wallet_status='pending_kyc'``
-  with every numeric field set to ``0`` (so the frontend never displays a
-  fake "withdrawable balance" for an unonboarded merchant). The
-  Transactions tab still lists payments (just without a per-row split).
-
-Tenant isolation
-----------------
-Every query hard-filters by ``merchant_id = $1::uuid``.
-``rzp_route_accounts`` is read via ``get_service_connection`` because it
-lives outside per-tenant RLS scope; everything else uses the RLS-bound
-``get_connection``.
-"""
 from __future__ import annotations
 
 import csv
 import io
 import json
-from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from app.core.database import get_connection, get_service_connection
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.logging import get_logger
+from app.services.razorpay.fee_policy import reporting_breakdown, rupees_to_paise
+from app.services.razorpay.finance_queries import PAYMENTS_CTE, SETTLEMENTS_CTE
 
 logger = get_logger(__name__)
 
@@ -55,25 +30,12 @@ logger = get_logger(__name__)
 _Q2 = Decimal("0.01")
 
 
-# Synthetic split — used ONLY for pre-onboarded merchants where there is no
-# transfer row to read from. Once a merchant is Route-active, commission is
-# derived from the actual transfer amount, not from this constant.
-# Mirrors statement_service.TOTAL_DEDUCTION_RATE: 1.75% + 18% GST = 2.065%.
-_LEGACY_COMMISSION_RATE = Decimal("0.020650")   # 2.065% total gross deduction
-_LEGACY_MERCHANT_RATE   = Decimal("0.979350")   # merchant nets 97.935%
-
-
-# Local POS payment methods that bypass Razorpay entirely. Stored in the
-# `payments` table; settled the moment they're recorded (no clearing).
-_CASH_METHODS = ("cash", "counter", "cod")
-
-
 # Statement entry categories (spec-mandated names).
-ENTRY_PAYMENT_RECEIVED      = "PAYMENT_RECEIVED"
-ENTRY_COMMISSION_DEDUCTED   = "COMMISSION_DEDUCTED"
-ENTRY_TRANSFER_CREATED      = "TRANSFER_CREATED"
-ENTRY_SETTLEMENT_PROCESSED  = "SETTLEMENT_PROCESSED"
-ENTRY_REFUND                = "REFUND"
+ENTRY_PAYMENT_RECEIVED = "PAYMENT_RECEIVED"
+ENTRY_COMMISSION_DEDUCTED = "COMMISSION_DEDUCTED"
+ENTRY_TRANSFER_CREATED = "TRANSFER_CREATED"
+ENTRY_SETTLEMENT_PROCESSED = "SETTLEMENT_PROCESSED"
+ENTRY_REFUND = "REFUND"
 
 
 # ─────────────────────────── helpers ──────────────────────────────────────
@@ -91,13 +53,91 @@ def _q(x: Decimal) -> Decimal:
     return x.quantize(_Q2, rounding=ROUND_HALF_UP)
 
 
-def _legacy_split(gross_rupees: Decimal) -> tuple[Decimal, Decimal]:
-    """Synthetic 95/5 fallback for merchants without a transfer record."""
-    if gross_rupees <= 0:
-        return Decimal("0.00"), Decimal("0.00")
-    merchant = _q(gross_rupees * _LEGACY_MERCHANT_RATE)
-    commission = _q(gross_rupees - merchant)
-    return merchant, commission
+async def _allocation_totals(conn, merchant_id, from_date=None, to_date=None):
+    """Historical transfers or frozen entitlements, never today's rate × lifetime sales.
+
+    Refunds are charged in the original merchant proportion. Missing historical
+    allocations are explicitly counted for reconciliation instead of fabricated.
+    """
+    return await conn.fetchrow(
+        """
+        WITH allocated AS (
+          SELECT p.razorpay_payment_id, p.amount_paise,
+                 COALESCE(a.merchant_paise,t.amount_paise) AS merchant_paise,
+                 COALESCE(r.refunded,0) AS refunded
+          FROM rzp_payments p
+          LEFT JOIN rzp_route_allocations a ON a.razorpay_payment_id=p.razorpay_payment_id AND a.merchant_id=p.merchant_id
+          LEFT JOIN LATERAL (
+            SELECT SUM(amount_paise)::bigint AS amount_paise FROM rzp_route_transfers t
+            WHERE t.razorpay_payment_id=p.razorpay_payment_id AND t.merchant_id=p.merchant_id
+              AND t.status::text <> 'failed'
+          ) t ON true
+          LEFT JOIN LATERAL (
+            SELECT SUM(amount_paise)::bigint AS refunded FROM rzp_refunds r
+            WHERE r.razorpay_payment_id=p.razorpay_payment_id AND r.merchant_id=p.merchant_id AND r.status='processed'
+          ) r ON true
+          WHERE p.merchant_id=$1::uuid AND p.captured=true
+            AND ($2::date IS NULL OR (COALESCE(p.captured_at,p.created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2)
+            AND ($3::date IS NULL OR (COALESCE(p.captured_at,p.created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3)
+        )
+        SELECT COALESCE(SUM(merchant_paise),0)::bigint AS merchant_paise,
+               COALESCE(SUM(amount_paise-merchant_paise),0)::bigint AS deduction_paise,
+               COALESCE(SUM(FLOOR(LEAST(refunded,amount_paise)::numeric * merchant_paise / NULLIF(amount_paise,0))),0)::bigint AS refund_share_paise,
+               COUNT(*) FILTER (WHERE merchant_paise IS NULL)::int AS unresolved_payments
+        FROM allocated
+        """,
+        merchant_id,
+        from_date,
+        to_date,
+    )
+
+
+async def _refund_allocations(conn, merchant_id, from_date=None, to_date=None):
+    return await conn.fetch(
+        """
+        WITH refunds AS (
+          SELECT r.*, p.amount_paise AS gross,
+                 COALESCE(a.merchant_paise,t.merchant_paise) AS merchant_paise,
+                 SUM(r.amount_paise) OVER (PARTITION BY r.razorpay_payment_id
+                     ORDER BY COALESCE(r.processed_at,r.created_at),r.refund_id) AS cumulative
+          FROM rzp_refunds r
+          JOIN rzp_payments p ON p.razorpay_payment_id=r.razorpay_payment_id AND p.merchant_id=r.merchant_id
+          LEFT JOIN rzp_route_allocations a ON a.razorpay_payment_id=r.razorpay_payment_id AND a.merchant_id=r.merchant_id
+          LEFT JOIN LATERAL (
+            SELECT SUM(amount_paise) AS merchant_paise FROM rzp_route_transfers t
+            WHERE t.razorpay_payment_id=r.razorpay_payment_id AND t.merchant_id=r.merchant_id AND t.status::text<>'failed'
+          ) t ON true
+          WHERE r.merchant_id=$1::uuid AND r.status='processed' AND p.captured=true
+        )
+        SELECT *, (FLOOR(LEAST(cumulative,gross)*merchant_paise/NULLIF(gross,0))
+                 - FLOOR(LEAST(cumulative-amount_paise,gross)*merchant_paise/NULLIF(gross,0)))::bigint AS merchant_refund_share
+        FROM refunds
+        WHERE ($2::date IS NULL OR (COALESCE(processed_at,created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2)
+          AND ($3::date IS NULL OR (COALESCE(processed_at,created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3)
+        """,
+        merchant_id,
+        from_date,
+        to_date,
+    )
+
+
+@asynccontextmanager
+async def _finance_connection(conn=None):
+    if conn is not None:
+        yield conn
+    else:
+        async with get_connection() as acquired:
+            yield acquired
+
+
+def _validate_window(first, last):
+    if first is not None and last is not None and first > last:
+        raise ValidationError("from_date must be <= to_date")
+
+
+def _validate_page(limit, offset):
+    if not 1 <= limit <= 10000 or offset < 0:
+        raise ValidationError("limit must be 1..10000 and offset must be non-negative")
 
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:
@@ -188,179 +228,141 @@ class MerchantFinanceService:
             )
         return dict(row) if row else None
 
-    @staticmethod
-    def _is_active(linked: Optional[dict]) -> bool:
-        # Route accounts stay status='created' forever; activation comes
-        # from the route product flipping to 'activated'. Account is
-        # active iff: gateway id present, account not suspended, and
-        # product activated.
-        if not linked or not linked.get("linked_account_id"):
-            return False
-        if (linked.get("status") or "").lower() == "suspended":
-            return False
-        return (linked.get("route_product_status") or "").lower() == "activated"
-
-    def _pending_wallet(
-        self, merchant_id: str, linked: Optional[dict],
-        *, from_date: Optional[date], to_date: Optional[date],
-    ) -> dict:
-        """Zeroed-out wallet response for pre-onboarded / suspended merchants.
-
-        Every key in the activated response is present so the frontend
-        never sees a missing field; only the numbers change.
-        """
+    async def fee_summary(self, merchant_id: str, *, from_date=None, to_date=None, branch_id=None) -> dict:
+        merchant_id = _require_merchant(merchant_id)
+        _validate_window(from_date, to_date)
+        async with get_connection() as conn:
+            rows = await conn.fetch(
+                PAYMENTS_CTE + "SELECT * FROM payment_rows", merchant_id, from_date, to_date, branch_id
+            )
+        totals = {
+            key: Decimal("0") for key in ("total_deduction", "razorpay_cut", "bittu_fee", "gst_on_fee", "platform_loss")
+        }
+        missing_fee = missing_allocation = 0
+        for row in rows:
+            if row["merchant_paise"] is None:
+                missing_allocation += 1
+                continue
+            totals["total_deduction"] += _money(row["amount_paise"] - row["merchant_paise"])
+            if row["fee_paise"] is None:
+                missing_fee += 1
+                continue
+            split = reporting_breakdown(
+                _money(row["amount_paise"]),
+                method=row["method"],
+                source=row["source"],
+                merchant_paise=int(row["merchant_paise"]),
+                actual_gateway_charges=_money(row["fee_paise"]),
+            )
+            for key in ("razorpay_cut", "bittu_fee", "gst_on_fee", "platform_loss"):
+                totals[key] += split[key]
+        complete = missing_fee == 0 and missing_allocation == 0
         return {
-            "merchant_id":         merchant_id,
-            "wallet_status":       _wallet_status_for((linked or {}).get("status"), (linked or {}).get("route_product_status")),
-            "kyc_status":          (linked or {}).get("kyc_status"),
-            "linked_account_id":   (linked or {}).get("linked_account_id"),
-            "gross_sales":         0.0,
-            "settled_amount":      0.0,
-            "platform_commission": 0.0,
-            "pending_settlement":  0.0,
-            "refunds":             0.0,
-            "available_balance":   0.0,
-            "transaction_count":   0,
-            "currency":            "INR",
-            "window": {
-                "from": from_date.isoformat() if from_date else None,
-                "to":   to_date.isoformat()   if to_date   else None,
+            **{
+                key: float(value) if (complete or key == "total_deduction" and missing_allocation == 0) else None
+                for key, value in totals.items()
             },
+            "known_subtotals": {key: float(value) for key, value in totals.items()},
+            "fee_breakdown_complete": complete,
+            "missing_gateway_fee_count": missing_fee,
+            "unresolved_payment_count": missing_allocation,
+            "source": "razorpay_route_mirror",
+            "basis": "captured_payments_before_refund_adjustments",
         }
 
     # ── wallet snapshot ──────────────────────────────────────────────────
 
-    async def wallet_snapshot(
-        self,
-        merchant_id: str,
-        *,
-        from_date: Optional[date] = None,
-        to_date: Optional[date] = None,
-    ) -> dict:
+    async def wallet_snapshot(self, merchant_id: str, *, from_date=None, to_date=None, branch_id=None) -> dict:
+        """Activity in the requested window; balances are lifetime through its end."""
         merchant_id = _require_merchant(merchant_id)
+        _validate_window(from_date, to_date)
         linked = await self._linked_account(merchant_id)
-        # NOTE: we no longer short-circuit on activation here. Payments can
-        # be captured (on the platform account) before the merchant's
-        # linked account is fully activated — we still owe them their
-        # share. We always project from the local mirror; wallet_status
-        # below reports the activation state separately so the FE can
-        # decide whether to surface settlement timelines.
-
         async with get_connection() as conn:
-            # Gross captured payments (context only — does NOT contribute
-            # to merchant's available balance; what matters is transfers).
-            gross_row = await conn.fetchrow(
-                """
-                SELECT COALESCE(SUM(amount_paise), 0)::bigint AS gross_paise,
-                       COUNT(*)::bigint                        AS tx_count
-                FROM rzp_payments
-                WHERE merchant_id = $1::uuid
-                  AND status      = 'captured'
-                  AND ($2::date IS NULL OR (COALESCE(captured_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
-                  AND ($3::date IS NULL OR (COALESCE(captured_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
-                """,
-                merchant_id, from_date, to_date,
-            )
-            # Real money that left Bittu master → merchant's linked account.
-            transfer_paise = await conn.fetchval(
-                """
-                SELECT COALESCE(SUM(amount_paise), 0)::bigint
-                FROM rzp_route_transfers
-                WHERE merchant_id = $1::uuid
-                  AND status      IN ('created', 'processed')
-                  AND ($2::date IS NULL OR (COALESCE(processed_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
-                  AND ($3::date IS NULL OR (COALESCE(processed_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
-                """,
-                merchant_id, from_date, to_date,
-            )
-            # Net of merchant share that has been settled (i.e. credit -
-            # debit on each line of rzp_settlement_payments for this
-            # merchant's linked-account settlements).
-            settled_net_paise = await conn.fetchval(
-                """
-                SELECT COALESCE(SUM(sp.credit_paise - sp.debit_paise), 0)::bigint
-                FROM rzp_settlement_payments sp
-                LEFT JOIN rzp_settlements s ON s.settlement_id = sp.settlement_id
-                WHERE sp.merchant_id = $1::uuid
-                  AND COALESCE(s.status::text, 'processed') = 'processed'
-                  AND ($2::date IS NULL OR COALESCE((s.settled_at AT TIME ZONE 'Asia/Kolkata')::date, (sp.created_at AT TIME ZONE 'Asia/Kolkata')::date) >= $2::date)
-                  AND ($3::date IS NULL OR COALESCE((s.settled_at AT TIME ZONE 'Asia/Kolkata')::date, (sp.created_at AT TIME ZONE 'Asia/Kolkata')::date) <= $3::date)
-                """,
-                merchant_id, from_date, to_date,
-            )
-            refund_paise = await conn.fetchval(
-                """
-                SELECT COALESCE(SUM(amount_paise), 0)::bigint
-                FROM rzp_refunds
-                WHERE merchant_id = $1::uuid
-                  AND status      IN ('pending', 'processed')
-                  AND ($2::date IS NULL OR (COALESCE(processed_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
-                  AND ($3::date IS NULL OR (COALESCE(processed_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
-                """,
-                merchant_id, from_date, to_date,
-            )
-            # Cash / counter / COD payments live in the local `payments`
-            # table and never touch Razorpay. They count toward gross
-            # sales but bypass settlement entirely (the cash is already
-            # in the merchant's till).
-            cash_row = await conn.fetchrow(
-                """
-                SELECT COALESCE(SUM(amount), 0)::numeric(14,2) AS cash_amount,
-                       COUNT(*)::bigint                         AS cash_count
-                FROM payments
-                WHERE restaurant_id = $1::uuid
-                  AND status        = 'completed'
-                  AND LOWER(method)  = ANY($4::text[])
-                  AND ($2::date IS NULL OR (COALESCE(paid_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
-                  AND ($3::date IS NULL OR (COALESCE(paid_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
-                """,
-                merchant_id, from_date, to_date, list(_CASH_METHODS),
-            )
 
-        online_gross = _money(gross_row["gross_paise"])
-        cash_gross   = Decimal(str(cash_row["cash_amount"] or 0)).quantize(_Q2, rounding=ROUND_HALF_UP)
-        gross        = online_gross + cash_gross
-        transfers    = _money(transfer_paise or 0)
-        settled      = _money(settled_net_paise or 0)
-        refunds      = _money(refund_paise or 0)
+            async def activity(first):
+                return await conn.fetchrow(
+                    PAYMENTS_CTE
+                    + """
+                    SELECT COALESCE(SUM(amount_paise),0)::bigint AS gross,
+                           COALESCE(SUM(amount_paise) FILTER (WHERE source='cash'),0)::bigint AS cash,
+                           COALESCE(SUM(amount_paise) FILTER (WHERE source='direct'),0)::bigint AS direct,
+                           COALESCE(SUM(amount_paise) FILTER (WHERE source='razorpay'),0)::bigint AS online,
+                           COALESCE(SUM(merchant_paise) FILTER (WHERE source='razorpay'),0)::bigint AS entitlement,
+                           COALESCE(SUM(amount_paise-merchant_paise) FILTER (WHERE source='razorpay'),0)::bigint AS deduction,
+                           COALESCE(SUM(transfer_paise),0)::bigint AS transferred,
+                           COALESCE(SUM(refunded_paise),0)::bigint AS refunds,
+                           COALESCE(SUM(refunded_paise) FILTER (WHERE source='cash'),0)::bigint AS cash_refunds,
+                           COALESCE(SUM(refunded_paise) FILTER (WHERE source='direct'),0)::bigint AS direct_refunds,
+                           COALESCE(SUM(FLOOR(LEAST(refunded_paise,amount_paise)::numeric * merchant_paise / NULLIF(amount_paise,0)))
+                             FILTER (WHERE source='razorpay'),0)::bigint AS merchant_refunds,
+                           COUNT(*)::bigint AS tx_count,
+                           COUNT(*) FILTER (WHERE merchant_paise IS NULL)::bigint AS unresolved
+                    FROM payment_rows
+                """,
+                    merchant_id,
+                    first,
+                    to_date,
+                    branch_id,
+                )
 
-        # Merchant's share of *online* gross is gross minus the 2.065%
-        # total deduction (1.75% + GST). Cash never has commission.
-        merchant_share_online = (online_gross * _LEGACY_MERCHANT_RATE).quantize(Decimal("0.01"))
-        commission = online_gross - merchant_share_online
-        if commission < 0:
-            commission = Decimal("0.00")
+            window = await activity(from_date)
+            lifetime = await activity(None) if from_date is not None else window
 
-        # Pending = online money owed to merchant but not yet sent to
-        # their bank. Cash is already with them so it is NOT pending.
-        pending = merchant_share_online - settled - refunds
-        if pending < 0:
-            pending = Decimal("0.00")
+            async def bank(first):
+                return await conn.fetchval(
+                    SETTLEMENTS_CTE
+                    + """
+                    SELECT COALESCE(SUM(merchant_paise),0)::bigint FROM scoped_settlements
+                    WHERE status='processed'
+                """,
+                    merchant_id,
+                    first,
+                    to_date,
+                    branch_id,
+                )
 
-        # Available = what's already at the linked account but not yet
-        # swept to the bank (only meaningful once activation + transfers).
-        available = transfers - settled - refunds
-        if available < 0:
-            available = Decimal("0.00")
-
+            settled_window = await bank(from_date)
+            settled = await bank(None) if from_date is not None else settled_window
+        pending = lifetime["entitlement"] - settled - lifetime["merchant_refunds"]
+        available = lifetime["transferred"] - settled - lifetime["merchant_refunds"]
         return {
-            "merchant_id":         merchant_id,
-            "wallet_status":       _wallet_status_for((linked or {}).get("status"), (linked or {}).get("route_product_status")),
-            "kyc_status":          (linked or {}).get("kyc_status"),
-            "linked_account_id":   (linked or {}).get("linked_account_id"),
-            "gross_sales":         float(gross),
-            "cash_sales":          float(cash_gross),
-            "online_sales":        float(online_gross),
-            "settled_amount":      float(_q(settled + cash_gross)),
-            "platform_commission": float(_q(commission)),
-            "pending_settlement":  float(_q(pending)),
-            "refunds":             float(refunds),
-            "available_balance":   float(_q(available)),
-            "transaction_count":   int(gross_row["tx_count"]) + int(cash_row["cash_count"] or 0),
-            "currency":            "INR",
+            "merchant_id": merchant_id,
+            "wallet_status": _wallet_status_for(
+                (linked or {}).get("status"), (linked or {}).get("route_product_status")
+            ),
+            "kyc_status": (linked or {}).get("kyc_status"),
+            "linked_account_id": (linked or {}).get("linked_account_id"),
+            "gross_sales": float(_money(window["gross"])),
+            "cash_sales": float(_money(window["cash"])),
+            "direct_sales": float(_money(window["direct"])),
+            "online_sales": float(_money(window["online"])),
+            "settled_amount": float(_money(
+                settled_window + window["cash"] - window["cash_refunds"] + window["direct"] - window["direct_refunds"]
+            )),
+            "online_settled_amount": float(_money(settled_window)),
+            "online_settled_lifetime": float(_money(settled)),
+            "cash_balance": float(_money(lifetime["cash"] - lifetime["cash_refunds"])),
+            "cash_refunds": float(_money(window["cash_refunds"])),
+            "direct_balance": float(_money(lifetime["direct"] - lifetime["direct_refunds"])),
+            "direct_refunds": float(_money(window["direct_refunds"])),
+            "platform_commission": float(_money(window["deduction"])),
+            "total_deduction": float(_money(window["deduction"])),
+            "deduction_basis": "online_only",
+            "merchant_refund_share": float(_money(lifetime["merchant_refunds"])),
+            "unresolved_payment_count": int(lifetime["unresolved"]),
+            "merchant_earned": float(_money(lifetime["entitlement"])),
+            "transferred_to_linked": float(_money(lifetime["transferred"])),
+            "pending_settlement": float(_money(max(pending, 0))),
+            "balance_discrepancy": float(_money(min(pending, 0))),
+            "refunds": float(_money(window["refunds"])),
+            "available_balance": float(_money(max(available, 0))),
+            "transaction_count": int(window["tx_count"]),
+            "currency": "INR",
+            "source": "razorpay_route_mirror",
+            "balance_scope": "lifetime_through_to_date",
             "window": {
                 "from": from_date.isoformat() if from_date else None,
-                "to":   to_date.isoformat()   if to_date   else None,
+                "to": to_date.isoformat() if to_date else None,
             },
         }
 
@@ -368,244 +370,146 @@ class MerchantFinanceService:
 
     @staticmethod
     def _project_payment(row: dict) -> dict:
+        # Accept the previous query shape for compatibility with internal callers.
+        pid = row.get("payment_id") or row.get("razorpay_payment_id")
+        entitlement = row.get("merchant_paise", row.get("transfer_paise"))
         gross = _money(row["amount_paise"])
-        transfer_paise = row.get("transfer_paise")
-        transfer_id    = row.get("transfer_id")
-        if transfer_paise is not None:
-            merchant   = _money(transfer_paise)
-            commission = gross - merchant
-            if commission < 0:
-                commission = Decimal("0.00")
-            commission = _q(commission)
-        else:
-            # Pre-Route fallback (no transfer row yet) — show gross only;
-            # don't fabricate a 95/5 split that doesn't match real money.
-            merchant   = Decimal("0.00")
-            commission = Decimal("0.00")
+        source = row.get("source") or "razorpay"
+        local = source in ("cash", "direct")
         notes = _as_dict(row.get("notes"))
+        fee = row.get("fee_paise")
+        split = (
+            reporting_breakdown(
+                gross,
+                method=row.get("method"),
+                source=source,
+                actual_gateway_charges=_money(fee) if fee is not None else None,
+                merchant_paise=int(entitlement),
+            )
+            if entitlement is not None
+            else None
+        )
+        known_fee = split is not None and not split["gateway_charges_estimated"]
+        deduction = gross - _money(entitlement) if entitlement is not None else None
         return {
-            "transaction_id":   row["razorpay_payment_id"],
-            "payment_id":       row["razorpay_payment_id"],
-            "transfer_id":      transfer_id,
-            "order_id":         row.get("razorpay_order_id"),
-            "internal_order_id": (
-                str(row["internal_order_id"]) if row.get("internal_order_id") else None
-            ),
-            "amount":           float(gross),
-            "gross_amount":     float(gross),
-            "merchant_amount":  float(merchant),
-            "commission_amount": float(commission),
-            "currency":         row.get("currency") or "INR",
-            "status":           row["status"],
-            "payment_method":   row.get("method"),
+            "transaction_id": pid,
+            "payment_id": pid,
+            "transfer_id": row.get("transfer_id"),
+            "order_id": row.get("razorpay_order_id"),
+            "internal_order_id": str(row["internal_order_id"]) if row.get("internal_order_id") else None,
+            "amount": float(gross),
+            "gross_amount": float(gross),
+            "merchant_amount": float(_money(entitlement)) if entitlement is not None else None,
+            "commission_amount": float(deduction) if deduction is not None else None,
+            "total_deduction": float(deduction) if deduction is not None else None,
+            "platform_commission": float(deduction) if deduction is not None else None,
+            "bittu_fee": float(split["bittu_fee"]) if known_fee else None,
+            "gst_on_fee": float(split["gst_on_fee"]) if known_fee else None,
+            "platform_loss": float(split["platform_loss"]) if known_fee else None,
+            "fee_basis": split["fee_basis"] if split is not None else None,
+            "fee_breakdown_complete": known_fee,
+            "allocation_status": "resolved" if entitlement is not None else "unresolved",
+            "currency": row.get("currency") or "INR",
+            "status": row.get("settlement_state") or row.get("status") or row.get("payment_status"),
+            "settlement_status": row.get("settlement_state") or "pending",
+            "settlement_id": row.get("settlement_id"),
+            "payment_method": row.get("method"),
             "method_detail": {
-                "vpa":     row.get("upi_vpa"),
-                "bank":    row.get("bank_reference"),
-                "wallet":  None,
+                "vpa": row.get("upi_vpa"),
+                "bank": row.get("bank_reference"),
+                "wallet": None,
                 "card_id": None,
             },
-            "customer_email":   notes.get("customer_email"),
+            "customer_name": notes.get("customer_name"),
+            "customer_email": notes.get("customer_email"),
             "customer_contact": notes.get("customer_contact"),
-            "customer_name":    notes.get("customer_name"),
-            "captured":         bool(row.get("captured")),
-            "captured_at":      _iso(row.get("captured_at")),
-            "created_at":       _iso(row.get("created_at")),
-            "fee":              float(_money(row.get("fee_paise"))),
-            "tax":              float(_money(row.get("tax_paise"))),
-            "description":      notes.get("description"),
-            "notes":            notes,
-            "error_code":       row.get("error_code"),
-            "error_description": row.get("error_description"),
-            "source":           "razorpay",
-        }
-
-    @staticmethod
-    def _project_cash_payment(row: dict) -> dict:
-        """Project a row from the local `payments` table (cash / counter /
-        COD) into the same shape as a Razorpay capture, so the FE can list
-        them on the statement screen uniformly. Cash settles instantly:
-        merchant_amount = gross, no commission, no transfer.
-        """
-        amount = Decimal(str(row.get("amount") or 0)).quantize(_Q2, rounding=ROUND_HALF_UP)
-        method = (row.get("method") or "cash").lower()
-        pid = str(row.get("id"))
-        oid = row.get("order_id")
-        return {
-            "transaction_id":    pid,
-            "payment_id":        pid,
-            "transfer_id":       None,
-            "order_id":          None,
-            "internal_order_id": str(oid) if oid else None,
-            "amount":            float(amount),
-            "gross_amount":      float(amount),
-            "merchant_amount":   float(amount),
-            "commission_amount": 0.0,
-            "currency":          row.get("currency") or "INR",
-            # FE treats anything other than pending/processing/sent_to_bank
-            # as "non-pending"; cash is effectively already settled.
-            "status":            "settled",
-            "settlement_status": "settled",
-            "payment_method":    method,
-            "method_detail":     {"vpa": None, "bank": None, "wallet": None, "card_id": None},
-            "customer_email":    None,
-            "customer_contact":  None,
-            "customer_name":     None,
-            "captured":          True,
-            "captured_at":       _iso(row.get("paid_at") or row.get("created_at")),
-            "created_at":        _iso(row.get("created_at")),
-            "fee":               0.0,
-            "tax":               0.0,
-            "description":       None,
-            "notes":             {},
-            "error_code":        None,
-            "error_description": None,
-            "source":            "cash",
-            "channel":           "cash",
+            "captured": True,
+            "captured_at": _iso(row.get("paid_at") or row.get("captured_at")),
+            "created_at": _iso(row.get("paid_at") or row.get("created_at")),
+            "fee": float(_money(fee)) if fee is not None else None,
+            "tax": float(_money(row.get("tax_paise"))) if row.get("tax_paise") is not None else None,
+            "refund_amount": float(_money(row.get("refunded_paise"))),
+            "notes": notes,
+            "source": source,
+            "payment_kind": source,
+            "channel": "online" if source == "razorpay" else source,
         }
 
     async def list_transactions(
         self,
         merchant_id: str,
         *,
-        from_date: Optional[date] = None,
-        to_date: Optional[date] = None,
-        payment_method: Optional[str] = None,
-        min_amount: Optional[float] = None,
-        max_amount: Optional[float] = None,
-        search: Optional[str] = None,
-        limit: int = 50,
-        offset: int = 0,
+        from_date=None,
+        to_date=None,
+        payment_method=None,
+        min_amount=None,
+        max_amount=None,
+        search=None,
+        limit=50,
+        offset=0,
+        branch_id=None,
+        settlement_status=None,
+        sort_by="created_at",
+        sort_dir="desc",
     ) -> dict:
         merchant_id = _require_merchant(merchant_id)
-        min_paise = int(round(min_amount * 100)) if min_amount is not None else None
-        max_paise = int(round(max_amount * 100)) if max_amount is not None else None
-        like = f"%{search.strip()}%" if search and search.strip() else None
-
+        _validate_window(from_date, to_date)
+        _validate_page(limit, offset)
+        try:
+            low = rupees_to_paise(min_amount) if min_amount is not None else None
+            high = rupees_to_paise(max_amount) if max_amount is not None else None
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+        if low is not None and high is not None and low > high:
+            raise ValidationError("min_amount must be <= max_amount")
+        state = {"processed": "settled", "sent_to_bank": "processing"}.get(settlement_status, settlement_status)
+        where = """
+            WHERE ($5::text IS NULL OR LOWER(method)=$5 OR ($5='online' AND source='razorpay')
+                   OR ($5 IN ('cash','direct','razorpay') AND source=$5))
+              AND ($6::bigint IS NULL OR amount_paise >= $6)
+              AND ($7::bigint IS NULL OR amount_paise <= $7)
+              AND ($8::text IS NULL OR payment_id ILIKE $8 OR razorpay_order_id ILIKE $8
+                   OR internal_order_id::text ILIKE $8 OR notes->>'customer_name' ILIKE $8
+                   OR notes->>'customer_email' ILIKE $8 OR notes->>'customer_contact' ILIKE $8)
+              AND ($9::text IS NULL OR settlement_state=$9 OR ($9='unsettled' AND source='razorpay' AND settlement_state NOT IN ('settled','refunded')))
+        """
+        params = [
+            merchant_id,
+            from_date,
+            to_date,
+            branch_id,
+            payment_method.strip().lower() if payment_method else None,
+            low,
+            high,
+            f"%{search.strip()}%" if search and search.strip() else None,
+            state,
+        ]
+        sort = {
+            "created_at": "paid_at",
+            "gross_amount": "amount_paise",
+            "amount": "amount_paise",
+            "net_amount": "merchant_paise",
+            "payment_method": "method",
+        }.get(sort_by, "paid_at")
+        direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
         async with get_connection() as conn:
-            total = await conn.fetchval(
-                """
-                SELECT COUNT(*)
-                FROM rzp_payments
-                WHERE merchant_id = $1::uuid
-                  AND status      = 'captured'
-                  AND ($2::date  IS NULL OR (COALESCE(captured_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
-                  AND ($3::date  IS NULL OR (COALESCE(captured_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
-                  AND ($4::text  IS NULL OR method = $4::text)
-                  AND ($5::bigint IS NULL OR amount_paise >= $5::bigint)
-                  AND ($6::bigint IS NULL OR amount_paise <= $6::bigint)
-                  AND ($7::text  IS NULL
-                       OR razorpay_payment_id ILIKE $7
-                       OR razorpay_order_id   ILIKE $7
-                       OR upi_vpa             ILIKE $7
-                       OR (notes ->> 'customer_email')   ILIKE $7
-                       OR (notes ->> 'customer_contact') ILIKE $7
-                       OR (notes ->> 'customer_name')    ILIKE $7)
-                """,
-                merchant_id, from_date, to_date,
-                payment_method, min_paise, max_paise, like,
-            )
-            # LATERAL pick of the matching transfer for this payment (if
-            # any). For pre-onboarded merchants this just returns NULLs and
-            # _project_payment falls back to gross-only display.
+            total = await conn.fetchval(PAYMENTS_CTE + "SELECT COUNT(*) FROM payment_rows " + where, *params)
             rows = await conn.fetch(
-                """
-                SELECT p.razorpay_payment_id, p.razorpay_order_id, p.internal_order_id,
-                       p.amount_paise, p.fee_paise, p.tax_paise, p.currency,
-                       p.method, p.upi_vpa, p.bank_reference,
-                       p.status::text AS status, p.captured, p.captured_at,
-                       p.error_code, p.error_description, p.notes, p.created_at,
-                       t.transfer_id, t.amount_paise AS transfer_paise
-                FROM rzp_payments p
-                LEFT JOIN LATERAL (
-                    SELECT transfer_id, amount_paise
-                    FROM rzp_route_transfers
-                    WHERE razorpay_payment_id = p.razorpay_payment_id
-                      AND merchant_id         = p.merchant_id
-                      AND status              IN ('created', 'processed')
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                ) t ON TRUE
-                WHERE p.merchant_id = $1::uuid
-                  AND p.status      = 'captured'
-                  AND ($2::date  IS NULL OR (COALESCE(p.captured_at, p.created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
-                  AND ($3::date  IS NULL OR (COALESCE(p.captured_at, p.created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
-                  AND ($4::text  IS NULL OR p.method = $4::text)
-                  AND ($5::bigint IS NULL OR p.amount_paise >= $5::bigint)
-                  AND ($6::bigint IS NULL OR p.amount_paise <= $6::bigint)
-                  AND ($7::text  IS NULL
-                       OR p.razorpay_payment_id ILIKE $7
-                       OR p.razorpay_order_id   ILIKE $7
-                       OR p.upi_vpa             ILIKE $7
-                       OR (p.notes ->> 'customer_email')   ILIKE $7
-                       OR (p.notes ->> 'customer_contact') ILIKE $7
-                       OR (p.notes ->> 'customer_name')    ILIKE $7)
-                ORDER BY COALESCE(p.captured_at, p.created_at) DESC, p.razorpay_payment_id DESC
-                LIMIT $8 OFFSET $9
-                """,
-                merchant_id, from_date, to_date,
-                payment_method, min_paise, max_paise, like,
-                limit, offset,
+                PAYMENTS_CTE
+                + "SELECT * FROM payment_rows "
+                + where
+                + f" ORDER BY {sort} {direction} NULLS LAST, payment_id {direction} LIMIT $10 OFFSET $11",
+                *params,
+                limit,
+                offset,
             )
-
-            # Also fetch cash / counter / COD payments from the local
-            # `payments` table so the statement screen shows them
-            # alongside online captures. Skip when caller asked for a
-            # Razorpay-specific method (upi/card/netbanking/wallet).
-            include_cash = payment_method is None or payment_method.lower() in _CASH_METHODS
-            cash_rows: list = []
-            cash_total = 0
-            if include_cash:
-                cash_total = await conn.fetchval(
-                    """
-                    SELECT COUNT(*)
-                    FROM payments
-                    WHERE restaurant_id = $1::uuid
-                      AND status        = 'completed'
-                      AND LOWER(method)  = ANY($8::text[])
-                      AND ($2::date IS NULL OR (COALESCE(paid_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
-                      AND ($3::date IS NULL OR (COALESCE(paid_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
-                      AND ($4::text IS NULL OR LOWER(method) = $4::text)
-                      AND ($5::bigint IS NULL OR (amount * 100)::bigint >= $5::bigint)
-                      AND ($6::bigint IS NULL OR (amount * 100)::bigint <= $6::bigint)
-                      AND ($7::text IS NULL OR id::text ILIKE $7 OR order_id::text ILIKE $7)
-                    """,
-                    merchant_id, from_date, to_date,
-                    payment_method, min_paise, max_paise, like,
-                    list(_CASH_METHODS),
-                ) or 0
-                cash_rows = await conn.fetch(
-                    """
-                    SELECT id, order_id, method, amount, currency, status,
-                           paid_at, created_at
-                    FROM payments
-                    WHERE restaurant_id = $1::uuid
-                      AND status        = 'completed'
-                      AND LOWER(method)  = ANY($8::text[])
-                      AND ($2::date IS NULL OR (COALESCE(paid_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
-                      AND ($3::date IS NULL OR (COALESCE(paid_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
-                      AND ($4::text IS NULL OR LOWER(method) = $4::text)
-                      AND ($5::bigint IS NULL OR (amount * 100)::bigint >= $5::bigint)
-                      AND ($6::bigint IS NULL OR (amount * 100)::bigint <= $6::bigint)
-                      AND ($7::text IS NULL OR id::text ILIKE $7 OR order_id::text ILIKE $7)
-                    ORDER BY COALESCE(paid_at, created_at) DESC
-                    LIMIT $9 OFFSET $10
-                    """,
-                    merchant_id, from_date, to_date,
-                    payment_method, min_paise, max_paise, like,
-                    list(_CASH_METHODS),
-                    limit, offset,
-                )
-
-        items = [self._project_payment(dict(r)) for r in rows]
-        items.extend(self._project_cash_payment(dict(r)) for r in cash_rows)
-        # Newest first across both sources.
-        items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
         return {
-            "items":    items,
-            "total":    int(total or 0) + int(cash_total or 0),
-            "limit":    limit,
-            "offset":   offset,
-            "has_more": offset + limit < (int(total or 0) + int(cash_total or 0)),
+            "items": [self._project_payment(dict(r)) for r in rows],
+            "total": int(total or 0),
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + limit < int(total or 0),
+            "source": "razorpay_route_mirror",
         }
 
     # ── settlements list / detail / timeline ─────────────────────────────
@@ -614,704 +518,351 @@ class MerchantFinanceService:
         self,
         merchant_id: str,
         *,
-        status: Optional[str] = None,
-        from_date: Optional[date] = None,
-        to_date: Optional[date] = None,
-        limit: int = 50,
-        offset: int = 0,
+        status=None,
+        from_date=None,
+        to_date=None,
+        limit=50,
+        offset=0,
+        branch_id=None,
+        sort_by="created_at",
+        sort_dir="desc",
     ) -> dict:
         merchant_id = _require_merchant(merchant_id)
+        _validate_window(from_date, to_date)
+        _validate_page(limit, offset)
+        state = {"settled": "processed", "sent_to_bank": "processing"}.get(status, status)
+        params = [merchant_id, from_date, to_date, branch_id, state]
+        where = "WHERE ($5::text IS NULL OR status=$5)"
+        sort = {
+            "created_at": "created_at",
+            "gross_amount": "gross_paise",
+            "net_settlement_amount": "merchant_paise",
+        }.get(sort_by, "created_at")
+        direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
         async with get_connection() as conn:
-            total = await conn.fetchval(
-                """
-                SELECT COUNT(*) FROM (
-                    SELECT sp.settlement_id
-                    FROM rzp_settlement_payments sp
-                    LEFT JOIN rzp_settlements s ON s.settlement_id = sp.settlement_id
-                    WHERE sp.merchant_id = $1::uuid
-                      AND ($2::text IS NULL OR s.status::text = $2::text)
-                      AND ($3::date IS NULL OR COALESCE((s.settled_at AT TIME ZONE 'Asia/Kolkata')::date, (sp.created_at AT TIME ZONE 'Asia/Kolkata')::date) >= $3::date)
-                      AND ($4::date IS NULL OR COALESCE((s.settled_at AT TIME ZONE 'Asia/Kolkata')::date, (sp.created_at AT TIME ZONE 'Asia/Kolkata')::date) <= $4::date)
-                    GROUP BY sp.settlement_id
-                ) g
-                """,
-                merchant_id, status, from_date, to_date,
-            )
+            total = await conn.fetchval(SETTLEMENTS_CTE + "SELECT COUNT(*) FROM scoped_settlements " + where, *params)
             rows = await conn.fetch(
-                """
-                SELECT sp.settlement_id,
-                       COALESCE(SUM(CASE WHEN sp.type = 'payment'
-                                         THEN sp.amount_paise ELSE 0 END), 0)::bigint AS gross_paise,
-                       COALESCE(SUM(CASE WHEN sp.type = 'refund'
-                                         THEN sp.amount_paise ELSE 0 END), 0)::bigint AS refund_paise,
-                       COALESCE(SUM(sp.credit_paise - sp.debit_paise), 0)::bigint     AS merchant_paise,
-                       COALESCE(SUM(sp.fee_paise), 0)::bigint  AS fee_paise,
-                       COALESCE(SUM(sp.tax_paise), 0)::bigint  AS tax_paise,
-                       COUNT(*) FILTER (WHERE sp.type = 'payment')::bigint AS tx_count,
-                       MAX(s.utr)                              AS utr,
-                       COALESCE(MAX(s.status::text), 'pending') AS status,
-                       MAX(s.settled_at)                       AS settled_at,
-                       MIN(sp.created_at)                      AS first_seen_at
-                FROM rzp_settlement_payments sp
-                LEFT JOIN rzp_settlements s ON s.settlement_id = sp.settlement_id
-                WHERE sp.merchant_id = $1::uuid
-                  AND ($2::text IS NULL OR s.status::text = $2::text)
-                  AND ($3::date IS NULL OR COALESCE((s.settled_at AT TIME ZONE 'Asia/Kolkata')::date, (sp.created_at AT TIME ZONE 'Asia/Kolkata')::date) >= $3::date)
-                  AND ($4::date IS NULL OR COALESCE((s.settled_at AT TIME ZONE 'Asia/Kolkata')::date, (sp.created_at AT TIME ZONE 'Asia/Kolkata')::date) <= $4::date)
-                GROUP BY sp.settlement_id
-                ORDER BY COALESCE(MAX(s.settled_at), MIN(sp.created_at)) DESC NULLS LAST
-                LIMIT $5 OFFSET $6
-                """,
-                merchant_id, status, from_date, to_date, limit, offset,
+                SETTLEMENTS_CTE
+                + "SELECT * FROM scoped_settlements "
+                + where
+                + f" ORDER BY {sort} {direction} NULLS LAST, settlement_id {direction} LIMIT $6 OFFSET $7",
+                *params,
+                limit,
+                offset,
             )
-
-        items = [self._project_settlement_row(dict(r), merchant_id) for r in rows]
         return {
-            "items":    items,
-            "total":    int(total or 0),
-            "limit":    limit,
-            "offset":   offset,
+            "items": [self._project_settlement_row(dict(r), merchant_id) for r in rows],
+            "total": int(total or 0),
+            "limit": limit,
+            "offset": offset,
             "has_more": offset + limit < int(total or 0),
+            "source": "razorpay_route_mirror",
         }
 
     @staticmethod
     def _project_settlement_row(row: dict, merchant_id: str) -> dict:
-        gross    = _money(row["gross_paise"])
-        refunds  = _money(row["refund_paise"])
-        merchant = _money(row.get("merchant_paise") or 0)
-        if merchant <= 0:
-            # Defensive: if the settlement-line credit/debit columns are
-            # zero (older recon rows), fall back to (gross - refunds).
-            merchant = gross - refunds
-            if merchant < 0:
-                merchant = Decimal("0.00")
-        commission = gross - refunds - merchant
-        if commission < 0:
-            commission = Decimal("0.00")
+        # Zero or negative net recon amounts are legitimate; never substitute gross.
         return {
-            "settlement_id":     row["settlement_id"],
-            "merchant_id":       merchant_id,
-            "gross_amount":      float(_q(gross - refunds)),
-            "merchant_amount":   float(_q(merchant)),
-            "commission_amount": float(_q(commission)),
-            "refund_amount":     float(refunds),
-            "fees":              float(_money(row.get("fee_paise"))),
-            "tax":               float(_money(row.get("tax_paise"))),
+            "settlement_id": row["settlement_id"],
+            "merchant_id": merchant_id,
+            "gross_amount": float(_money(row.get("gross_paise"))),
+            "merchant_amount": float(_money(row.get("merchant_paise"))),
+            "commission_amount": None,
+            "total_deduction": None,
+            "refund_amount": float(_money(row.get("refund_paise"))),
+            "fees": float(_money(row.get("fee_paise"))),
+            "tax": float(_money(row.get("tax_paise"))),
             "transaction_count": int(row.get("tx_count") or 0),
-            "utr":               row.get("utr"),
-            "status":            row.get("status") or "pending",
-            "settled_at":        _iso(row.get("settled_at")),
-            "created_at":        _iso(row.get("settled_at") or row.get("first_seen_at")),
-            "currency":          "INR",
+            "reconciliation_complete": bool(row.get("line_count"))
+            and row.get("header_amount_paise") is not None
+            and row.get("reconciliation_net_paise") == row["header_amount_paise"],
+            "reconciliation_net_amount": float(_money(row.get("reconciliation_net_paise"))),
+            "utr": row.get("utr"),
+            "status": row.get("status") or "pending",
+            "settled_at": _iso(row.get("settled_at")),
+            "created_at": _iso(row.get("created_at") or row.get("first_seen_at")),
+            "currency": "INR",
+            "source": "razorpay_route_mirror",
         }
 
-    async def get_settlement(self, merchant_id: str, settlement_id: str) -> dict:
+    async def get_settlement(self, merchant_id: str, settlement_id: str, *, branch_id=None) -> dict:
         merchant_id = _require_merchant(merchant_id)
         async with get_connection() as conn:
             header = await conn.fetchrow(
-                """
-                SELECT sp.settlement_id,
-                       COALESCE(SUM(CASE WHEN sp.type = 'payment'
-                                         THEN sp.amount_paise ELSE 0 END), 0)::bigint AS gross_paise,
-                       COALESCE(SUM(CASE WHEN sp.type = 'refund'
-                                         THEN sp.amount_paise ELSE 0 END), 0)::bigint AS refund_paise,
-                       COALESCE(SUM(sp.credit_paise - sp.debit_paise), 0)::bigint     AS merchant_paise,
-                       COALESCE(SUM(sp.fee_paise), 0)::bigint  AS fee_paise,
-                       COALESCE(SUM(sp.tax_paise), 0)::bigint  AS tax_paise,
-                       COUNT(*) FILTER (WHERE sp.type = 'payment')::bigint AS tx_count,
-                       MAX(s.utr)                              AS utr,
-                       COALESCE(MAX(s.status::text), 'pending') AS status,
-                       MAX(s.settled_at)                       AS settled_at,
-                       MIN(sp.created_at)                      AS first_seen_at
-                FROM rzp_settlement_payments sp
-                LEFT JOIN rzp_settlements s ON s.settlement_id = sp.settlement_id
-                WHERE sp.merchant_id = $1::uuid
-                  AND sp.settlement_id = $2
-                GROUP BY sp.settlement_id
-                """,
-                merchant_id, settlement_id,
-            )
-            if not header:
-                raise NotFoundError(f"Settlement {settlement_id} not found for this merchant.")
-
-            lines = await conn.fetch(
-                """
-                SELECT sp.razorpay_payment_id, sp.type, sp.amount_paise,
-                       sp.fee_paise, sp.tax_paise, sp.credit_paise, sp.debit_paise,
-                       sp.created_at,
-                       p.method, p.upi_vpa,
-                       t.transfer_id, t.amount_paise AS transfer_paise
-                FROM rzp_settlement_payments sp
-                LEFT JOIN rzp_payments_index pi
-                       ON pi.razorpay_payment_id = sp.razorpay_payment_id
-                LEFT JOIN rzp_payments p
-                       ON p.id = pi.payment_uuid
-                LEFT JOIN LATERAL (
-                    SELECT transfer_id, amount_paise
-                    FROM rzp_route_transfers
-                    WHERE razorpay_payment_id = sp.razorpay_payment_id
-                      AND merchant_id         = sp.merchant_id
-                      AND status              IN ('created', 'processed')
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                ) t ON TRUE
-                WHERE sp.merchant_id  = $1::uuid
-                  AND sp.settlement_id = $2
-                ORDER BY sp.created_at ASC
-                """,
-                merchant_id, settlement_id,
-            )
-
-        out = self._project_settlement_row(dict(header), merchant_id)
-        transfer_ids: list[str] = []
-        out["payments"] = []
-        for r in lines:
-            tid = r.get("transfer_id")
-            if tid and tid not in transfer_ids:
-                transfer_ids.append(tid)
-            out["payments"].append({
-                "payment_id":  r["razorpay_payment_id"],
-                "transfer_id": tid,
-                "type":        r["type"],
-                "amount":      float(_money(r["amount_paise"])),
-                "fee":         float(_money(r["fee_paise"])),
-                "tax":         float(_money(r["tax_paise"])),
-                "credit":      float(_money(r["credit_paise"])),
-                "debit":       float(_money(r["debit_paise"])),
-                "method":      r.get("method"),
-                "vpa":         r.get("upi_vpa"),
-                "created_at":  _iso(r["created_at"]),
-            })
-        out["transfer_ids"] = transfer_ids
-        return out
-
-    async def settlement_timeline(self, merchant_id: str, settlement_id: str) -> dict:
-        """Lifecycle derived from rzp_settlements.status + settled_at."""
-        merchant_id = _require_merchant(merchant_id)
-        async with get_connection() as conn:
-            exists = await conn.fetchval(
-                """
-                SELECT 1 FROM rzp_settlement_payments
-                WHERE merchant_id = $1::uuid AND settlement_id = $2
-                LIMIT 1
-                """,
-                merchant_id, settlement_id,
-            )
-            if not exists:
-                raise NotFoundError(f"Settlement {settlement_id} not found for this merchant.")
-            meta = await conn.fetchrow(
-                """
-                SELECT status::text AS status, utr, settled_at, created_at
-                FROM rzp_settlements
-                WHERE settlement_id = $1
-                LIMIT 1
-                """,
+                SETTLEMENTS_CTE + "SELECT * FROM scoped_settlements WHERE settlement_id=$5",
+                merchant_id,
+                None,
+                None,
+                branch_id,
                 settlement_id,
             )
+            if not header:
+                raise NotFoundError("settlement", settlement_id)
+            lines = await conn.fetch(
+                """
+                SELECT sp.* FROM rzp_settlement_payments sp
+                WHERE sp.merchant_id=$1::uuid AND sp.settlement_id=$2
+                  AND ($3::uuid IS NULL OR EXISTS (
+                    SELECT 1 FROM rzp_payments p WHERE p.razorpay_payment_id=sp.razorpay_payment_id
+                      AND p.merchant_id=$1::uuid AND p.branch_id=$3::uuid))
+                ORDER BY sp.created_at, sp.id
+            """,
+                merchant_id,
+                settlement_id,
+                branch_id,
+            )
+        out = self._project_settlement_row(dict(header), merchant_id)
+        out["payments"] = [
+            {
+                "payment_id": r["razorpay_payment_id"],
+                "type": r["type"],
+                "amount": float(_money(r["amount_paise"])),
+                "fee": float(_money(r["fee_paise"])),
+                "tax": float(_money(r["tax_paise"])),
+                "credit": float(_money(r["credit_paise"])),
+                "debit": float(_money(r["debit_paise"])),
+                "created_at": _iso(r["created_at"]),
+            }
+            for r in lines
+        ]
+        return out
 
-        status = (meta["status"] if meta else "pending").lower()
-        anchor_dt = (meta and (meta["settled_at"] or meta["created_at"])) or None
-        anchor = _iso(anchor_dt)
-
-        ORDER = ["pending", "processing", "processed", "failed"]
-        failed = status == "failed"
-        events: list[dict] = []
-        for st in ORDER:
-            if failed:
-                done = st in ("pending", "processing", "failed")
-                pending_flag = st == "processed"
-            else:
-                done = (st in ORDER and ORDER.index(st) <= ORDER.index(status)) if status in ORDER else False
-                pending_flag = not done
-            events.append({
-                "status":    st,
-                "label":     st.replace("_", " ").title(),
-                "completed": done,
-                "pending":   pending_flag,
-                "at":        anchor if done else None,
-            })
-
+    async def settlement_timeline(self, merchant_id: str, settlement_id: str, *, branch_id=None) -> dict:
+        # A mutable mirror cannot supply timestamps for unobserved prior states.
+        settlement = await self.get_settlement(merchant_id, settlement_id, branch_id=branch_id)
+        status = settlement["status"]
         return {
-            "settlement_id":  settlement_id,
+            "settlement_id": settlement_id,
             "current_status": status,
-            "utr":            meta["utr"] if meta else None,
-            "events":         events,
-            "source":         "razorpay",
+            "utr": settlement["utr"],
+            "events": [
+                {
+                    "status": status,
+                    "label": status.replace("_", " ").title(),
+                    "completed": status == "processed",
+                    "pending": status in ("pending", "created", "processing"),
+                    "at": settlement["settled_at"] if status == "processed" else None,
+                }
+            ],
+            "history_complete": False,
+            "source": "razorpay_route_mirror",
         }
 
     # ── CSV export ───────────────────────────────────────────────────────
 
-    async def export_csv(
-        self,
-        merchant_id: str,
-        *,
-        from_date: Optional[date] = None,
-        to_date: Optional[date] = None,
-    ) -> tuple[str, str]:
+    async def export_csv(self, merchant_id: str, *, from_date=None, to_date=None) -> tuple[str, str]:
         merchant_id = _require_merchant(merchant_id)
-        today = date.today()
-        end = to_date or today
-        start = from_date or (end - timedelta(days=30))
-        if start > end:
-            raise ValidationError("from_date must be <= to_date")
-
-        buf = io.StringIO()
-        w = csv.writer(buf)
-        # Spec-mandated columns (TASK 4). Method dropped from spec but
-        # retained as the final column so we don't lose information.
-        w.writerow([
-            "Date", "Payment ID", "Transfer ID", "Settlement ID",
-            "Gross Amount", "Commission", "Merchant Amount",
-            "Refund", "Status", "UTR", "Method",
-        ])
-
+        end = to_date or datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        start = from_date or end - timedelta(days=30)
+        _validate_window(start, end)
         async with get_connection() as conn:
             rows = await conn.fetch(
-                """
-                SELECT p.razorpay_payment_id           AS payment_id,
-                       p.amount_paise                  AS gross_paise,
-                       p.status::text                  AS status,
-                       COALESCE(p.captured_at, p.created_at) AS at,
-                       p.method                        AS method,
-                       t.transfer_id                   AS transfer_id,
-                       t.amount_paise                  AS transfer_paise,
-                       sp.settlement_id                AS settlement_id,
-                       s.utr                           AS utr,
-                       COALESCE(r.refund_paise, 0)    AS refund_paise
-                FROM rzp_payments p
-                LEFT JOIN LATERAL (
-                    SELECT transfer_id, amount_paise
-                    FROM rzp_route_transfers
-                    WHERE razorpay_payment_id = p.razorpay_payment_id
-                      AND merchant_id         = p.merchant_id
-                      AND status              IN ('created', 'processed')
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                ) t ON TRUE
-                LEFT JOIN LATERAL (
-                    SELECT settlement_id
-                    FROM rzp_settlement_payments
-                    WHERE razorpay_payment_id = p.razorpay_payment_id
-                      AND merchant_id         = p.merchant_id
-                      AND type                = 'payment'
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                ) sp ON TRUE
-                LEFT JOIN rzp_settlements s
-                       ON s.settlement_id = sp.settlement_id
-                LEFT JOIN LATERAL (
-                    SELECT COALESCE(SUM(amount_paise), 0)::bigint AS refund_paise
-                    FROM rzp_refunds
-                    WHERE razorpay_payment_id = p.razorpay_payment_id
-                      AND merchant_id         = p.merchant_id
-                      AND status              IN ('pending', 'processed')
-                ) r ON TRUE
-                WHERE p.merchant_id = $1::uuid
-                  AND p.status      = 'captured'
-                  AND (COALESCE(p.captured_at, p.created_at) AT TIME ZONE 'Asia/Kolkata')::date BETWEEN $2::date AND $3::date
-                ORDER BY COALESCE(p.captured_at, p.created_at) ASC
-                """,
-                merchant_id, start, end,
+                PAYMENTS_CTE + "SELECT * FROM payment_rows ORDER BY paid_at, payment_id", merchant_id, start, end, None
             )
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(
+            [
+                "Date",
+                "Payment ID",
+                "Transfer ID",
+                "Settlement ID",
+                "Gross Amount",
+                "Total Deduction",
+                "Merchant Amount",
+                "Refund",
+                "Status",
+                "Method",
+                "Allocation Status",
+            ]
+        )
 
-        for r in rows:
-            gross   = _money(r["gross_paise"])
-            if r.get("transfer_paise") is not None:
-                merchant = _money(r["transfer_paise"])
-                commission = gross - merchant
-                if commission < 0:
-                    commission = Decimal("0.00")
-            else:
-                # No transfer yet — leave both blank to avoid faking a split.
-                merchant   = Decimal("0.00")
-                commission = Decimal("0.00")
-            refund = _money(r["refund_paise"])
-            w.writerow([
-                _iso(r["at"]) or "",
-                r["payment_id"],
-                r.get("transfer_id")   or "",
-                r.get("settlement_id") or "",
-                f"{gross:.2f}",
-                f"{_q(commission):.2f}",
-                f"{_q(merchant):.2f}",
-                f"{refund:.2f}",
-                r["status"],
-                r.get("utr") or "",
-                r.get("method") or "",
-            ])
+        def formatted(value):
+            return "" if value is None else f"{value:.2f}"
 
-        filename = f"statement_{merchant_id}_{start.isoformat()}_{end.isoformat()}.csv"
-        return buf.getvalue(), filename
+        for row in rows:
+            r = self._project_payment(dict(row))
+            writer.writerow(
+                [
+                    r["created_at"],
+                    r["payment_id"],
+                    r["transfer_id"],
+                    r["settlement_id"],
+                    formatted(r["gross_amount"]),
+                    formatted(r["total_deduction"]),
+                    formatted(r["merchant_amount"]),
+                    formatted(r["refund_amount"]),
+                    r["status"],
+                    r["payment_method"],
+                    r["allocation_status"],
+                ]
+            )
+        return buf.getvalue(), f"statement_{merchant_id}_{start}_{end}.csv"
 
     # ── ledger balance ───────────────────────────────────────────────────
 
     async def ledger_balance(self, merchant_id: str) -> dict:
-        merchant_id = _require_merchant(merchant_id)
-        linked = await self._linked_account(merchant_id)
-        if not self._is_active(linked):
-            return {
-                "merchant_id":        merchant_id,
-                "wallet_status":      _wallet_status_for((linked or {}).get("status"), (linked or {}).get("route_product_status")),
-                "current_balance":    0.0,
-                "pending_settlement": 0.0,
-                "settled_amount":     0.0,
-                "refunded_amount":    0.0,
-                "gross_sales":        0.0,
-                "merchant_earned":    0.0,
-                "platform_commission": 0.0,
-                "transferred_to_linked": 0.0,
-                "available_balance":  0.0,
-                "currency":           "INR",
-            }
-
-        async with get_connection() as conn:
-            # Gross captured payments. The merchant's share is gross × 0.97935
-            # (2.065 % total deduction = 1.75 % + GST). We use captured payments
-            # (not rzp_route_transfers) because the Route transfer worker runs
-            # out-of-band and a freshly-captured payment may not yet have
-            # a transfer row — but the money IS owed to the merchant, so
-            # it must surface in the ledger balance immediately.
-            online_gross_paise = await conn.fetchval(
-                """
-                SELECT COALESCE(SUM(amount_paise), 0)::bigint
-                FROM rzp_payments
-                WHERE merchant_id = $1::uuid AND status = 'captured'
-                """,
-                merchant_id,
-            )
-            transfers = await conn.fetchval(
-                """
-                SELECT COALESCE(SUM(amount_paise), 0)::bigint
-                FROM rzp_route_transfers
-                WHERE merchant_id = $1::uuid
-                  AND status      IN ('created', 'processed')
-                """,
-                merchant_id,
-            )
-            refunded = await conn.fetchval(
-                """
-                SELECT COALESCE(SUM(amount_paise), 0)::bigint
-                FROM rzp_refunds
-                WHERE merchant_id = $1::uuid AND status IN ('pending', 'processed')
-                """,
-                merchant_id,
-            )
-            settled_net = await conn.fetchval(
-                """
-                SELECT COALESCE(SUM(sp.credit_paise - sp.debit_paise), 0)::bigint
-                FROM rzp_settlement_payments sp
-                LEFT JOIN rzp_settlements s ON s.settlement_id = sp.settlement_id
-                WHERE sp.merchant_id = $1::uuid
-                  AND COALESCE(s.status::text, 'processed') = 'processed'
-                """,
-                merchant_id,
-            )
-
-        online_gross = _money(online_gross_paise or 0)
-        transfers_r  = _money(transfers or 0)
-        settled_r    = _money(settled_net or 0)
-        refunds_r    = _money(refunded or 0)
-
-        # Merchant share of captured payments, net of commission.
-        merchant_share = (online_gross * _LEGACY_MERCHANT_RATE).quantize(Decimal("0.01"))
-        commission     = (online_gross - merchant_share).quantize(Decimal("0.01"))
-
-        # Owed to merchant but not yet paid out to their bank.
-        pending = merchant_share - settled_r - refunds_r
-        if pending < 0:
-            pending = Decimal("0.00")
-
-        # Already sitting in the linked account (transferred) but not yet
-        # settled to the bank. Surfaced separately for diagnostics.
-        available = transfers_r - settled_r - refunds_r
-        if available < 0:
-            available = Decimal("0.00")
-
+        wallet = await self.wallet_snapshot(merchant_id)
         return {
-            "merchant_id":           merchant_id,
-            "wallet_status":         "active",
-            "currency":              "INR",
-
-            # ── headline / back-compat ─────────────────────────────────
-            # `current_balance` and `pending_settlement` are the same number
-            # (what the merchant is owed, not yet in their bank).
-            "current_balance":       float(_q(pending)),
-            "pending_settlement":    float(_q(pending)),
-
-            # ── full bifurcation (lifetime, in rupees) ─────────────────
-            # gross_sales         = ∑ captured payments (what the customer paid)
-            # platform_commission = 2.065 % kept (gross - merchant_earned)
-            # merchant_earned     = 97.935 % of gross — what the merchant has ever earned
-            # transferred_to_linked = ∑ Route transfers that have been created
-            # settled_amount      = ∑ amounts already paid out to merchant's bank
-            # refunded_amount     = ∑ refunds the merchant has issued (or are pending)
-            # pending_settlement  = merchant_earned − settled_amount − refunded_amount
-            # available_balance   = transferred_to_linked − settled_amount − refunded_amount
-            #                       (money already on the linked account, not yet bank-settled)
-            #
-            # Invariant: merchant_earned == pending_settlement + settled_amount + refunded_amount
-            "gross_sales":           float(_q(online_gross)),
-            "platform_commission":   float(_q(commission)),
-            "merchant_earned":       float(_q(merchant_share)),
-            "transferred_to_linked": float(_q(transfers_r)),
-            "settled_amount":        float(_q(settled_r)),
-            "refunded_amount":       float(_q(refunds_r)),
-            "available_balance":     float(_q(available)),
+            **wallet,
+            "current_balance": wallet["pending_settlement"],
+            "gross_sales": wallet["online_sales"],
+            "settled_amount": wallet["online_settled_lifetime"],
+            "refunded_amount": wallet["merchant_refund_share"],
         }
 
     # ── ledger entries (statement projection) ────────────────────────────
 
-    async def _build_entries(
-        self,
-        merchant_id: str,
-        *,
-        from_date: Optional[date],
-        to_date: Optional[date],
-    ) -> list[dict]:
+    async def _build_entries(self, merchant_id: str, *, from_date=None, to_date=None, conn=None) -> list[dict]:
+        """Merchant entitlement less processed refunds and confirmed bank payouts.
+
+        Transfers explain clearing progress without crediting the entitlement twice.
+        Compute the opening balance from all prior events before filtering the window.
         """
-        Materialise the merchant's statement as a chronological stream:
-
-          PAYMENT_RECEIVED     (informational, does not move merchant balance)
-          COMMISSION_DEDUCTED  (informational, does not move merchant balance)
-          TRANSFER_CREATED     (+ balance — real money into linked account)
-          SETTLEMENT_PROCESSED (− balance — payout to merchant bank)
-          REFUND               (− balance)
-
-        Only ``TRANSFER_CREATED``, ``SETTLEMENT_PROCESSED`` and ``REFUND``
-        contribute to ``balance_after`` so the running tally matches what
-        the merchant actually owns on the Razorpay side.
-
-        ``PAYMENT_RECEIVED`` and ``COMMISSION_DEDUCTED`` are shown so the
-        statement explains *where* a transfer came from, but they don't
-        double-count into the running balance.
-        """
-        async with get_connection() as conn:
+        _validate_window(from_date, to_date)
+        async with _finance_connection(conn) as conn:
             payments = await conn.fetch(
-                """
-                SELECT p.razorpay_payment_id, p.razorpay_order_id, p.amount_paise,
-                       p.currency, p.captured_at, p.created_at,
-                       t.transfer_id, t.amount_paise AS transfer_paise
-                FROM rzp_payments p
-                LEFT JOIN LATERAL (
-                    SELECT transfer_id, amount_paise
-                    FROM rzp_route_transfers
-                    WHERE razorpay_payment_id = p.razorpay_payment_id
-                      AND merchant_id         = p.merchant_id
-                      AND status              IN ('created', 'processed')
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                ) t ON TRUE
-                WHERE p.merchant_id = $1::uuid
-                  AND p.status      = 'captured'
-                  AND ($2::date IS NULL OR (COALESCE(p.captured_at, p.created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
-                  AND ($3::date IS NULL OR (COALESCE(p.captured_at, p.created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
-                """,
-                merchant_id, from_date, to_date,
+                PAYMENTS_CTE + "SELECT * FROM payment_rows WHERE source='razorpay'", merchant_id, None, to_date, None
+            )
+            settlements = await conn.fetch(
+                SETTLEMENTS_CTE + "SELECT * FROM scoped_settlements WHERE status='processed'",
+                merchant_id,
+                None,
+                to_date,
+                None,
             )
             transfers = await conn.fetch(
                 """
-                SELECT transfer_id, razorpay_payment_id, amount_paise,
-                       currency, status::text AS status,
-                       processed_at, created_at
-                FROM rzp_route_transfers
-                WHERE merchant_id = $1::uuid
-                  AND status      IN ('created', 'processed')
-                  AND ($2::date IS NULL OR (COALESCE(processed_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
-                  AND ($3::date IS NULL OR (COALESCE(processed_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
-                """,
-                merchant_id, from_date, to_date,
+                SELECT * FROM rzp_route_transfers WHERE merchant_id=$1::uuid AND status::text<>'failed'
+                  AND ($2::date IS NULL OR (COALESCE(processed_at,created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $2)
+            """,
+                merchant_id,
+                to_date,
             )
-            settlements = await conn.fetch(
-                """
-                SELECT sp.settlement_id,
-                       COALESCE(SUM(sp.credit_paise - sp.debit_paise), 0)::bigint AS merchant_paise,
-                       COALESCE(MAX(s.utr), '')                                   AS utr,
-                       MAX(s.settled_at)                                          AS settled_at,
-                       MIN(sp.created_at)                                         AS first_seen_at,
-                       COALESCE(MAX(s.status::text), 'processed')                 AS status
-                FROM rzp_settlement_payments sp
-                LEFT JOIN rzp_settlements s ON s.settlement_id = sp.settlement_id
-                WHERE sp.merchant_id = $1::uuid
-                  AND ($2::date IS NULL OR COALESCE((s.settled_at AT TIME ZONE 'Asia/Kolkata')::date, (sp.created_at AT TIME ZONE 'Asia/Kolkata')::date) >= $2::date)
-                  AND ($3::date IS NULL OR COALESCE((s.settled_at AT TIME ZONE 'Asia/Kolkata')::date, (sp.created_at AT TIME ZONE 'Asia/Kolkata')::date) <= $3::date)
-                GROUP BY sp.settlement_id
-                """,
-                merchant_id, from_date, to_date,
-            )
-            refunds = await conn.fetch(
-                """
-                SELECT refund_id, razorpay_payment_id, amount_paise,
-                       currency, processed_at, created_at, status::text AS status
-                FROM rzp_refunds
-                WHERE merchant_id = $1::uuid
-                  AND status      IN ('pending', 'processed')
-                  AND ($2::date IS NULL OR (COALESCE(processed_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date >= $2::date)
-                  AND ($3::date IS NULL OR (COALESCE(processed_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date <= $3::date)
-                """,
-                merchant_id, from_date, to_date,
+            refunds = await _refund_allocations(conn, merchant_id, None, to_date)
+        events = []
+
+        def add(
+            at, priority, entry_id, kind, direction, source, paise, reference, *, affects=True, currency="INR", **extra
+        ):
+            if at is None:
+                return
+            events.append(
+                (
+                    at,
+                    priority,
+                    entry_id,
+                    {
+                        "entry_id": entry_id,
+                        "entry_type": kind,
+                        "type": direction,
+                        "source": source,
+                        "amount": float(_money(paise)),
+                        "reference": reference,
+                        "at": _iso(at),
+                        "description": kind.replace("_", " ").title(),
+                        "currency": currency,
+                        "affects_balance": affects,
+                        **extra,
+                    },
+                )
             )
 
-        events: list[tuple[datetime, str, dict]] = []
-
-        # 1. PAYMENT_RECEIVED + COMMISSION_DEDUCTED (informational pair)
         for p in payments:
-            at = p["captured_at"] or p["created_at"]
-            gross = _money(p["amount_paise"])
-            t_paise = p.get("transfer_paise")
-            if t_paise is not None:
-                merchant_amt = _money(t_paise)
-                commission = gross - merchant_amt
-                if commission < 0:
-                    commission = Decimal("0.00")
-            else:
-                merchant_amt = Decimal("0.00")
-                commission = Decimal("0.00")
-
-            events.append((at, f"pay:{p['razorpay_payment_id']}", {
-                "entry_id":        f"pay:{p['razorpay_payment_id']}",
-                "entry_type":      ENTRY_PAYMENT_RECEIVED,
-                "type":            "CREDIT",
-                "source":          "payment",
-                "amount":          float(gross),
-                "reference":       p["razorpay_payment_id"],
-                "order_id":        p.get("razorpay_order_id"),
-                "at":              _iso(at),
-                "description":     f"Captured payment {p['razorpay_payment_id']}",
-                "currency":        p["currency"] or "INR",
-                "affects_balance": False,
-            }))
-            if commission > 0:
-                at_com = at + timedelta(microseconds=1)
-                events.append((at_com, f"com:{p['razorpay_payment_id']}", {
-                    "entry_id":        f"com:{p['razorpay_payment_id']}",
-                    "entry_type":      ENTRY_COMMISSION_DEDUCTED,
-                    "type":            "DEBIT",
-                    "source":          "commission",
-                    "amount":          float(_q(commission)),
-                    "reference":       p["razorpay_payment_id"],
-                    "order_id":        p.get("razorpay_order_id"),
-                    "at":              _iso(at_com),
-                    "description":     "Platform commission",
-                    "currency":        p["currency"] or "INR",
-                    "affects_balance": False,
-                }))
-
-        # 2. TRANSFER_CREATED — the credit that actually moves the merchant
-        #    balance.
+            pid = p["payment_id"]
+            resolved = p["merchant_paise"] is not None
+            add(
+                p["paid_at"],
+                0,
+                "pay:" + pid,
+                ENTRY_PAYMENT_RECEIVED,
+                "CREDIT",
+                "payment",
+                p["amount_paise"],
+                pid,
+                affects=resolved,
+                order_id=str(p["internal_order_id"]) if p["internal_order_id"] else None,
+                allocation_status="resolved" if resolved else "unresolved",
+            )
+            if resolved:
+                add(
+                    p["paid_at"],
+                    1,
+                    "com:" + pid,
+                    ENTRY_COMMISSION_DEDUCTED,
+                    "DEBIT",
+                    "commission",
+                    p["amount_paise"] - p["merchant_paise"],
+                    pid,
+                    total_deduction=True,
+                )
         for t in transfers:
-            at = t["processed_at"] or t["created_at"]
-            amt = _money(t["amount_paise"])
-            # Anchor +2µs so transfers sort after the matching commission
-            # entry (which is +1µs after the payment).
-            events.append((at + timedelta(microseconds=2), f"trf:{t['transfer_id']}", {
-                "entry_id":        f"trf:{t['transfer_id']}",
-                "entry_type":      ENTRY_TRANSFER_CREATED,
-                "type":            "CREDIT",
-                "source":          "transfer",
-                "amount":          float(amt),
-                "reference":       t["transfer_id"],
-                "payment_id":      t["razorpay_payment_id"],
-                "at":              _iso(at),
-                "description":     f"Route transfer {t['transfer_id']}",
-                "currency":        t["currency"] or "INR",
-                "status":          t.get("status"),
-                "affects_balance": True,
-            }))
-
-        # 3. SETTLEMENT_PROCESSED — debit when Razorpay sweeps the linked
-        #    account balance to the merchant's bank.
-        for s in settlements:
-            at = s["settled_at"] or s["first_seen_at"]
-            amt = _money(s["merchant_paise"])
-            if amt <= 0:
-                continue
-            events.append((at, f"setl:{s['settlement_id']}", {
-                "entry_id":        f"setl:{s['settlement_id']}",
-                "entry_type":      ENTRY_SETTLEMENT_PROCESSED,
-                "type":            "DEBIT",
-                "source":          "settlement",
-                "amount":          float(amt),
-                "reference":       s["settlement_id"],
-                "utr":             s.get("utr") or None,
-                "status":          s.get("status"),
-                "at":              _iso(at),
-                "description":     f"Settled to bank ({s.get('utr') or s['settlement_id']})",
-                "currency":        "INR",
-                "affects_balance": True,
-            }))
-
-        # 4. REFUND — debit when a refund is initiated/processed.
+            add(
+                t["processed_at"] or t["created_at"],
+                2,
+                "trf:" + t["transfer_id"],
+                ENTRY_TRANSFER_CREATED,
+                "CREDIT",
+                "transfer",
+                t["amount_paise"],
+                t["transfer_id"],
+                affects=False,
+                payment_id=t["razorpay_payment_id"],
+            )
         for r in refunds:
-            at = r["processed_at"] or r["created_at"]
-            amt = _money(r["amount_paise"])
-            events.append((at, f"ref:{r['refund_id']}", {
-                "entry_id":        f"ref:{r['refund_id']}",
-                "entry_type":      ENTRY_REFUND,
-                "type":            "DEBIT",
-                "source":          "refund",
-                "amount":          float(amt),
-                "reference":       r["refund_id"],
-                "payment_id":      r["razorpay_payment_id"],
-                "at":              _iso(at),
-                "description":     f"Refund {r['refund_id']} for payment {r['razorpay_payment_id']}",
-                "currency":        r["currency"] or "INR",
-                "affects_balance": True,
-            }))
-
-        events.sort(key=lambda t: (t[0], t[1]))
-
+            resolved = r["merchant_refund_share"] is not None
+            add(
+                r["processed_at"] or r["created_at"],
+                3,
+                "ref:" + r["refund_id"],
+                ENTRY_REFUND,
+                "DEBIT",
+                "refund",
+                r["merchant_refund_share"] if resolved else r["amount_paise"],
+                r["refund_id"],
+                affects=resolved,
+                allocation_status="resolved" if resolved else "unresolved",
+                payment_id=r["razorpay_payment_id"],
+            )
+        for r in settlements:
+            add(
+                r["settled_at"] or r["created_at"],
+                4,
+                "setl:" + r["settlement_id"],
+                ENTRY_SETTLEMENT_PROCESSED,
+                "DEBIT",
+                "settlement",
+                r["merchant_paise"],
+                r["settlement_id"],
+                utr=r["utr"],
+            )
         running = Decimal("0.00")
-        out: list[dict] = []
-        for _at, _eid, payload in events:
-            if payload.get("affects_balance"):
-                sign = Decimal("1") if payload["type"] == "CREDIT" else Decimal("-1")
-                running = _q(running + sign * Decimal(str(payload["amount"])))
-            payload["balance_after"] = float(running)
-            out.append(payload)
+        out = []
+        for at, _, _, entry in sorted(events, key=lambda event: event[:3]):
+            if entry["affects_balance"]:
+                running += Decimal(str(entry["amount"])) * (1 if entry["type"] == "CREDIT" else -1)
+            entry["balance_after"] = float(_q(running))
+            if from_date is None or at.astimezone(ZoneInfo("Asia/Kolkata")).date() >= from_date:
+                out.append(entry)
         return out
 
     async def list_ledger_entries(
-        self,
-        merchant_id: str,
-        *,
-        from_date: Optional[date] = None,
-        to_date: Optional[date] = None,
-        entry_type: Optional[str] = None,
-        source: Optional[str] = None,
-        limit: int = 50,
-        offset: int = 0,
+        self, merchant_id: str, *, from_date=None, to_date=None, entry_type=None, source=None, limit=50, offset=0
     ) -> dict:
         merchant_id = _require_merchant(merchant_id)
-        linked = await self._linked_account(merchant_id)
-        if not self._is_active(linked):
-            return {
-                "items":         [],
-                "total":         0,
-                "limit":         limit,
-                "offset":        offset,
-                "has_more":      False,
-                "wallet_status": _wallet_status_for((linked or {}).get("status"), (linked or {}).get("route_product_status")),
-            }
-
-        stream = await self._build_entries(merchant_id, from_date=from_date, to_date=to_date)
-        # Newest-first; balance_after computed on ascending stream so each
-        # row still carries the correct running tally.
-        stream_desc = list(reversed(stream))
+        _validate_page(limit, offset)
+        stream = list(reversed(await self._build_entries(merchant_id, from_date=from_date, to_date=to_date)))
         if entry_type:
-            wanted = entry_type.upper()
-            stream_desc = [
-                e for e in stream_desc
-                if e["type"] == wanted or e.get("entry_type") == wanted
-            ]
+            stream = [e for e in stream if e["type"] == entry_type.upper() or e["entry_type"] == entry_type.upper()]
         if source:
-            stream_desc = [e for e in stream_desc if e["source"] == source.lower()]
-        total = len(stream_desc)
+            stream = [e for e in stream if e["source"] == source.lower()]
         return {
-            "items":    stream_desc[offset: offset + limit],
-            "total":    total,
-            "limit":    limit,
-            "offset":   offset,
-            "has_more": offset + limit < total,
+            "items": stream[offset : offset + limit],
+            "total": len(stream),
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + limit < len(stream),
+            "source": "razorpay_route_mirror",
         }
 
     async def get_ledger_entry(self, merchant_id: str, entry_id: str) -> dict:
@@ -1334,31 +885,27 @@ class MerchantFinanceService:
         entries = await self._build_entries(merchant_id, from_date=None, to_date=None)
 
         total_credit = sum(
-            (Decimal(str(e["amount"])) for e in entries
-             if e["type"] == "CREDIT" and e.get("affects_balance")),
+            (Decimal(str(e["amount"])) for e in entries if e["type"] == "CREDIT" and e.get("affects_balance")),
             Decimal("0.00"),
         )
         total_debit = sum(
-            (Decimal(str(e["amount"])) for e in entries
-             if e["type"] == "DEBIT" and e.get("affects_balance")),
+            (Decimal(str(e["amount"])) for e in entries if e["type"] == "DEBIT" and e.get("affects_balance")),
             Decimal("0.00"),
         )
         derived = total_credit - total_debit
-        if derived < 0:
-            derived = Decimal("0.00")
         derived = _q(derived)
-        expected = Decimal(str(balance["current_balance"]))
+        expected = Decimal(str(balance["pending_settlement"])) + Decimal(str(balance["balance_discrepancy"]))
         delta = _q(derived - expected)
         return {
-            "merchant_id":   merchant_id,
-            "consistent":    delta == Decimal("0.00"),
+            "merchant_id": merchant_id,
+            "consistent": delta == Decimal("0.00") and balance["unresolved_payment_count"] == 0,
             "derived_balance": float(derived),
-            "live_balance":  float(expected),
-            "delta":         float(delta),
-            "total_credit":  float(_q(total_credit)),
-            "total_debit":   float(_q(total_debit)),
-            "entry_count":   len(entries),
-            "source":        "razorpay_route_mirror",
+            "live_balance": float(expected),
+            "delta": float(delta),
+            "total_credit": float(_q(total_credit)),
+            "total_debit": float(_q(total_debit)),
+            "entry_count": len(entries),
+            "source": "razorpay_route_mirror",
         }
 
 

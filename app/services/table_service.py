@@ -21,6 +21,7 @@ import secrets
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+from app.services.waitlist_tables import assert_table_scope
 from app.core.auth import UserContext
 from app.core.database import get_connection, get_serializable_transaction, get_transaction
 from app.core.redis import DistributedLock, LockError, cache_delete
@@ -57,7 +58,10 @@ class TableSessionService:
         """
         try:
             async with DistributedLock(f"table:{table_id}", timeout=10):
-                async with get_serializable_transaction() as conn:
+                # Read committed + table row lock sees a waitlist reservation
+                # committed while this request was waiting for the same table.
+                async with get_transaction() as conn:
+                    await assert_table_scope(conn, user, table_id)
                     # Check table exists and belongs to tenant
                     table = await conn.fetchrow(
                         """
@@ -74,6 +78,9 @@ class TableSessionService:
 
                     if not table["is_active"]:
                         raise ValidationError("Table is not active")
+
+                    from app.services.waitlist_tables import assert_table_not_reserved
+                    await assert_table_not_reserved(conn, table_id)
 
                     # Check no active session exists (ignore stale/expired rows)
                     existing = await conn.fetchrow(
@@ -248,6 +255,8 @@ class TableSessionService:
         - If an active session exists for the table, join it.
         - Otherwise, start a new session and join it.
         """
+        async with get_connection() as conn:
+            await assert_table_scope(conn, user, table_id)
         # Auto-deactivate any expired stale rows for this table so we don't
         # repeatedly hit "Session has expired" / ConflictError loops.
         try:
@@ -416,6 +425,8 @@ class TableSessionService:
         owner_id = user.owner_id if user.is_branch_user else user.user_id
         actor = owner_id
 
+        async with get_connection() as conn:
+            await assert_table_scope(conn, user, session_id)
         # Resolve to a dine-in session id (FK on table_session_carts points to dine_in_sessions)
         dinein_session_id = None
         async with get_connection() as conn:
@@ -443,10 +454,10 @@ class TableSessionService:
                 if not legacy:
                     raise NotFoundError("Session", session_id)
 
-                # Reuse an active dine-in session for this table, or create one (compat bridge).
+                # A different token belongs to a different party; never attach to it.
                 existing_dinein = await conn.fetchrow(
                     """
-                    SELECT id
+                    SELECT id, session_token
                     FROM dine_in_sessions
                     WHERE table_id = $1 AND user_id = $2 AND status = 'active'
                     ORDER BY created_at DESC
@@ -456,14 +467,16 @@ class TableSessionService:
                     owner_id,
                 )
                 if existing_dinein:
+                    if existing_dinein["session_token"] != legacy["session_token"]:
+                        raise ConflictError("Session belongs to a different table visit")
                     dinein_session_id = str(existing_dinein["id"])
                 else:
                     created = await conn.fetchrow(
                         """
                         INSERT INTO dine_in_sessions (
-                            table_id, restaurant_id, user_id, branch_id,
+                            legacy_session_id, table_id, restaurant_id, user_id, branch_id,
                             session_token, guest_count, status, expires_at
-                        ) VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)
+                        ) VALUES ($8::uuid, $1, $2, $3, $4, $5, $6, 'active', $7)
                         RETURNING id
                         """,
                         str(legacy["table_id"]),
@@ -472,7 +485,7 @@ class TableSessionService:
                         str(legacy["branch_id"]) if legacy["branch_id"] else None,
                         legacy["session_token"],
                         int(legacy["guest_count"] or 1),
-                        legacy["expires_at"],
+                        legacy["expires_at"], str(legacy["id"]),
                     )
                     dinein_session_id = str(created["id"])
 
@@ -626,6 +639,16 @@ class TableSessionService:
         session_id: str,
     ) -> dict:
         """End a table session and free the table."""
+        async with get_connection() as conn:
+            await assert_table_scope(conn, user, session_id)
+            canonical = await conn.fetchval(
+                "SELECT d.id FROM dine_in_sessions d JOIN table_sessions s ON s.table_id=d.table_id AND s.session_token=d.session_token WHERE s.id=$1::uuid LIMIT 1",
+                session_id,
+            )
+        if canonical:
+            # Preserve the canonical unpaid-balance guard and lock order.
+            from app.services.dinein_session_service import DineInSessionService
+            return await DineInSessionService().paid_and_vacate(str(canonical), closed_by=user.user_id)
         try:
             async with DistributedLock(f"session:{session_id}", timeout=10):
                 async with get_serializable_transaction() as conn:
@@ -695,46 +718,13 @@ class TableSessionService:
             logger.info("qr_scan_lookup", table_id=table_id, restaurant_id=restaurant_id)
             table = await conn.fetchrow(
                 """
-                SELECT id, table_number, capacity, user_id, restaurant_id
+                SELECT id, table_number, capacity, user_id, restaurant_id, branch_id
                 FROM restaurant_tables
                 WHERE id = $1::uuid AND is_active = true
-                  AND (restaurant_id = $2::uuid OR user_id = $2::uuid)
+                  AND (restaurant_id = $2::uuid OR user_id::text = $2::text)
                 """,
                 table_id, restaurant_id,
             )
-            if not table:
-                # Fallback: look up by just table id
-                logger.info("qr_scan_fallback", table_id=table_id)
-                table = await conn.fetchrow(
-                    """
-                    SELECT id, table_number, capacity, user_id, restaurant_id
-                    FROM restaurant_tables
-                    WHERE id = $1::uuid AND is_active = true
-                    """,
-                    table_id,
-                )
-            if not table:
-                # Last resort: check if table exists at all (even inactive)
-                any_table = await conn.fetchrow(
-                    "SELECT id, is_active, user_id, restaurant_id FROM restaurant_tables WHERE id = $1::uuid",
-                    table_id,
-                )
-                if any_table:
-                    logger.warning("qr_scan_table_inactive",
-                        table_id=table_id, is_active=any_table["is_active"],
-                        user_id=str(any_table["user_id"]), restaurant_id=str(any_table["restaurant_id"]) if any_table["restaurant_id"] else None,
-                    )
-                else:
-                    # Check if the two IDs are swapped (table_id might be first segment)
-                    swap_table = await conn.fetchrow(
-                        "SELECT id, table_number, capacity, user_id, restaurant_id FROM restaurant_tables WHERE id = $1::uuid AND is_active = true",
-                        restaurant_id,
-                    )
-                    if swap_table:
-                        logger.warning("qr_scan_ids_swapped", actual_table_id=restaurant_id, passed_as_restaurant=table_id)
-                        table = swap_table
-                    else:
-                        logger.warning("qr_scan_table_not_found", table_id=table_id, restaurant_id=restaurant_id)
             if not table:
                 raise NotFoundError("Table", table_id)
 
@@ -778,9 +768,18 @@ class TableSessionService:
             session_token = secrets.token_urlsafe(32)
             now = datetime.now(timezone.utc)
             expires_at = now + timedelta(hours=4)
-            branch_id = None
+            branch_id = str(table["branch_id"]) if table["branch_id"] else None
 
-            async with get_serializable_transaction() as conn:
+            async with get_transaction() as conn:
+                await conn.fetchrow("SELECT id FROM restaurant_tables WHERE id=$1::uuid FOR UPDATE", table_id)
+                from app.services.waitlist_tables import assert_table_not_reserved
+                await assert_table_not_reserved(conn, table_id)
+                active_now = await conn.fetchval(
+                    "SELECT id FROM table_sessions WHERE table_id=$1::uuid AND is_active AND (expires_at IS NULL OR expires_at>now())",
+                    table_id,
+                )
+                if active_now:
+                    raise ConflictError("Table session changed; scan again")
                 if existing:
                     await conn.execute(
                         "UPDATE table_sessions SET is_active = false, status = 'expired' WHERE id = $1",

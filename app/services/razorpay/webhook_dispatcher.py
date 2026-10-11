@@ -62,15 +62,14 @@ logger = get_logger(__name__)
 # ════════════════════════════════════════════════════════════════════════
 # Mirrors any `payment.*` event whose payload is tied to a multi-use
 # Static QR (see ``app.services.razorpay.static_qr_service``). This is a
-# fire-and-forget call that runs AFTER the existing order/route handling
-# is complete and never raises — the order-driven flow is unaffected
-# when the payment is not a static-QR payment.
+# runs after order handling. Routing failures propagate so the webhook can retry.
 async def _static_qr_webhook_sideeffect(event_name: str, envelope: dict) -> None:
     try:
         from app.services.razorpay import static_qr_service as _static_qr
         await _static_qr.handle_webhook_payment_event(envelope, event_name=event_name)
     except Exception:  # noqa: BLE001
         logger.exception("static_qr_webhook_sideeffect_failed", event_name=event_name)
+        raise
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -223,8 +222,8 @@ async def _upsert_rzp_payment(
                 prev = await conn.fetchrow(
                     """
                     UPDATE rzp_payments
-                    SET status            = $1::rzp_payment_state,
-                        captured          = $2,
+                    SET status            = CASE WHEN status::text IN ('captured','refunded') THEN status ELSE $1::rzp_payment_state END,
+                        captured          = captured OR $2,
                         captured_at       = COALESCE(captured_at,
                                                      CASE WHEN $2 THEN NOW() ELSE NULL END),
                         fee_paise         = COALESCE($3, fee_paise),
@@ -476,28 +475,40 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
     amount_paise = int(entity.get("amount") or 0)
 
     ctx = await _resolve_order_context_by_rzp_order(rzp_order_id) or {}
-    # QR-driven captures arrive with order_id=None. Razorpay does NOT echo a
-    # qr_id on the standalone payment.captured envelope either, so fall back
-    # to the payment notes we stamped at QR creation (merchant_id,
-    # internal_order_id, branch_id) to recover context. Without this the
-    # entire money pipeline (ledger credit, escrow, auto-split transfer)
-    # silently skips and the merchant's payout is stranded on Bittu's
-    # master account.
+    # Resolve QR notes against our saved order, never trust notes as ownership.
     if not ctx:
-        _notes = entity.get("notes") or {}
-        if isinstance(_notes, dict) and _notes.get("merchant_id"):
-            ctx = {
-                "merchant_id":       _notes.get("merchant_id"),
-                "branch_id":         _notes.get("branch_id"),
-                "internal_order_id": _notes.get("internal_order_id"),
-                "rzp_order_uuid":    None,
-            }
-            logger.info(
-                "rzp_webhook_captured_ctx_from_notes",
-                razorpay_payment_id=rzp_payment_id,
-                merchant_id=ctx["merchant_id"],
-                internal_order_id=ctx["internal_order_id"],
+        notes = entity.get("notes") or {}
+        if isinstance(notes, dict) and notes.get("internal_order_id") and notes.get("merchant_id"):
+            async with get_service_connection() as conn:
+                saved = await conn.fetchrow(
+                    "SELECT razorpay_order_id FROM rzp_orders WHERE internal_order_id=$1::uuid "
+                    "AND merchant_id=$2::uuid ORDER BY created_at DESC LIMIT 1",
+                    notes["internal_order_id"], notes["merchant_id"],
+                )
+            if saved:
+                rzp_order_id = saved["razorpay_order_id"]
+                ctx = await _resolve_order_context_by_rzp_order(rzp_order_id) or {}
+    # Validate the captured value BEFORE marking an order paid or crediting it.
+    if ctx:
+        async with get_service_connection() as conn:
+            canonical = await conn.fetchrow(
+                "SELECT id::text AS id, order_id::text AS order_id, amount, method, restaurant_id::text AS merchant_id, razorpay_payment_id "
+                "FROM payments WHERE razorpay_order_id=$1", rzp_order_id,
             )
+        if not canonical or canonical["merchant_id"] != str(ctx.get("merchant_id")):
+            raise ValueError("capture has no matching merchant payment")
+        if (Decimal(str(canonical["amount"])) * 100 != amount_paise
+                or entity.get("currency") != "INR"
+                or canonical["razorpay_payment_id"] not in (None, rzp_payment_id)):
+            raise ValueError("captured payment amount, currency or identity mismatch")
+        async with get_service_connection() as conn:
+            claimed = await conn.fetchval(
+                "UPDATE payments SET razorpay_payment_id=$1 WHERE id=$2::uuid "
+                "AND (razorpay_payment_id IS NULL OR razorpay_payment_id=$1) RETURNING id",
+                rzp_payment_id, canonical["id"],
+            )
+        if not claimed:
+            raise ValueError("order already claimed by a different captured payment")
     merchant_id = ctx.get("merchant_id")
     branch_id = ctx.get("branch_id")
     internal_order_id = ctx.get("internal_order_id")
@@ -509,6 +520,41 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
         rzp_order_uuid=ctx.get("rzp_order_uuid"),
         status="captured", captured=True,
     )
+
+    if ctx:
+        # Critical money movement must fail the webhook when recovery is needed.
+        from app.services.razorpay.route_service import rzp_route_service as route
+        from app.services.razorpay.fee_policy import provisional_merchant_transfer_paise
+        net_paise, bittu_estimate, gateway_estimate = provisional_merchant_transfer_paise(amount_paise, entity.get("method"))
+        await route.create_transfer(
+            merchant_id=merchant_id, razorpay_payment_id=rzp_payment_id,
+            amount_paise=net_paise, currency=entity.get("currency") or "INR",
+            notes={"source": "auto_split_on_capture", "merchant_share": str(net_paise),
+                   "bittu_estimate_paise": str(bittu_estimate), "gateway_estimate_paise": str(gateway_estimate)},
+        )
+        await route.reverse_refunded_share(razorpay_payment_id=rzp_payment_id, refund_id="capture_recovery")
+
+    if ctx:
+        # Single posting path: gross receipt + fee/GST legs from the frozen
+        # allocation, idempotent by canonical payment_id. Complete before the
+        # terminal local transition so webhook retries recover. No escrow hold:
+        # Route pays the merchant's 95% directly.
+        from app.services.razorpay.ledgers import apply_payment_capture
+        async with get_service_connection() as ledger_conn:
+            frozen = await ledger_conn.fetchval(
+                "SELECT merchant_paise FROM rzp_route_allocations "
+                "WHERE razorpay_payment_id=$1 AND merchant_id=$2::uuid",
+                rzp_payment_id, merchant_id,
+            )
+            async with ledger_conn.transaction():
+                await apply_payment_capture(
+                    conn=ledger_conn, merchant_id=merchant_id, payment_id=canonical['id'],
+                    amount=Decimal(str(canonical['amount'])), method=canonical['method'] or entity.get('method'),
+                    order_id=canonical['order_id'], branch_id=branch_id,
+                    bank_reference=entity.get('bank_transaction_id'), razorpay_payment_id=rzp_payment_id,
+                    merchant_paise=int(frozen) if frozen is not None else None,
+                    payment_kind="razorpay",
+                )
 
     # Flip canonical payments row pending|initiated → completed.
     payment_row = await _mark_payments_row(
@@ -522,46 +568,9 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
     await _confirm_order(internal_order_id)
     await _bump_rzp_order_paid(rzp_order_id=rzp_order_id, amount_paid_paise=amount_paise)
 
-    # Money pipeline: ledger credit + escrow hold (idempotent on payment_id).
+    # Money pipeline: ledger legs above (idempotent on payment_id).
     if payment_row and merchant_id:
         amount_decimal = Decimal(str(payment_row["amount"]))
-        try:
-            from app.services import merchant_ledger_integration
-            await merchant_ledger_integration.post_payment_received(
-                merchant_id=merchant_id,
-                payment_id=payment_row["id"],
-                amount=amount_decimal,
-                method=payment_row.get("method") or entity.get("method"),
-                order_id=payment_row.get("order_id"),
-                branch_id=branch_id,
-                bank_reference=entity.get("bank") or entity.get("bank_transaction_id"),
-                extra_metadata={
-                    "razorpay_payment_id": rzp_payment_id,
-                    "razorpay_order_id":   rzp_order_id,
-                    "source":              "razorpay_webhook",
-                },
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("rzp_webhook_ledger_credit_failed",
-                             payment_id=payment_row["id"])
-        try:
-            from app.services import escrow_integration
-            await escrow_integration.hold_payment_in_escrow(
-                merchant_id=merchant_id,
-                payment_id=payment_row["id"],
-                amount=amount_decimal,
-                method=payment_row.get("method") or entity.get("method"),
-                order_id=payment_row.get("order_id"),
-                branch_id=branch_id,
-                extra_metadata={
-                    "razorpay_payment_id": rzp_payment_id,
-                    "razorpay_order_id":   rzp_order_id,
-                },
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("rzp_webhook_escrow_hold_failed",
-                             payment_id=payment_row["id"])
-
         # Pre-generate the ElevenLabs payment-confirmation MP3 so the FE can
         # play it via <audio src="voice_url"> with no auth header / extra
         # fetch. Best-effort: empty url on any failure.
@@ -591,6 +600,7 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
                     "razorpay_order_id":    rzp_order_id,
                     "amount":               float(amount_decimal),
                     "method":               payment_row.get("method"),
+                    "payment_kind":         "razorpay",
                     "source":               "webhook",
                     # ElevenLabs voice confirmation — FE plays voice_url
                     # directly via <audio src=...>; no auth required.
@@ -638,98 +648,6 @@ async def _handle_payment_captured(envelope: dict, signature: Optional[str]) -> 
             logger.exception("rzp_webhook_ws_push_failed",
                              payment_id=payment_row["id"])
 
-        # ── Auto Route split (net-of-Bittu-fee) ──────────────────────────
-        # Money flows: Customer → Razorpay → Bittu master → (this transfer) →
-        # Merchant's linked account. If the merchant has not finished Route
-        # onboarding (no activated linked account), we silently skip and
-        # the funds stay on the Bittu master account until manual payout.
-        # This block is best-effort: it MUST NOT raise out of the webhook.
-        try:
-            from app.services.razorpay.route_service import rzp_route_service as _route
-            from app.services.fee_service import fee_service
-
-            linked = await _route.get_linked_account(merchant_id=merchant_id)
-            # Razorpay V2 keeps account-level ``status`` at 'created' for the
-            # entire happy-path lifetime — activation flows through the
-            # *product*. Match the gate used by assert_settlement_ready /
-            # get_active_linked_account_id: product activated AND account
-            # not suspended.
-            _eff = (linked or {}).get("effective_status")
-            _prod = (linked or {}).get("route_product_status")
-            _acc_status = (linked or {}).get("status")
-            _is_ready = bool(linked) and _eff == "activated"
-            if not _is_ready:
-                logger.info(
-                    "rzp_auto_split_skipped_no_linked_account",
-                    merchant_id=merchant_id,
-                    razorpay_payment_id=rzp_payment_id,
-                    linked_status=_acc_status,
-                    effective_status=_eff,
-                    route_product_status=_prod,
-                )
-            else:
-                # Bittu withholds 0.415% (0.3517% fee + GST); the merchant
-                # transfer is gross - bittu_fee - estimated_rzp_charge.
-                # The Razorpay charge is an *estimate* here (the actual fee
-                # isn't known until settlement) and is trued-up later from
-                # rzp_settlements/rzp_route_transfers — so the Bittu margin
-                # stays exact at 0.415% regardless of estimate error.
-                # ``fee_service.compute_fee`` is kept for audit metadata only.
-                from app.services.razorpay.fee_policy import (
-                    provisional_merchant_transfer_paise,
-                )
-                fee_payload = await fee_service.compute_fee(
-                    merchant_id,
-                    gross=amount_decimal,
-                    payment_method=(payment_row.get("method") or entity.get("method") or "online"),
-                    currency=(entity.get("currency") or "INR"),
-                    record=False,
-                )
-                _method = (payment_row.get("method") or entity.get("method") or "online")
-                net_paise, bittu_fee_paise_v, est_rzp_paise = (
-                    provisional_merchant_transfer_paise(amount_paise, _method)
-                )
-                commission_paise = amount_paise - net_paise  # bittu_fee + est_rzp
-                if net_paise < 100:
-                    # Razorpay rejects transfers under ₹1.
-                    logger.warning(
-                        "rzp_auto_split_skipped_below_min",
-                        merchant_id=merchant_id,
-                        razorpay_payment_id=rzp_payment_id,
-                        gross_paise=amount_paise,
-                        merchant_share_paise=net_paise,
-                    )
-                else:
-                    await _route.create_transfer(
-                        merchant_id=merchant_id,
-                        razorpay_payment_id=rzp_payment_id,
-                        amount_paise=net_paise,
-                        currency=(entity.get("currency") or "INR"),
-                        notes={
-                            "source":            "auto_split_on_capture",
-                            "commission_paise":  str(commission_paise),
-                            "merchant_share":    str(net_paise),
-                            "bittu_fee_paise":   str(bittu_fee_paise_v),
-                            "est_rzp_paise":     str(est_rzp_paise),
-                            "rzp_gateway_fee":   str(fee_payload.get("fee") or 0),
-                            "rzp_gateway_gst":   str(fee_payload.get("gst") or 0),
-                            "internal_order_id": str(internal_order_id or ""),
-                        },
-                    )
-                    logger.info(
-                        "rzp_auto_split_ok",
-                        merchant_id=merchant_id,
-                        razorpay_payment_id=rzp_payment_id,
-                        gross_paise=amount_paise,
-                        commission_paise=commission_paise,
-                        net_paise=net_paise,
-                    )
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "rzp_auto_split_failed",
-                merchant_id=merchant_id,
-                razorpay_payment_id=rzp_payment_id,
-            )
     elif not merchant_id:
         logger.warning(
             "rzp_webhook_captured_orphan",
@@ -1031,7 +949,7 @@ async def _upsert_rzp_refund(refund_entity: dict, envelope: dict, status: str) -
                      ELSE to_timestamp($14::bigint) END
             )
             ON CONFLICT (refund_id) DO UPDATE SET
-                status          = EXCLUDED.status,
+                status          = CASE WHEN rzp_refunds.status = 'processed' THEN rzp_refunds.status ELSE EXCLUDED.status END,
                 speed_processed = COALESCE(EXCLUDED.speed_processed, rzp_refunds.speed_processed),
                 acquirer_data   = COALESCE(EXCLUDED.acquirer_data, rzp_refunds.acquirer_data),
                 processed_at    = COALESCE(EXCLUDED.processed_at, rzp_refunds.processed_at),
@@ -1062,6 +980,8 @@ async def _upsert_rzp_refund(refund_entity: dict, envelope: dict, status: str) -
                     updated_at = NOW()
                 WHERE razorpay_payment_id = $1
                   AND status::text IN ('completed', 'settled')
+                  AND COALESCE((SELECT SUM(r.amount_paise) FROM rzp_refunds r
+                      WHERE r.razorpay_payment_id=$1 AND r.status='processed'), 0) >= payments.amount * 100
                 """,
                 rzp_payment_id,
             )
@@ -1092,97 +1012,18 @@ async def _handle_refund_processed(envelope: dict, signature: Optional[str]) -> 
     # Phase 8: claw back the merchant's share of the refund from their Route
     # linked account so the Bittu master ledger stays whole. This is the
     # auto-reversal path; it is idempotent at the Razorpay layer via
-    # `rzp_transfer_reverse:{transfer_id}:{amount_paise}`.
+    # cumulative reversal targets persisted in rzp_route_operations.
     await _maybe_reverse_route_transfer_for_refund(entity)
     return {}
 
 
 async def _maybe_reverse_route_transfer_for_refund(refund_entity: dict) -> None:
-    refund_id = refund_entity.get("id")
-    rzp_payment_id = refund_entity.get("payment_id")
-    refund_amount_paise = int(refund_entity.get("amount") or 0)
-    if not refund_id or not rzp_payment_id or refund_amount_paise <= 0:
+    if not refund_entity.get("id") or not refund_entity.get("payment_id"):
         return
-    try:
-        async with get_service_connection() as conn:
-            # Locate the auto-split transfer that funded this payment to the
-            # merchant. There can be multiple historical transfers (e.g.
-            # split adjustments); pick the most recent non-reversed one.
-            transfer_row = await conn.fetchrow(
-                """
-                SELECT transfer_id, merchant_id::text AS merchant_id,
-                       amount_paise, status::text AS status
-                FROM rzp_route_transfers
-                WHERE razorpay_payment_id = $1
-                  AND merchant_id <> '00000000-0000-0000-0000-000000000000'::uuid
-                  AND status IN ('created', 'processed')
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                rzp_payment_id,
-            )
-            # Compute the merchant's share of the refund. We mirror the
-            # auto-split formula: merchant got (transfer.amount / payment.amount)
-            # of the original capture, so they refund the same proportion.
-            payment_row = await conn.fetchrow(
-                "SELECT amount_paise FROM rzp_payments WHERE razorpay_payment_id = $1 "
-                "ORDER BY created_at DESC LIMIT 1",
-                rzp_payment_id,
-            )
-        if transfer_row is None or payment_row is None:
-            logger.info(
-                "rzp_auto_reverse_skipped_no_transfer",
-                refund_id=refund_id,
-                razorpay_payment_id=rzp_payment_id,
-                has_transfer=transfer_row is not None,
-                has_payment=payment_row is not None,
-            )
-            return
-
-        payment_total = int(payment_row["amount_paise"] or 0)
-        transfer_total = int(transfer_row["amount_paise"] or 0)
-        if payment_total <= 0 or transfer_total <= 0:
-            return
-        # Proportional clawback, capped at the transfer amount.
-        merchant_share_paise = min(
-            transfer_total,
-            (refund_amount_paise * transfer_total) // payment_total,
-        )
-        if merchant_share_paise <= 0:
-            return
-
-        from app.services.razorpay.route_service import rzp_route_service
-        try:
-            await rzp_route_service.reverse_transfer(
-                merchant_id=transfer_row["merchant_id"],
-                transfer_id=transfer_row["transfer_id"],
-                amount_paise=merchant_share_paise,
-                notes={
-                    "source":     "auto_reverse_on_refund",
-                    "refund_id":  refund_id,
-                    "rzp_payment_id": rzp_payment_id,
-                },
-                refund_id=refund_id,
-            )
-            logger.info(
-                "rzp_auto_reverse_ok",
-                refund_id=refund_id,
-                transfer_id=transfer_row["transfer_id"],
-                merchant_share_paise=merchant_share_paise,
-            )
-        except ValueError:
-            # Already terminal — idempotent no-op.
-            logger.info(
-                "rzp_auto_reverse_already_terminal",
-                refund_id=refund_id,
-                transfer_id=transfer_row["transfer_id"],
-            )
-    except Exception:  # noqa: BLE001
-        logger.exception(
-            "rzp_auto_reverse_failed",
-            refund_id=refund_id,
-            razorpay_payment_id=rzp_payment_id,
-        )
+    from app.services.razorpay.route_service import rzp_route_service
+    await rzp_route_service.reverse_refunded_share(
+        razorpay_payment_id=refund_entity["payment_id"], refund_id=refund_entity["id"],
+    )
 
 
 async def _handle_refund_failed(envelope: dict, signature: Optional[str]) -> dict:
@@ -1212,6 +1053,14 @@ async def _maybe_transition_local_refund(envelope: dict, new_status: str) -> Non
             )
         if row is None:
             return
+        notes = entity.get("notes") or {}
+        if isinstance(notes, dict) and notes.get("internal_refund_uuid"):
+            async with get_service_connection() as c:
+                await c.execute(
+                    "UPDATE refunds SET gateway_refund_id=$1 WHERE refund_uuid=$2::uuid "
+                    "AND merchant_id=$3::uuid AND (gateway_refund_id IS NULL OR gateway_refund_id=$1)",
+                    refund_id, notes["internal_refund_uuid"], row["merchant_id"],
+                )
         from app.services.refund_service import refund_service
         failure_reason = None
         if new_status == "failed":
@@ -1225,8 +1074,18 @@ async def _maybe_transition_local_refund(envelope: dict, new_status: str) -> Non
             new_status=new_status,
             failure_reason=failure_reason,
         )
+        if isinstance(notes, dict) and notes.get("bittu_request_key") and notes.get("internal_refund_id"):
+            local = await refund_service.get(int(notes["internal_refund_id"]), merchant_id=row["merchant_id"])
+            async with get_service_connection() as c:
+                await c.execute(
+                    "UPDATE rzp_route_operations SET state='succeeded',response=$2::jsonb,updated_at=now() "
+                    "WHERE operation_key=$1 AND resource_key=$3",
+                    notes["bittu_request_key"], json.dumps(local,default=str),
+                    f"refund_request:{row['merchant_id']}:{local['payment_id']}",
+                )
     except Exception:  # noqa: BLE001
         logger.exception("rzp_local_refund_transition_failed", refund_id=refund_id)
+        raise
 
 
 async def _handle_refund_speed_changed(envelope: dict, signature: Optional[str]) -> dict:
@@ -1373,7 +1232,14 @@ async def _handle_settlement_processed(envelope: dict, signature: Optional[str])
             "rzp_settlement_transfer_backfill_failed",
             settlement_id=settlement_id,
         )
-    return {"settlement_id": settlement_id}
+    # Entitlement ledger: debit what Razorpay actually paid out to the merchant
+    # bank for each canonical payment (idempotent per settlement/payment).
+    # Critical money movement: a failure fails the webhook so it retries.
+    from app.services.razorpay import ledgers as _ledgers
+    ledger_result = await _ledgers.apply_settlement_processed(
+        settlement_id=settlement_id, merchant_id=merchant_id,
+    )
+    return {"settlement_id": settlement_id, "ledger": ledger_result}
 
 
 # ════════════════════════════════════════════════════════════════════════

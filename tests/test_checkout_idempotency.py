@@ -13,6 +13,7 @@ Test strategy
 import asyncio
 import json
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch, call
 
@@ -115,7 +116,7 @@ class TestCheckoutSuccess:
 
         with (
             patch("app.services.order_service.get_connection") as mock_get_conn,
-            patch("app.services.order_service.get_serializable_transaction") as mock_get_tx,
+            patch("app.services.order_service.get_transaction") as mock_get_tx,
             patch("app.services.order_service.emit_and_publish", new_callable=AsyncMock),
         ):
             mock_get_conn.return_value.__aenter__ = AsyncMock(return_value=conn)
@@ -167,7 +168,7 @@ class TestCheckoutSuccess:
 
         with (
             patch("app.services.order_service.get_connection") as mock_gc,
-            patch("app.services.order_service.get_serializable_transaction") as mock_tx,
+            patch("app.services.order_service.get_transaction") as mock_tx,
             patch("app.services.order_service.emit_and_publish", new_callable=AsyncMock),
         ):
             mock_gc.return_value.__aenter__ = AsyncMock(return_value=conn)
@@ -211,7 +212,7 @@ class TestIdempotencyReplay:
 
         with (
             patch("app.services.order_service.get_connection") as mock_gc,
-            patch("app.services.order_service.get_serializable_transaction") as mock_tx,
+            patch("app.services.order_service.get_transaction") as mock_tx,
             patch("app.services.order_service.emit_and_publish", new_callable=AsyncMock),
         ):
             mock_gc.return_value.__aenter__ = AsyncMock(return_value=conn)
@@ -249,7 +250,7 @@ class TestIdempotencyReplay:
 
         with (
             patch("app.services.order_service.get_connection") as mock_gc,
-            patch("app.services.order_service.get_serializable_transaction") as mock_tx,
+            patch("app.services.order_service.get_transaction") as mock_tx,
             patch("app.services.order_service.emit_and_publish", new_callable=AsyncMock),
         ):
             # For user_a: return idempotency record; for user_b: return None
@@ -288,7 +289,7 @@ class TestIdempotencyReplay:
 
         with (
             patch("app.services.order_service.get_connection") as mock_gc,
-            patch("app.services.order_service.get_serializable_transaction") as mock_tx,
+            patch("app.services.order_service.get_transaction") as mock_tx,
             patch("app.services.order_service.emit_and_publish", new_callable=AsyncMock),
         ):
             mock_gc.return_value.__aenter__ = AsyncMock(return_value=conn)
@@ -347,7 +348,7 @@ class TestTimeoutRetry:
 
         with (
             patch("app.services.order_service.get_connection") as mock_gc,
-            patch("app.services.order_service.get_serializable_transaction") as mock_tx,
+            patch("app.services.order_service.get_transaction") as mock_tx,
             patch("app.services.order_service.emit_and_publish", new_callable=AsyncMock),
         ):
             mock_gc.return_value.__aenter__ = AsyncMock(return_value=conn)
@@ -503,13 +504,12 @@ class TestDateFilters:
         query = fetch_call.args[0]
         params = fetch_call.args[1:]
 
-        # Both dates should appear in the parameter list
-        assert "2026-05-01" in params
-        assert "2026-05-08" in params
-
-        # SQL should use correct inclusive/exclusive operators
-        assert ">=" in query  # from_date inclusive
-        assert "+ INTERVAL" in query  # to_date inclusive (next day)
+        # India calendar days are converted to an inclusive start and exclusive
+        # next-day boundary in UTC before binding the query parameters.
+        assert datetime(2026, 4, 30, 18, 30, tzinfo=timezone.utc) in params
+        assert datetime(2026, 5, 8, 18, 30, tzinfo=timezone.utc) in params
+        assert ">=" in query
+        assert "<" in query
 
     @pytest.mark.asyncio
     async def test_no_date_filters_no_date_conditions(self):
@@ -686,7 +686,7 @@ class TestRollback:
         conn.fetchrow = AsyncMock(side_effect=_fetchrow_no_item)
         conn.execute = AsyncMock()
 
-        # Track that the serializable transaction was entered
+        # Track that the checkout transaction was entered
         tx_entered = []
 
         class FakeSerTx:
@@ -705,7 +705,7 @@ class TestRollback:
 
         with (
             patch("app.services.order_service.get_connection", return_value=FakeConn()),
-            patch("app.services.order_service.get_serializable_transaction", return_value=FakeSerTx()),
+            patch("app.services.order_service.get_transaction", return_value=FakeSerTx()),
         ):
             with pytest.raises(NotFoundError):
                 await svc.checkout(
@@ -792,7 +792,7 @@ class TestObservabilityLogs:
 
         with (
             patch("app.services.order_service.get_connection") as mock_gc,
-            patch("app.services.order_service.get_serializable_transaction") as mock_tx,
+            patch("app.services.order_service.get_transaction") as mock_tx,
             patch("app.services.order_service.emit_and_publish", new_callable=AsyncMock),
         ):
             mock_gc.return_value.__aenter__ = AsyncMock(return_value=conn)
@@ -847,7 +847,7 @@ class TestObservabilityLogs:
 
         with (
             patch("app.services.order_service.get_connection") as mock_gc,
-            patch("app.services.order_service.get_serializable_transaction") as mock_tx,
+            patch("app.services.order_service.get_transaction") as mock_tx,
             patch("app.services.order_service.emit_and_publish", new_callable=AsyncMock),
         ):
             mock_gc.return_value.__aenter__ = AsyncMock(return_value=conn)

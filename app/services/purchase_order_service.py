@@ -144,6 +144,9 @@ class PurchaseOrderService:
             if not existing:
                 raise NotFoundError("PurchaseOrder", po_id)
 
+            if existing["status"] in ("received", "partial") and ("items" in data or "status" in data):
+                raise ValidationError("received purchase quantities and status can only change through the receipt endpoint")
+
             fields = {k: v for k, v in data.items() if v is not None and k != "items"}
             if "status" in fields and fields["status"] not in VALID_STATUSES:
                 raise ValidationError(f"Invalid status. Must be one of: {', '.join(VALID_STATUSES)}")

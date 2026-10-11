@@ -19,7 +19,7 @@ This module provides:
        a timestamped header (Stripe-style `t=...,v1=...`, or X-*-Timestamp).
     3. Computes a stable `event_hash` (sha256 of body + signature).
     4. Inserts into `payment_webhook_events` with UNIQUE(gateway, event_id).
-       UniqueViolation ⇒ replay/duplicate ⇒ caller short-circuits with 200.
+       Processed events are duplicates; failed/abandoned attempts can be reclaimed.
     5. Captures latency + headers + raw payload for forensic replay.
 
 Usage in a router
@@ -83,6 +83,7 @@ class WebhookResult:
     duplicate: bool
     latency_ms: float
     started_at: float
+    processing_token: Optional[str] = None
 
     async def mark_processed(self, *, status: str = "processed", error: Optional[str] = None) -> None:
         if self.duplicate:
@@ -99,9 +100,9 @@ class WebhookResult:
                        latency_ms       = $2,
                        last_error       = $3,
                        retries          = retries + CASE WHEN $1 = 'failed' THEN 1 ELSE 0 END
-                 WHERE id = $4
+                 WHERE id = $4 AND processing_token = $5::uuid
                 """,
-                status, latency, error, uuid.UUID(self.event_row_id),
+                status, latency, error, uuid.UUID(self.event_row_id), self.processing_token,
             )
 
 
@@ -196,6 +197,8 @@ async def verify_and_register_webhook(
     headers_json = json.dumps({k: v for k, v in request.headers.items()})
     raw_json = json.dumps(payload)
     row_id = uuid.uuid4()
+    token = str(uuid.uuid4())
+    event_id = event_id or event_hash
 
     try:
         async with get_service_connection() as conn:
@@ -204,34 +207,39 @@ async def verify_and_register_webhook(
                 INSERT INTO payment_webhook_events
                     (id, gateway, event_id, event_type, event_hash,
                      signature_valid, processing_state,
-                     headers, raw_payload, received_at)
+                     headers, raw_payload, received_at, processing_token, processing_started_at)
                 VALUES ($1, $2, $3, $4, $5, true, 'received',
-                        $6::jsonb, $7::jsonb, NOW())
+                        $6::jsonb, $7::jsonb, NOW(), $8::uuid, NOW())
                 """,
                 row_id, gateway, event_id, event_type, event_hash,
-                headers_json, raw_json,
+                headers_json, raw_json, token,
             )
     except asyncpg.exceptions.UniqueViolationError:
-        logger.info(
-            "webhook_duplicate_short_circuit",
-            gateway=gateway,
-            event_id=event_id,
-            event_type=event_type,
-        )
-        return WebhookResult(
-            event_row_id=str(row_id),
-            gateway=gateway,
-            event_id=event_id,
-            duplicate=True,
-            latency_ms=round((time.perf_counter() - started_at) * 1000, 2),
-            started_at=started_at,
-        )
+        async with get_service_connection() as conn:
+            async with conn.transaction():
+                existing = await conn.fetchrow(
+                    "SELECT id, processing_state, event_hash, "
+                    "COALESCE(processing_started_at,received_at) < now()-interval '10 minutes' AS stale "
+                    "FROM payment_webhook_events WHERE gateway=$1 AND event_id=$2 FOR UPDATE", gateway, event_id,
+                )
+                if not existing or existing["event_hash"] != event_hash:
+                    raise HTTPException(status_code=409, detail="webhook_event_identity_conflict")
+                row_id = existing["id"]
+                if existing["processing_state"] == "processed":
+                    return WebhookResult(str(row_id), gateway, event_id, True, 0, started_at)
+                if existing["processing_state"] != "failed" and not existing["stale"]:
+                    raise HTTPException(status_code=503, detail="webhook_processing_in_progress")
+                await conn.execute(
+                    "UPDATE payment_webhook_events SET processing_state='received',processing_token=$2::uuid, "
+                    "processing_started_at=now(),processed_at=NULL WHERE id=$1", row_id, token,
+                )
 
     return WebhookResult(
         event_row_id=str(row_id),
         gateway=gateway,
         event_id=event_id,
         duplicate=False,
+        processing_token=token,
         latency_ms=round((time.perf_counter() - started_at) * 1000, 2),
         started_at=started_at,
     )

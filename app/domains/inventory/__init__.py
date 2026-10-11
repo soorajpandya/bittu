@@ -1,1 +1,1 @@
-"""inventory domain — see docs/ARCHITECTURE_V2.md"""
+"""inventory domain â€” see docs/ARCHITECTURE_V2.md"""

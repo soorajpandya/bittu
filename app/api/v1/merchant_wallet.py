@@ -1,18 +1,7 @@
-"""
-Merchant Wallet API — Razorpay-backed.
+"""Merchant wallet API over local Razorpay mirrors and frozen allocations.
 
-Single-pane-of-glass for merchants. All numbers are projected live from
-Razorpay using the merchant's linked Route account, with Bittu's flat 5%
-commission split applied at presentation time.
-
-  GET /merchant-wallet                              Wallet snapshot
-  GET /merchant-wallet/transactions                 Payment ledger (filterable)
-  GET /merchant-wallet/settlements                  Settlement batches
-  GET /merchant-wallet/settlements/{id}             Settlement detail
-  GET /merchant-wallet/settlements/{id}/timeline    State transitions
-  GET /merchant-wallet/export                       CSV statement
-
-All endpoints are scoped to the caller's `restaurant_id` (= rzp linked account).
+Webhooks and pollers update the mirrors. Historical entitlements are never
+repriced with today's deduction rate. Dates use Asia/Kolkata.
 """
 from datetime import date
 from typing import Optional
@@ -41,11 +30,11 @@ def _merchant_id(user: UserContext) -> str:
 @router.get("")
 @router.get("/")
 async def wallet(
-    from_date: Optional[date] = Query(None, description="Start of window (UTC, inclusive)"),
-    to_date:   Optional[date] = Query(None, description="End of window (UTC, inclusive)"),
+    from_date: Optional[date] = Query(None, description="Start of activity window (IST, inclusive)"),
+    to_date:   Optional[date] = Query(None, description="End of window and balance cutoff (IST, inclusive)"),
     user: UserContext = Depends(require_permission("bank_recon.read")),
 ):
-    """Live Razorpay-derived wallet snapshot with 5% commission applied."""
+    """Gateway-mirror wallet snapshot preserving original entitlements."""
     return await _cached_wallet(from_date, to_date, user)
 
 
@@ -69,7 +58,7 @@ async def transactions(
     offset:         int = Query(0,  ge=0),
     user: UserContext = Depends(require_permission("bank_recon.read")),
 ):
-    """Captured payments for the merchant (live Razorpay)."""
+    """Captured payments and cash receipts from the local mirrors."""
     return await _cached_transactions(
         payment_method, min_amount, max_amount, search,
         from_date, to_date, limit, offset, user,

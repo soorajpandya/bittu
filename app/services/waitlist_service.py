@@ -1,609 +1,462 @@
-"""
-Smart Waitlist Service.
+"""Waitlist queues, table reservations, and atomic seating per restaurant location."""
 
-Unified queue engine with best-fit table allocation, notification tracking,
-and support for both staff (POS) and customer (QR) entry points.
-"""
-import math
+import hashlib
+import secrets
+import os
+from zoneinfo import ZoneInfo
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
 import structlog
 
-from app.core.database import get_connection
-from app.core.tenant import tenant_where_clause, tenant_insert_fields
+from app.core.database import get_connection, get_transaction, get_service_connection, use_tenant
 from app.core.auth import UserContext
-from app.core.exceptions import NotFoundError, ConflictError
-from app.core.events import DomainEvent, emit_and_publish
+from app.core.exceptions import NotFoundError, ConflictError, ValidationError
+from app.core.events import DomainEvent, emit_and_publish, TABLE_SESSION_STARTED
 
 logger = structlog.get_logger(__name__)
 
 
-async def _broadcast_waitlist(event_type: str, restaurant_id, entry: dict) -> None:
-    """Fire a waitlist domain event so WS subscribers update instantly.
-    Failures are swallowed — never break the HTTP request because of pub/sub."""
+def _owner(user):
+    return user.owner_id if user.is_branch_user else user.user_id
+
+
+def _scope(user, alias="", offset=0):
+    if not user.restaurant_id or not _owner(user) or (user.is_branch_user and not user.branch_id):
+        raise ValidationError("Restaurant and branch context are required")
+    prefix = f"{alias}." if alias else ""
+    return (
+        f"{prefix}user_id = ${offset+1} AND {prefix}restaurant_id = ${offset+2}::uuid "
+        f"AND {prefix}branch_id IS NOT DISTINCT FROM ${offset+3}::uuid",
+        [str(_owner(user)), str(user.restaurant_id), str(user.branch_id) if user.branch_id else None],
+    )
+
+
+async def _lock_queue(conn, user):
+    _scope(user)
+    # Transaction-scoped lock works through PgBouncer and serializes all queue
+    # writers, including joins, cancellation, expiry and notification workers.
+    await conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", f"waitlist:{user.restaurant_id}"
+    )
+
+
+def _phone(value, validate=True):
+    if not value:
+        return None
+    digits = re.sub(r"\D", "", value)
+    # Indian local and +91 formats must identify the same customer.
+    if len(digits) == 12 and digits.startswith("91"):
+        digits = digits[2:]
+    elif len(digits) == 11 and digits.startswith("0"):
+        digits = digits[1:]
+    if validate and not 6 <= len(digits) <= 15:
+        raise ValidationError("Enter a valid phone number")
+    return digits
+
+
+async def _broadcast_waitlist(event_type, restaurant_id, entry):
+    # Invalidate every branch cache for this restaurant after commit, including
+    # public joins and worker changes which have no authenticated HTTP caller.
     try:
-        await emit_and_publish(DomainEvent(
-            event_type=event_type,
-            payload=entry,
-            restaurant_id=str(restaurant_id) if restaurant_id else None,
-        ))
+        from app.core.redis import cache_delete_pattern
+
+        await cache_delete_pattern(f"route:waitlist:{restaurant_id}:*")
+    except Exception:
+        logger.exception("waitlist_cache_invalidation_failed")
+    try:
+        await emit_and_publish(
+            DomainEvent(
+                event_type=event_type,
+                payload={
+                    key: value
+                    for key, value in entry.items()
+                    if key not in {"session_token", "push_token_hash", "phone", "notes"}
+                },
+                restaurant_id=str(restaurant_id),
+                branch_id=str(entry["branch_id"]) if entry.get("branch_id") else None,
+            )
+        )
     except Exception:
         logger.exception("waitlist_event_publish_failed", event_type=event_type)
 
 
 class WaitlistService:
-
-    # ─── Add to waitlist ───────────────────────────────────────
-
-    async def add_entry(
-        self,
-        user: UserContext,
-        customer_name: str,
-        party_size: int,
-        phone: Optional[str] = None,
-        source: str = "staff",
-        notes: Optional[str] = None,
-    ) -> dict:
-        """Add a customer to the waitlist. Works for both staff and QR entry."""
-        tenant = tenant_insert_fields(user)
-
-        async with get_connection() as conn:
-            # Duplicate check: same phone already waiting at this restaurant
-            if phone:
-                dup = await conn.fetchrow(
-                    """SELECT id FROM waitlist_entries
-                       WHERE user_id = $1 AND phone = $2 AND status IN ('waiting', 'notified')
-                       AND ($3::uuid IS NULL OR restaurant_id = $3)""",
-                    tenant["user_id"], phone, user.restaurant_id,
-                )
-                if dup:
-                    raise ConflictError(f"Customer with phone {phone} is already on the waitlist")
-
-            # Get next position
-            max_pos = await conn.fetchval(
-                """SELECT COALESCE(MAX(position), 0) FROM waitlist_entries
-                   WHERE user_id = $1 AND status IN ('waiting', 'notified')
-                   AND ($2::uuid IS NULL OR restaurant_id = $2)""",
-                tenant["user_id"], user.restaurant_id,
-            )
-            position = max_pos + 1
-
-            # Estimate wait time
-            est_minutes = await self._estimate_wait(conn, tenant["user_id"], user.restaurant_id, position, party_size)
-
-            row = await conn.fetchrow(
-                """INSERT INTO waitlist_entries
-                   (restaurant_id, branch_id, user_id, customer_name, phone,
-                    party_size, source, status, position, estimated_wait_minutes, notes)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, 'waiting', $8, $9, $10)
-                   RETURNING *""",
-                user.restaurant_id, tenant.get("branch_id"), tenant["user_id"],
-                customer_name, phone, party_size, source, position, est_minutes, notes,
-            )
-
-            # Audit log
-            await self._log_action(conn, user.restaurant_id, row["id"], "added",
-                                   {"source": source, "party_size": party_size},
-                                   tenant["user_id"] if source == "staff" else "customer")
-
-        logger.info("waitlist_entry_added", id=str(row["id"]), name=customer_name, position=position)
-        entry = self._format_entry(row)
-        await _broadcast_waitlist("waitlist.created", user.restaurant_id, entry)
-        return entry
-
-    # ─── Get active queue ──────────────────────────────────────
-
-    async def get_queue(
-        self,
-        user: UserContext,
-        status: Optional[str] = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> dict:
-        """Get current waitlist queue for the restaurant."""
-        clause, params = tenant_where_clause(user, "w")
-
-        conditions = [clause]
-        if status:
-            params.append(status)
-            conditions.append(f"w.status = ${len(params)}")
-        else:
-            # Default: show active entries
-            conditions.append("w.status IN ('waiting', 'notified')")
-
-        where = " AND ".join(conditions)
-
-        async with get_connection() as conn:
-            total = await conn.fetchval(
-                f"SELECT COUNT(*) FROM waitlist_entries w WHERE {where}", *params
-            )
-
-            params.extend([limit, offset])
-            rows = await conn.fetch(
-                f"""SELECT w.*, rt.table_number, rt.capacity as table_capacity
-                    FROM waitlist_entries w
-                    LEFT JOIN restaurant_tables rt ON rt.id = w.assigned_table_id
-                    WHERE {where}
-                    ORDER BY w.position ASC
-                    LIMIT ${len(params) - 1} OFFSET ${len(params)}""",
-                *params,
-            )
-
-        return {
-            "total": total,
-            "entries": [self._format_entry(r) for r in rows],
-        }
-
-    # ─── Add to waitlist (public — for QR customers, no auth) ─
-
-    async def add_entry_public(
-        self,
-        restaurant_id: UUID,
-        customer_name: str,
-        party_size: int,
-        phone: str,
-        notes: Optional[str] = None,
-    ) -> dict:
-        """
-        Public QR self-add. Resolves owner from restaurant_id, requires phone,
-        and honors the per-restaurant `qr_entry_enabled` toggle.
-        """
-        async with get_connection() as conn:
+    async def public_context(self, restaurant_id, branch_id=None):
+        async with get_service_connection() as conn:
             rest = await conn.fetchrow(
-                "SELECT owner_id FROM restaurants WHERE id = $1",
-                restaurant_id,
+                "SELECT owner_id FROM restaurants WHERE id=$1::uuid AND is_active", str(restaurant_id)
             )
             if not rest:
                 raise NotFoundError("Restaurant", str(restaurant_id))
-            owner_id = rest["owner_id"]
-
-            settings = await conn.fetchrow(
-                "SELECT qr_entry_enabled FROM waitlist_settings WHERE restaurant_id = $1",
-                restaurant_id,
+            branches = await conn.fetch(
+                "SELECT id,is_main_branch FROM sub_branches WHERE restaurant_id=$1::uuid AND is_active ORDER BY id",
+                str(restaurant_id),
             )
-            # Default is true when no settings row exists (matches _default_settings)
-            if settings and settings["qr_entry_enabled"] is False:
+        if branch_id:
+            if str(branch_id) not in {str(row["id"]) for row in branches}:
+                raise NotFoundError("Branch", str(branch_id))
+        elif len(branches) == 1:
+            branch_id = branches[0]["id"]
+        elif branches:
+            main = [row for row in branches if row["is_main_branch"]]
+            if len(main) != 1:
+                raise ValidationError("Use the waitlist QR code for your branch")
+            branch_id = main[0]["id"]
+        return UserContext(
+            user_id=str(rest["owner_id"]),
+            restaurant_id=str(restaurant_id),
+            branch_id=str(branch_id) if branch_id else None,
+        )
+
+    async def add_entry(self, user, customer_name, party_size, phone=None, source="staff", notes=None):
+        if not customer_name.strip() or not 1 <= party_size <= 50 or source not in {"staff", "qr"}:
+            raise ValidationError("Invalid waitlist entry")
+        phone = _phone(phone)
+        clause, params = _scope(user)
+        async with get_transaction() as conn:
+            await _lock_queue(conn, user)
+            settings = await self._get_settings(conn, user) or self._default_settings()
+            if source == "qr" and not settings["qr_entry_enabled"]:
                 raise ConflictError("QR self-service waitlist entry is disabled for this restaurant")
-
-            # Dedupe by phone across active statuses for this restaurant
-            dup = await conn.fetchrow(
-                """SELECT id FROM waitlist_entries
-                   WHERE restaurant_id = $1 AND phone = $2
-                   AND status IN ('waiting', 'notified')""",
-                restaurant_id, phone,
+            if phone:
+                phones = await conn.fetch(
+                    f"SELECT phone FROM waitlist_entries WHERE {clause} AND status IN ('waiting','notified') AND phone IS NOT NULL",
+                    *params,
+                )
+                if any(_phone(row["phone"], validate=False) == phone for row in phones):
+                    raise ConflictError("Customer is already on this waitlist")
+            position = 1 + await conn.fetchval(
+                f"SELECT COALESCE(MAX(position),0) FROM waitlist_entries WHERE {clause} AND status IN ('waiting','notified')",
+                *params,
             )
-            if dup:
-                raise ConflictError(f"Customer with phone {phone} is already on the waitlist")
-
-            max_pos = await conn.fetchval(
-                """SELECT COALESCE(MAX(position), 0) FROM waitlist_entries
-                   WHERE user_id = $1 AND status IN ('waiting', 'notified')
-                   AND restaurant_id = $2""",
-                owner_id, restaurant_id,
-            )
-            position = max_pos + 1
-
-            est_minutes = await self._estimate_wait(conn, owner_id, restaurant_id, position, party_size)
-
+            estimate = None
             row = await conn.fetchrow(
-                """INSERT INTO waitlist_entries
-                   (restaurant_id, branch_id, user_id, customer_name, phone,
-                    party_size, source, status, position, estimated_wait_minutes, notes)
-                   VALUES ($1, NULL, $2, $3, $4, $5, 'qr', 'waiting', $6, $7, $8)
-                   RETURNING *""",
-                restaurant_id, owner_id, customer_name, phone, party_size,
-                position, est_minutes, notes,
+                "INSERT INTO waitlist_entries (user_id,restaurant_id,branch_id,customer_name,phone,party_size,source,status,position,estimated_wait_minutes,notes) "
+                "VALUES($1,$2::uuid,$3::uuid,$4,$5,$6,$7,'waiting',$8,$9,$10) RETURNING *",
+                *params,
+                customer_name.strip(),
+                phone,
+                party_size,
+                source,
+                position,
+                estimate,
+                notes,
             )
-
+            await self._reposition(conn, user)
+            row = await conn.fetchrow("SELECT * FROM waitlist_entries WHERE id=$1", row["id"])
             await self._log_action(
-                conn, restaurant_id, row["id"], "added",
-                {"source": "qr", "party_size": party_size}, "customer",
+                conn, user.restaurant_id, row["id"], "added", {"source": source}, user.user_id
             )
+        result = self._format_entry(row)
+        await _broadcast_waitlist("waitlist.created", user.restaurant_id, result)
+        return result
 
-        logger.info("waitlist_entry_added_public",
-                    id=str(row["id"]), name=customer_name, position=position,
-                    restaurant_id=str(restaurant_id))
-        entry = self._format_entry(row)
-        await _broadcast_waitlist("waitlist.created", restaurant_id, entry)
-        return entry
+    async def add_entry_public(
+        self, restaurant_id, customer_name, party_size, phone, notes=None, branch_id=None
+    ):
+        user = await self.public_context(restaurant_id, branch_id)
+        async with use_tenant(user.user_id):
+            result = await self.add_entry(user, customer_name, party_size, phone, "qr", notes)
+        token = secrets.token_urlsafe(32)
+        async with get_service_connection() as conn:
+            await conn.execute(
+                "UPDATE waitlist_entries SET push_token_hash=$2 WHERE id=$1::uuid",
+                result["id"],
+                hashlib.sha256(token.encode()).hexdigest(),
+            )
+        return {**self._public_entry(result), "push_token": token}
 
-    # ─── Get single entry (public — for QR customers) ─────────
-
-    async def get_entry_status(self, entry_id: UUID) -> Optional[dict]:
-        """Get waitlist entry status. Used by QR customer page — no auth needed."""
+    async def get_queue(self, user, status=None, limit=50, offset=0):
+        clause, params = _scope(user, "w")
+        if status:
+            clause += " AND w.status=$4"
+            params.append(status)
+        else:
+            clause += " AND w.status IN ('waiting','notified')"
         async with get_connection() as conn:
+            total = await conn.fetchval(f"SELECT COUNT(*) FROM waitlist_entries w WHERE {clause}", *params)
+            params.extend([limit, offset])
+            rows = await conn.fetch(
+                "SELECT w.*,rt.table_number,rt.capacity AS table_capacity,j.state AS delivery_status FROM waitlist_entries w LEFT JOIN waitlist_push_jobs j ON j.entry_id=w.id "
+                f"LEFT JOIN restaurant_tables rt ON rt.id=w.assigned_table_id WHERE {clause} "
+                f"ORDER BY w.position,w.created_at,w.id LIMIT ${len(params)-1} OFFSET ${len(params)}",
+                *params,
+            )
+        return {"total": total, "entries": [self._format_entry(row) for row in rows]}
+
+    @staticmethod
+    def _public_entry(row):
+        fields = (
+            "id",
+            "customer_name",
+            "party_size",
+            "status",
+            "position",
+            "estimated_wait_minutes",
+            "notified_at",
+            "expires_at",
+            "seated_at",
+            "table_number",
+            "assigned_table_number",
+            "delivery_status",
+        )
+        return {key: value for key, value in WaitlistService._format_entry(row).items() if key in fields}
+
+    async def get_entry_status(self, entry_id):
+        async with get_service_connection() as conn:
             row = await conn.fetchrow(
-                """SELECT w.*, rt.table_number
-                   FROM waitlist_entries w
-                   LEFT JOIN restaurant_tables rt ON rt.id = w.assigned_table_id
-                   WHERE w.id = $1""",
-                entry_id,
+                "SELECT w.*,rt.table_number,j.state AS delivery_status FROM waitlist_entries w LEFT JOIN waitlist_push_jobs j ON j.entry_id=w.id LEFT JOIN restaurant_tables rt ON rt.id=w.assigned_table_id WHERE w.id=$1::uuid",
+                str(entry_id),
             )
-        if not row:
-            return None
-        return self._format_entry(row)
+        return self._public_entry(row) if row else None
 
-    # ─── Notify next (best-fit or FIFO) ───────────────────────
-
-    async def notify_next(self, user: UserContext, table_id: Optional[UUID] = None) -> Optional[dict]:
-        """
-        Find the best-fit customer for available table(s) and mark as notified.
-        If table_id is given, match against that specific table.
-        Otherwise, check all vacant tables.
-        """
-        rt_clause, rt_params = tenant_where_clause(user)
-
-        async with get_connection() as conn:
-            # Get settings
-            settings = await self._get_settings(conn, user)
-            expiry_minutes = settings["notify_expiry_minutes"] if settings else 5
-            best_fit = settings["best_fit_enabled"] if settings else True
-
-            # Get available table(s)
-            if table_id:
-                tables = await conn.fetch(
-                    f"""SELECT id, table_number, capacity FROM restaurant_tables
-                        WHERE {rt_clause} AND id = ${len(rt_params) + 1}
-                        AND status = 'blank' AND is_active = true""",
-                    *rt_params, table_id,
-                )
-            else:
-                tables = await conn.fetch(
-                    f"""SELECT id, table_number, capacity FROM restaurant_tables
-                        WHERE {rt_clause} AND status = 'blank' AND is_active = true
-                        ORDER BY capacity ASC""",
-                    *rt_params,
-                )
-
-            if not tables:
-                tables = []
-
-            # Get waiting entries
-            w_params = [user.user_id] if not user.is_branch_user else [user.owner_id]
+    async def notify_next(self, user, table_id=None):
+        await self.expire_overdue(user)
+        clause, params = _scope(user)
+        async with get_transaction() as conn:
+            await _lock_queue(conn, user)
+            settings = await self._get_settings(conn, user) or self._default_settings()
             waiting = await conn.fetch(
-                """SELECT * FROM waitlist_entries
-                   WHERE user_id = $1 AND status = 'waiting'
-                   ORDER BY position ASC""",
-                *w_params,
+                f"SELECT * FROM waitlist_entries WHERE {clause} AND status='waiting' ORDER BY position,created_at,id FOR UPDATE",
+                *params,
             )
-
             if not waiting:
-                # Empty queue — route surfaces a clear message
                 return None
-
-            # Best-fit matching: for each table, find best-fit customer
-            matched = None
-            matched_table = None
-
-            for table in tables:
-                cap = table["capacity"]
-                if best_fit:
-                    # Find closest party_size <= capacity, preferring exact match
-                    best = None
-                    best_diff = float("inf")
-                    for entry in waiting:
-                        if entry["party_size"] <= cap:
-                            diff = cap - entry["party_size"]
-                            if diff < best_diff:
-                                best = entry
-                                best_diff = diff
-                                if diff == 0:
-                                    break  # perfect match
-                    if best:
-                        matched = best
-                        matched_table = table
-                        break
-                else:
-                    # FIFO: just take first that fits
-                    for entry in waiting:
-                        if entry["party_size"] <= cap:
-                            matched = entry
-                            matched_table = table
-                            break
-                    if matched:
-                        break
-
-            # Fallback: if no table matched (none free, none configured, or every
-            # party is too big for the free tables), still notify the FIRST waiter
-            # so the merchant's "Notify Next" button always advances the queue.
-            if not matched:
-                matched = waiting[0]
-                matched_table = None
-
-            # Mark as notified
-            expires_at = datetime.now(timezone.utc) + timedelta(minutes=expiry_minutes)
-            row = await conn.fetchrow(
-                """UPDATE waitlist_entries
-                   SET status = 'notified', notified_at = now(), expires_at = $1,
-                       assigned_table_id = $2
-                   WHERE id = $3 RETURNING *""",
-                expires_at, matched_table["id"] if matched_table else None, matched["id"],
+            table_clause, table_params = _scope(user, "t")
+            if table_id:
+                table_clause += " AND t.id=$4::uuid"
+                table_params.append(str(table_id))
+            tables = await conn.fetch(
+                f"SELECT t.* FROM restaurant_tables t WHERE {table_clause} AND t.is_active "
+                "AND t.status IN ('blank','available') AND NOT t.is_occupied "
+                "ORDER BY t.capacity,t.id FOR UPDATE OF t",
+                *table_params,
             )
-
-            await self._log_action(conn, user.restaurant_id, matched["id"], "notified",
-                                   {"table": matched_table["table_number"] if matched_table else None,
-                                    "expires_at": expires_at.isoformat()},
-                                   user.user_id)
-
-        logger.info("waitlist_notified",
-                     entry_id=str(matched["id"]),
-                     table=matched_table["table_number"] if matched_table else None,
-                     party_size=matched["party_size"])
-
-        result = self._format_entry(row)
-        result["assigned_table_number"] = matched_table["table_number"] if matched_table else None
-        await _broadcast_waitlist("waitlist.updated", user.restaurant_id, result)
-        return result
-
-    # ─── Seat customer ─────────────────────────────────────────
-
-    async def seat_customer(
-        self,
-        user: UserContext,
-        entry_id: UUID,
-        table_id: Optional[str] = None,
-        guest_count: Optional[int] = None,
-    ) -> dict:
-        """Mark customer as seated, flip table to running, and open a dine-in session.
-
-        ``table_id`` overrides any previously assigned table (e.g. when staff
-        seats directly without going through notify-next). If neither is set,
-        only the waitlist row is updated.
-        """
-        clause, params = tenant_where_clause(user)
-        params.append(entry_id)
-
-        async with get_connection() as conn:
-            # Look up the entry regardless of status so we can replay an
-            # idempotent success when the same seat call is retried (double-tap
-            # in the UI, network retry, etc.) instead of returning a 404/409.
-            entry = await conn.fetchrow(
-                f"""SELECT * FROM waitlist_entries
-                    WHERE {clause} AND id = ${len(params)}""",
-                *params,
-            )
-            if not entry:
-                raise NotFoundError("Waitlist entry", str(entry_id))
-
-            # Idempotent replay: entry already seated.
-            if entry["status"] == "seated":
-                existing_tid = str(entry["assigned_table_id"]) if entry["assigned_table_id"] else None
-                requested_tid = table_id or existing_tid
-                # Same table (or caller didn't pin one) → replay success.
-                if existing_tid and (not table_id or table_id == existing_tid):
-                    logger.info("waitlist_seat_replay", entry_id=str(entry_id),
-                                table_id=existing_tid)
-                    result = self._format_entry(entry)
-                    # Ensure the table is still marked occupied (in case it
-                    # was manually freed). Best-effort, no error if it fails.
-                    await self._force_table_occupied(existing_tid, user)
-                    return result
-                # Already seated at a DIFFERENT table than the caller asked for.
-                raise ConflictError(
-                    f"Waitlist entry already seated at table {existing_tid}"
-                )
-
-            if entry["status"] not in ("waiting", "notified"):
-                # cancelled / no_show / etc. — not a seatable state.
-                raise ConflictError(
-                    f"Cannot seat entry in status '{entry['status']}'"
-                )
-
-            effective_table_id = table_id or (
-                str(entry["assigned_table_id"]) if entry["assigned_table_id"] else None
-            )
-
-            row = await conn.fetchrow(
-                """UPDATE waitlist_entries
-                   SET status = 'seated', seated_at = now(),
-                       assigned_table_id = COALESCE($2::uuid, assigned_table_id)
-                   WHERE id = $1 RETURNING *""",
-                entry_id, effective_table_id,
-            )
-
-            await self._log_action(conn, user.restaurant_id, entry_id, "seated",
-                                   {"table_id": effective_table_id},
-                                   user.user_id)
-
-            # Recalculate positions for remaining waiting entries
-            await self._reposition(conn, entry["user_id"], entry["restaurant_id"])
-
-        # Open a dine-in table session so the Table Orders screen lists it.
-        # Done outside the waitlist tx because start_session takes its own
-        # distributed lock + serializable transaction.
-        session_info = None
-        if effective_table_id:
-            try:
-                from app.services.table_service import TableSessionService
-                from app.core.exceptions import ConflictError
-                guests = guest_count or int(entry["party_size"] or 1)
-                try:
-                    session_info = await TableSessionService().start_session(
-                        user=user, table_id=effective_table_id, guest_count=guests,
+            matched = table = None
+            for candidate in tables:
+                if await conn.fetchval(
+                    "SELECT EXISTS(SELECT 1 FROM waitlist_entries WHERE assigned_table_id=$1 AND status='notified') "
+                    "OR EXISTS(SELECT 1 FROM table_sessions WHERE table_id=$1 AND is_active AND (expires_at IS NULL OR expires_at>now())) "
+                    "OR EXISTS(SELECT 1 FROM dine_in_sessions WHERE table_id=$1 AND status='active')",
+                    candidate["id"],
+                ):
+                    continue
+                fits = [row for row in waiting if row["party_size"] <= (candidate["capacity"] or 0)]
+                if fits:
+                    matched = (
+                        max(fits, key=lambda row: row["party_size"])
+                        if settings["best_fit_enabled"]
+                        else fits[0]
                     )
-                except ConflictError:
-                    # Table already has an active session (e.g. customer
-                    # scanned QR first). Just ensure it shows as occupied.
-                    await self._force_table_occupied(effective_table_id, user)
-                    session_info = {"already_active": True}
-            except Exception as exc:
-                # Fall back to a plain occupied flip so the table at least
-                # turns yellow on the floor map even if session creation fails.
-                logger.error("waitlist_seat_session_open_failed",
-                             entry_id=str(entry_id), table_id=effective_table_id,
-                             error=str(exc))
-                await self._force_table_occupied(effective_table_id, user)
-
-        logger.info("waitlist_seated", entry_id=str(entry_id),
-                    table_id=effective_table_id,
-                    session_opened=bool(session_info))
+                    table = candidate
+                    break
+            if not matched:
+                raise ConflictError("No available table fits the waiting parties")
+            row = await conn.fetchrow(
+                "UPDATE waitlist_entries SET status='notified',notified_at=now(),expires_at=now()+$1::interval,assigned_table_id=$2 "
+                "WHERE id=$3 AND status='waiting' RETURNING *",
+                timedelta(minutes=settings["notify_expiry_minutes"]),
+                table["id"],
+                matched["id"],
+            )
+            await self._reposition(conn, user)
+            await self._log_action(
+                conn, user.restaurant_id, row["id"], "notified", {"table_id": str(table["id"])}, user.user_id
+            )
         result = self._format_entry(row)
-        if session_info and isinstance(session_info, dict):
-            result["session_token"] = session_info.get("session_token")
-            result["session_id"] = session_info.get("session_id")
+        result["assigned_table_number"] = table["table_number"]
         await _broadcast_waitlist("waitlist.updated", user.restaurant_id, result)
         return result
 
-    async def _force_table_occupied(self, table_id: str, user: UserContext) -> None:
-        """Best-effort table status flip used when session creation is unavailable."""
+    async def seat_customer(self, user, entry_id, table_id=None, guest_count=None):
+        from app.services.waitlist_tables import create_seating_session
+
+        clause, params = _scope(user)
+        async with get_transaction() as conn:
+            await _lock_queue(conn, user)
+            entry = await conn.fetchrow(
+                f"SELECT * FROM waitlist_entries WHERE {clause} AND id=$4::uuid FOR UPDATE",
+                *params,
+                str(entry_id),
+            )
+            if not entry:
+                raise NotFoundError("Waitlist entry", str(entry_id))
+            if entry["status"] == "seated":
+                if table_id and str(entry["assigned_table_id"]) != str(table_id):
+                    raise ConflictError("Customer is already seated at another table")
+                result = self._format_entry(entry)
+                # Replay only the original session; never reoccupy a table or
+                # return credentials belonging to a later party.
+                session = (
+                    await conn.fetchrow(
+                        "SELECT * FROM table_sessions WHERE id=$1", entry["seated_session_id"]
+                    )
+                    if entry["seated_session_id"]
+                    else None
+                )
+                if session:
+                    result["session_id"] = str(session["id"])
+                    if session["is_active"] and (
+                        not session["expires_at"] or session["expires_at"] > datetime.now(timezone.utc)
+                    ):
+                        result["session_token"] = session["session_token"]
+                return result
+            if entry["status"] not in {"waiting", "notified"}:
+                raise ConflictError(f"Cannot seat entry in status '{entry['status']}'")
+            if (
+                entry["status"] == "notified"
+                and entry["expires_at"]
+                and entry["expires_at"] <= datetime.now(timezone.utc)
+            ):
+                raise ConflictError("Notification expired; add the party to the queue again")
+            target = table_id or entry["assigned_table_id"]
+            if not target:
+                raise ValidationError("A table is required to seat a party")
+            guests = guest_count if guest_count is not None else entry["party_size"]
+            if guests < entry["party_size"] or guests > 50:
+                raise ValidationError("Guest count must include the entire waiting party (maximum 50)")
+            session = await create_seating_session(conn, user, str(target), guests, str(entry_id))
+            row = await conn.fetchrow(
+                "UPDATE waitlist_entries SET status='seated',seated_at=now(),expires_at=NULL,assigned_table_id=$2::uuid,seated_session_id=$3::uuid "
+                "WHERE id=$1::uuid RETURNING *",
+                str(entry_id),
+                str(target),
+                session["session_id"],
+            )
+            await self._log_action(
+                conn, user.restaurant_id, entry_id, "seated", {"table_id": str(target)}, user.user_id
+            )
+            await self._reposition(conn, user)
+        result = {**self._format_entry(row), **session}
+        await _broadcast_waitlist("waitlist.updated", user.restaurant_id, result)
         try:
-            async with get_connection() as conn:
-                await conn.execute(
-                    """UPDATE restaurant_tables
-                       SET status = 'running', is_occupied = true,
-                           occupied_since = COALESCE(occupied_since, now())
-                       WHERE id = $1""",
-                    table_id,
+            from app.core.redis import cache_delete
+
+            await cache_delete(f"tables_list:{_owner(user)}")
+            await emit_and_publish(
+                DomainEvent(
+                    event_type=TABLE_SESSION_STARTED,
+                    payload={
+                        "session_id": session["session_id"],
+                        "table_id": str(target),
+                        "guest_count": guests,
+                    },
+                    user_id=user.user_id,
+                    restaurant_id=str(user.restaurant_id),
+                    branch_id=user.branch_id,
                 )
-            try:
-                from app.core.redis import cache_delete
-                owner = user.owner_id if user.is_branch_user else user.user_id
-                await cache_delete(f"tables_list:{owner}")
-            except Exception:
-                pass
-        except Exception as exc:
-            logger.error("force_table_occupied_failed", table_id=table_id, error=str(exc))
+            )
+        except Exception:
+            logger.exception("waitlist_seating_notification_failed")
+        return result
 
-    # ─── Skip customer ─────────────────────────────────────────
-
-    async def skip_customer(self, user: UserContext, entry_id: UUID, reason: str = "no_show") -> dict:
-        """Skip a customer (no-show or manual skip)."""
-        clause, params = tenant_where_clause(user)
-        params.append(entry_id)
-
-        async with get_connection() as conn:
+    async def _finish_entry(self, user, entry_id, status, reason=None):
+        clause, params = _scope(user)
+        async with get_transaction() as conn:
+            await _lock_queue(conn, user)
             entry = await conn.fetchrow(
-                f"""SELECT * FROM waitlist_entries
-                    WHERE {clause} AND id = ${len(params)}
-                    AND status IN ('waiting', 'notified')""",
+                f"SELECT * FROM waitlist_entries WHERE {clause} AND id=$4::uuid FOR UPDATE",
                 *params,
+                str(entry_id),
             )
             if not entry:
                 raise NotFoundError("Waitlist entry", str(entry_id))
-
+            if entry["status"] == status:
+                return self._format_entry(entry)
+            if entry["status"] not in {"waiting", "notified"}:
+                raise ConflictError(f"Cannot {status} entry in status '{entry['status']}'")
             row = await conn.fetchrow(
-                """UPDATE waitlist_entries
-                   SET status = 'skipped', assigned_table_id = NULL
-                   WHERE id = $1 RETURNING *""",
-                entry_id,
+                "UPDATE waitlist_entries SET status=$2,assigned_table_id=NULL,expires_at=NULL WHERE id=$1::uuid RETURNING *",
+                str(entry_id),
+                status,
             )
+            await self._log_action(
+                conn, user.restaurant_id, entry_id, status, {"reason": reason}, user.user_id
+            )
+            await self._reposition(conn, user)
+        result = self._format_entry(row)
+        await _broadcast_waitlist("waitlist.updated", user.restaurant_id, result)
+        return result
 
-            await self._log_action(conn, user.restaurant_id, entry_id, "skipped",
-                                   {"reason": reason}, user.user_id)
+    async def skip_customer(self, user, entry_id, reason="no_show"):
+        return await self._finish_entry(user, entry_id, "skipped", reason)
 
-            await self._reposition(conn, entry["user_id"], entry["restaurant_id"])
+    async def cancel_entry(self, user, entry_id):
+        return await self._finish_entry(user, entry_id, "cancelled")
 
-        logger.info("waitlist_skipped", entry_id=str(entry_id), reason=reason)
-        return self._format_entry(row)
-
-    # ─── Cancel (by customer or staff) ─────────────────────────
-
-    async def cancel_entry(self, user: UserContext, entry_id: UUID) -> dict:
-        """Cancel a waitlist entry."""
-        clause, params = tenant_where_clause(user)
-        params.append(entry_id)
-
-        async with get_connection() as conn:
-            entry = await conn.fetchrow(
-                f"""SELECT * FROM waitlist_entries
-                    WHERE {clause} AND id = ${len(params)}
-                    AND status IN ('waiting', 'notified')""",
+    async def reorder(self, user, ordered_ids):
+        ids = [str(value) for value in ordered_ids]
+        if len(ids) != len(set(ids)):
+            raise ValidationError("Queue order contains duplicate entries")
+        clause, params = _scope(user)
+        async with get_transaction() as conn:
+            await _lock_queue(conn, user)
+            active = await conn.fetch(
+                f"SELECT id FROM waitlist_entries WHERE {clause} AND status IN ('waiting','notified') FOR UPDATE",
                 *params,
             )
-            if not entry:
-                raise NotFoundError("Waitlist entry", str(entry_id))
-
-            row = await conn.fetchrow(
-                """UPDATE waitlist_entries
-                   SET status = 'cancelled', assigned_table_id = NULL
-                   WHERE id = $1 RETURNING *""",
-                entry_id,
-            )
-
-            await self._log_action(conn, user.restaurant_id, entry_id, "cancelled",
-                                   None, user.user_id)
-
-            await self._reposition(conn, entry["user_id"], entry["restaurant_id"])
-
-        logger.info("waitlist_cancelled", entry_id=str(entry_id))
-        return self._format_entry(row)
-
-    # ─── Reorder (admin drag & drop) ──────────────────────────
-
-    async def reorder(self, user: UserContext, ordered_ids: list[UUID]) -> list[dict]:
-        """Reorder the queue (admin override). Accepts ordered list of entry IDs."""
-        wl_clause, wl_params = tenant_where_clause(user)
-
-        async with get_connection() as conn:
-            results = []
-            for i, eid in enumerate(ordered_ids, start=1):
-                row = await conn.fetchrow(
-                    f"""UPDATE waitlist_entries SET position = $1
-                        WHERE id = $2 AND {wl_clause} AND status IN ('waiting', 'notified')
-                        RETURNING *""",
-                    i, eid, *wl_params,
+            if set(ids) != {str(row["id"]) for row in active}:
+                raise ConflictError(
+                    "Supply every active entry from this location exactly once; refresh the queue"
                 )
-                if row:
-                    results.append(self._format_entry(row))
+            rows = []
+            for position, entry_id in enumerate(ids, 1):
+                row = await conn.fetchrow(
+                    "UPDATE waitlist_entries SET position=$1 WHERE id=$2::uuid RETURNING *",
+                    position,
+                    entry_id,
+                )
+                rows.append(self._format_entry(row))
+            await self._reposition(conn, user)
+            rows = [
+                self._format_entry(r)
+                for r in await conn.fetch(
+                    f"SELECT * FROM waitlist_entries WHERE {clause} AND status IN ('waiting','notified') ORDER BY position",
+                    *params,
+                )
+            ]
+            await self._log_action(
+                conn, user.restaurant_id, None, "reordered", {"new_order": ids}, user.user_id
+            )
+        await _broadcast_waitlist(
+            "waitlist.updated",
+            user.restaurant_id,
+            {"action": "reordered", "branch_id": user.branch_id, "ordered_ids": ids},
+        )
+        return rows
 
-            await self._log_action(conn, user.restaurant_id, None, "reordered",
-                                   {"new_order": [str(eid) for eid in ordered_ids]},
-                                   user.user_id)
-
-        logger.info("waitlist_reordered", count=len(results))
-        return results
-
-    # ─── Check & expire overdue notifications ──────────────────
-
-    async def expire_overdue(self, user: UserContext) -> list[dict]:
-        """Check for notified entries past their expiry. Mark as skipped."""
-        clause, params = tenant_where_clause(user)
-
-        async with get_connection() as conn:
-            overdue = await conn.fetch(
-                f"""SELECT * FROM waitlist_entries
-                    WHERE {clause} AND status = 'notified'
-                    AND expires_at IS NOT NULL AND expires_at < now()""",
+    async def expire_overdue(self, user):
+        clause, params = _scope(user)
+        async with get_transaction() as conn:
+            await _lock_queue(conn, user)
+            rows = await conn.fetch(
+                f"UPDATE waitlist_entries SET status='skipped',assigned_table_id=NULL,expires_at=NULL WHERE {clause} "
+                "AND status='notified' AND expires_at<=now() RETURNING *",
                 *params,
             )
-
-            results = []
-            for entry in overdue:
-                row = await conn.fetchrow(
-                    """UPDATE waitlist_entries
-                       SET status = 'skipped', assigned_table_id = NULL
-                       WHERE id = $1 RETURNING *""",
-                    entry["id"],
+            for row in rows:
+                await self._log_action(
+                    conn, user.restaurant_id, row["id"], "skipped", {"reason": "expired"}, "system"
                 )
-                results.append(self._format_entry(row))
-
-                await self._log_action(conn, user.restaurant_id, entry["id"], "skipped",
-                                       {"reason": "expired"}, "system")
-
-            if overdue:
-                await self._reposition(conn,
-                                       user.owner_id if user.is_branch_user else user.user_id,
-                                       user.restaurant_id)
-
-        if results:
-            logger.info("waitlist_expired", count=len(results))
+            if rows:
+                await self._reposition(conn, user)
+        results = [self._format_entry(row) for row in rows]
+        for result in results:
+            await _broadcast_waitlist("waitlist.updated", user.restaurant_id, result)
         return results
 
-    # ─── Table freed → auto-notify ────────────────────────────
-
-    async def on_table_freed(self, user: UserContext, table_id: UUID) -> Optional[dict]:
-        """
-        Called when a table becomes vacant.
-        If auto_notify is ON, finds best-fit and notifies automatically.
-        """
+    async def on_table_freed(self, user, table_id):
         async with get_connection() as conn:
-            settings = await self._get_settings(conn, user)
-            if not settings or not settings.get("auto_notify", True):
-                return None
-
-        return await self.notify_next(user, table_id=table_id)
+            settings = await self._get_settings(conn, user) or self._default_settings()
+        if not settings["auto_notify"]:
+            return None
+        try:
+            return await self.notify_next(user, table_id)
+        except ConflictError:
+            return None
 
     # ─── Settings CRUD ────────────────────────────────────────
 
@@ -612,18 +465,29 @@ class WaitlistService:
             return await self._get_settings(conn, user) or self._default_settings()
 
     async def update_settings(self, user: UserContext, data: dict) -> dict:
-        tenant = tenant_insert_fields(user)
+        if data.get("sms_enabled") or data.get("whatsapp_enabled"):
+            raise ValidationError(
+                "SMS and WhatsApp delivery are unavailable; use browser push or staff notification"
+            )
+        tenant = {"user_id": _owner(user)}
 
         allowed = [
-            "notify_expiry_minutes", "avg_turnover_minutes", "sms_enabled",
-            "whatsapp_enabled", "display_screen_enabled", "qr_entry_enabled",
-            "auto_notify", "best_fit_enabled", "display_message",
+            "notify_expiry_minutes",
+            "avg_turnover_minutes",
+            "sms_enabled",
+            "whatsapp_enabled",
+            "display_screen_enabled",
+            "qr_entry_enabled",
+            "auto_notify",
+            "best_fit_enabled",
+            "display_message",
         ]
         fields = {k: v for k, v in data.items() if k in allowed and v is not None}
         if not fields:
             return await self.get_settings(user)
 
-        async with get_connection() as conn:
+        async with get_transaction() as conn:
+            await _lock_queue(conn, user)
             existing = await self._get_settings(conn, user)
 
             if existing:
@@ -648,34 +512,34 @@ class WaitlistService:
                     *vals,
                 )
 
-        return dict(row)
+            await self._reposition(conn, user)
+
+        await _broadcast_waitlist(
+            "waitlist.settings_updated", user.restaurant_id, {"branch_id": user.branch_id}
+        )
+        return {**dict(row), "delivery_capabilities": {"browser_push": True, "sms": False, "whatsapp": False}}
 
     # ─── Display screen data ──────────────────────────────────
 
-    async def get_display_data(self, restaurant_id: UUID) -> dict:
-        """Public endpoint for display screen. No auth — keyed by restaurant_id."""
-        async with get_connection() as conn:
+    async def get_display_data(self, restaurant_id: UUID, branch_id: Optional[UUID] = None) -> dict:
+        user = await self.public_context(restaurant_id, branch_id)
+        clause, params = _scope(user)
+        async with get_service_connection() as conn:
+            settings = await self._get_settings(conn, user) or self._default_settings()
+            if not settings["display_screen_enabled"]:
+                raise NotFoundError("Waitlist display")
             entries = await conn.fetch(
-                """SELECT customer_name, party_size, status, position, estimated_wait_minutes
-                   FROM waitlist_entries
-                   WHERE restaurant_id = $1 AND status IN ('waiting', 'notified')
-                   ORDER BY position ASC LIMIT 20""",
-                restaurant_id,
+                f"SELECT customer_name,party_size,status,position,estimated_wait_minutes FROM waitlist_entries "
+                f"WHERE {clause} AND status IN ('waiting','notified') ORDER BY position,created_at",
+                *params,
             )
-
-            settings = await conn.fetchrow(
-                "SELECT display_message FROM waitlist_settings WHERE restaurant_id = $1",
-                restaurant_id,
-            )
-
-        queue = [dict(r) for r in entries]
-        now_serving = [e for e in queue if e["status"] == "notified"]
-        waiting = [e for e in queue if e["status"] == "waiting"]
-
+        queue = [dict(row) for row in entries]
+        waiting = [row for row in queue if row["status"] == "waiting"]
         return {
             "restaurant_id": str(restaurant_id),
-            "display_message": settings["display_message"] if settings else "Welcome! Please wait for your table.",
-            "now_serving": now_serving,
+            "branch_id": user.branch_id,
+            "display_message": settings["display_message"],
+            "now_serving": [row for row in queue if row["status"] == "notified"],
             "next_up": waiting[:3],
             "total_waiting": len(waiting),
         }
@@ -683,25 +547,28 @@ class WaitlistService:
     # ─── History / Analytics ──────────────────────────────────
 
     async def get_history(
-        self, user: UserContext, limit: int = 50, offset: int = 0,
-        date_from: Optional[str] = None, date_to: Optional[str] = None,
+        self,
+        user: UserContext,
+        limit: int = 50,
+        offset: int = 0,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
     ) -> dict:
-        clause, params = tenant_where_clause(user)
+        clause, params = _scope(user)
         conditions = [clause]
 
         if date_from:
-            params.append(date_from)
+            params.append(_date_bound(date_from))
             conditions.append(f"created_at >= ${len(params)}::timestamptz")
         if date_to:
-            params.append(date_to)
-            conditions.append(f"created_at <= ${len(params)}::timestamptz")
+            params.append(_date_bound(date_to, end=True))
+            op = "<" if len(date_to) == 10 else "<="
+            conditions.append(f"created_at {op} ${len(params)}::timestamptz")
 
         where = " AND ".join(conditions)
 
         async with get_connection() as conn:
-            total = await conn.fetchval(
-                f"SELECT COUNT(*) FROM waitlist_entries WHERE {where}", *params
-            )
+            total = await conn.fetchval(f"SELECT COUNT(*) FROM waitlist_entries WHERE {where}", *params)
             params.extend([limit, offset])
             rows = await conn.fetch(
                 f"""SELECT * FROM waitlist_entries WHERE {where}
@@ -717,8 +584,8 @@ class WaitlistService:
 
     async def get_stats(self, user: UserContext) -> dict:
         """Today's waitlist stats."""
-        clause, params = tenant_where_clause(user)
-        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        clause, params = _scope(user)
+        today_start = datetime.now(_local_zone()).replace(hour=0, minute=0, second=0, microsecond=0)
         params.append(today_start)
 
         async with get_connection() as conn:
@@ -751,60 +618,84 @@ class WaitlistService:
 
     # ─── Internal helpers ──────────────────────────────────────
 
-    async def _estimate_wait(self, conn, user_id: str, restaurant_id, position: int, party_size: int) -> int:
-        """Estimate wait time based on turnover and queue ahead."""
-        settings = await conn.fetchrow(
-            "SELECT avg_turnover_minutes FROM waitlist_settings WHERE user_id = $1 AND restaurant_id = $2",
-            user_id, restaurant_id,
+    async def _reposition(self, conn, user):
+        clause, params = _scope(user)
+        await conn.execute(
+            f"WITH ranked AS (SELECT id,row_number() OVER (ORDER BY position,created_at,id) AS pos "
+            f"FROM waitlist_entries WHERE {clause} AND status IN ('waiting','notified')) "
+            "UPDATE waitlist_entries w SET position=ranked.pos FROM ranked WHERE w.id=ranked.id",
+            *params,
         )
-        turnover = settings["avg_turnover_minutes"] if settings else 30
+        await self._refresh_estimates(conn, user)
 
-        # Count tables that can fit this party
-        fitting_tables = await conn.fetchval(
-            """SELECT COUNT(*) FROM restaurant_tables
-               WHERE user_id = $1 AND is_active = true AND capacity >= $2
-               AND ($3::uuid IS NULL OR restaurant_id = $3)""",
-            user_id, party_size, restaurant_id,
+    async def refresh_estimates(self, user):
+        async with get_transaction() as conn:
+            await _lock_queue(conn, user)
+            await self._reposition(conn, user)
+
+    async def _refresh_estimates(self, conn, user):
+        clause, params = _scope(user)
+        settings = await self._get_settings(conn, user) or self._default_settings()
+        turnover = settings["avg_turnover_minutes"]
+        tables = await conn.fetch(
+            f"SELECT id,capacity,is_occupied,status FROM restaurant_tables WHERE {clause} AND is_active",
+            *params,
         )
-        fitting_tables = max(fitting_tables, 1)
-
-        # People ahead in queue with same or smaller party size
-        ahead = await conn.fetchval(
-            """SELECT COUNT(*) FROM waitlist_entries
-               WHERE user_id = $1 AND status = 'waiting' AND party_size <= $2
-               AND ($3::uuid IS NULL OR restaurant_id = $3)""",
-            user_id, party_size, restaurant_id,
+        reservations = set(
+            await conn.fetchval(
+                f"SELECT array_agg(assigned_table_id) FROM waitlist_entries WHERE {clause} AND status='notified'",
+                *params,
+            )
+            or []
         )
-
-        # Estimate: (people ahead / fitting tables) * turnover time
-        return max(5, math.ceil((ahead / fitting_tables) * turnover))
-
-    async def _reposition(self, conn, user_id: str, restaurant_id) -> None:
-        """Recalculate positions for all active waiting entries."""
-        rows = await conn.fetch(
-            """SELECT id FROM waitlist_entries
-               WHERE user_id = $1 AND status IN ('waiting', 'notified')
-               AND ($2::uuid IS NULL OR restaurant_id = $2)
-               ORDER BY position ASC, created_at ASC""",
-            user_id, restaurant_id,
+        slots = [
+            [
+                r["capacity"] or 0,
+                (
+                    turnover
+                    if r["is_occupied"]
+                    or r["status"] not in ("blank", "available")
+                    or r["id"] in reservations
+                    else 0
+                ),
+            ]
+            for r in tables
+        ]
+        entries = await conn.fetch(
+            f"SELECT id,party_size,status FROM waitlist_entries WHERE {clause} AND status IN ('waiting','notified') ORDER BY position,created_at,id",
+            *params,
         )
-        for i, row in enumerate(rows, start=1):
+        for entry in entries:
+            fits = [slot for slot in slots if slot[0] >= entry["party_size"]]
+            eta = None
+            if entry["status"] == "notified":
+                eta = 0
+            elif fits:
+                slot = min(fits, key=lambda v: (v[1], v[0]))
+                eta = slot[1]
+                slot[1] += turnover
             await conn.execute(
-                "UPDATE waitlist_entries SET position = $1 WHERE id = $2",
-                i, row["id"],
+                "UPDATE waitlist_entries SET estimated_wait_minutes=$2 WHERE id=$1", entry["id"], eta
             )
 
     async def _get_settings(self, conn, user: UserContext) -> Optional[dict]:
+        _scope(user)
         uid = user.owner_id if user.is_branch_user else user.user_id
         row = await conn.fetchrow(
             "SELECT * FROM waitlist_settings WHERE user_id = $1 AND restaurant_id = $2",
-            uid, user.restaurant_id,
+            uid,
+            user.restaurant_id,
         )
-        return dict(row) if row else None
+        return (
+            {**dict(row), "delivery_capabilities": {"browser_push": True, "sms": False, "whatsapp": False}}
+            if row
+            else None
+        )
 
     @staticmethod
     def _default_settings() -> dict:
         return {
+            "delivery_capabilities": {"browser_push": True, "sms": False, "whatsapp": False},
             "notify_expiry_minutes": 5,
             "avg_turnover_minutes": 30,
             "sms_enabled": False,
@@ -820,14 +711,16 @@ class WaitlistService:
         await conn.execute(
             """INSERT INTO waitlist_history (restaurant_id, waitlist_entry_id, action, details, performed_by)
                VALUES ($1, $2, $3, $4::jsonb, $5)""",
-            restaurant_id, entry_id or restaurant_id, action,
+            restaurant_id,
+            entry_id or restaurant_id,
+            action,
             __import__("json").dumps(details) if details else None,
             performed_by,
         )
 
     @staticmethod
     def _format_entry(row) -> dict:
-        d = dict(row)
+        d = {k: v for k, v in dict(row).items() if k != "push_token_hash"}
         # Convert UUIDs and datetimes for JSON
         for k, v in d.items():
             if isinstance(v, UUID):
@@ -835,3 +728,19 @@ class WaitlistService:
             elif isinstance(v, datetime):
                 d[k] = v.isoformat()
         return d
+
+
+def _local_zone():
+    return ZoneInfo(os.getenv("WAITLIST_TIMEZONE", "Asia/Kolkata"))
+
+
+def _date_bound(value, end=False):
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=_local_zone())
+        if end and len(value) == 10:
+            parsed += timedelta(days=1)
+        return parsed
+    except (ValueError, TypeError):
+        raise ValidationError("Use an ISO date or datetime for history filters")

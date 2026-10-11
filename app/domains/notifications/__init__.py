@@ -1,1 +1,1 @@
-"""notifications domain — see docs/ARCHITECTURE_V2.md"""
+"""notifications domain â€” see docs/ARCHITECTURE_V2.md"""

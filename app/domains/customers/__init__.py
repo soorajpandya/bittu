@@ -1,1 +1,1 @@
-"""customers domain — see docs/ARCHITECTURE_V2.md"""
+"""customers domain â€” see docs/ARCHITECTURE_V2.md"""

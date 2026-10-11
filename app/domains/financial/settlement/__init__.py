@@ -1,1 +1,1 @@
-"""financial.settlement — see docs/ARCHITECTURE_V2.md"""
+"""financial.settlement â€” see docs/ARCHITECTURE_V2.md"""

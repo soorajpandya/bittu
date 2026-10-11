@@ -14,8 +14,15 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import UserContext, require_platform_admin
 from app.services.fee_service import fee_service
+from app.services.razorpay.fee_policy import rate_card
 
-router = APIRouter(prefix="/admin/fee-plans", tags=["Fee Plans (Admin)"])
+router = APIRouter(prefix="/admin/fee-plans", tags=["Fee Plan Simulations (Admin)"])
+
+
+@router.get('/effective-policy')
+async def effective_policy(admin: UserContext = Depends(require_platform_admin())):
+    return {**rate_card(),'pricing_mode':'fixed_total_deduction',
+            'gateway_cost_bearer':'platform','fee_plans_apply_to_route':False}
 
 
 # ──────────────────────────── pydantic ───────────────────────────────
@@ -220,7 +227,7 @@ async def resolve_plan(
     return await fee_service.resolve_plan(merchant_id, at_ts=at_ts)
 
 
-@router.post("/compute")
+@router.post("/compute", summary="Simulate a draft fee plan", description="Returns draft-plan math and the effective Route quote separately. Draft rules do not change captures.")
 async def compute_fee(
     body: _ComputeBody,
     admin: UserContext = Depends(require_platform_admin()),

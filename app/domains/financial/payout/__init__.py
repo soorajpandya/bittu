@@ -1,1 +1,1 @@
-"""financial.payout — see docs/ARCHITECTURE_V2.md"""
+"""financial.payout â€” see docs/ARCHITECTURE_V2.md"""

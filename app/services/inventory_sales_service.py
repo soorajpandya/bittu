@@ -13,6 +13,7 @@ from app.core.database import get_connection, get_serializable_transaction
 from app.core.events import INVENTORY_SOLD
 from app.core.exceptions import InventoryError, NotFoundError, ValidationError
 from app.core.logging import get_logger
+from app.services.inventory_write import inventory_transaction, unit_factor
 from app.services.inventory_event_service import inventory_event_service
 
 logger = get_logger(__name__)
@@ -60,23 +61,31 @@ class InventorySalesService:
                 "line_total": _money(line_net + line_tax),
             })
 
+        if len({line["ingredient_id"] for line in prepared}) != len(prepared):
+            raise ValidationError("duplicate ingredients in sale; combine their quantities")
+        prepared.sort(key=lambda line: line["ingredient_id"])
         total = _money(sub_total + tax_amount)
 
-        async with get_serializable_transaction() as conn:
+        async with inventory_transaction() as (conn, events):
             # Verify each ingredient exists & has stock
             for line in prepared:
                 ing = await conn.fetchrow(
-                    "SELECT id FROM ingredients WHERE id=$1 AND restaurant_id=$2::uuid",
+                    "SELECT id, unit, cost_per_unit FROM ingredients WHERE id=$1 AND restaurant_id=$2::uuid FOR UPDATE",
                     line["ingredient_id"], restaurant_id,
                 )
                 if not ing:
                     raise NotFoundError("ingredient", line["ingredient_id"])
+                factor = await unit_factor(conn, restaurant_id=restaurant_id,
+                                           ingredient_id=line["ingredient_id"],
+                                           from_unit=line["unit"], to_unit=ing["unit"])
+                line["stock_quantity"] = line["quantity"] * factor
+                line["stock_cost"] = Decimal(str(ing["cost_per_unit"] or 0))
                 bal = await conn.fetchval(
                     "SELECT fn_inventory_balance($1, $2::uuid, NULL)",
                     line["ingredient_id"], branch_id,
                 )
                 bal = Decimal(str(bal or 0))
-                if bal < line["quantity"] and not allow_negative:
+                if bal < line["stock_quantity"] and not allow_negative:
                     raise InventoryError(
                         f"insufficient stock to sell {line['ingredient_id']}: "
                         f"need {line['quantity']}, have {bal}"
@@ -109,22 +118,23 @@ class InventorySalesService:
                     float(line["tax_percent"]), float(line["line_total"]),
                 )
 
-        correlation = str(sale_id)
-        for line in prepared:
-            await inventory_event_service.append_event(
-                restaurant_id=restaurant_id, branch_id=branch_id,
-                ingredient_id=line["ingredient_id"],
-                event_type=INVENTORY_SOLD,
-                quantity_out=line["quantity"],
-                unit_cost=line["unit_price"],
-                reference_type="inventory_sale",
-                reference_id=correlation,
-                dedup_key=f"sale:{correlation}:{line['ingredient_id']}",
-                correlation_id=correlation,
-                source="sale",
-                notes=f"Raw-material sale {sale['sale_number']}",
-                created_by=created_by,
-            )
+            correlation = str(sale_id)
+            for line in prepared:
+                await inventory_event_service.append_event(
+                    conn=conn, event_buffer=events,
+                    restaurant_id=restaurant_id, branch_id=branch_id,
+                    ingredient_id=line["ingredient_id"],
+                    event_type=INVENTORY_SOLD,
+                    quantity_out=line["stock_quantity"],
+                    unit_cost=line["stock_cost"],
+                    reference_type="inventory_sale",
+                    reference_id=correlation,
+                    dedup_key=f"sale:{correlation}:{line['ingredient_id']}",
+                    correlation_id=correlation,
+                    source="sale",
+                    notes=f"Raw-material sale {sale['sale_number']}",
+                    created_by=created_by,
+                )
 
         return await self.get_sale(restaurant_id=restaurant_id, sale_id=correlation)
 

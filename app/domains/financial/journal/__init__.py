@@ -1,1 +1,1 @@
-"""financial.journal — see docs/ARCHITECTURE_V2.md"""
+"""financial.journal â€” see docs/ARCHITECTURE_V2.md"""

@@ -4,8 +4,8 @@ existing payment / settlement code paths to the escrow_ledger.
 
 DESIGN CONTRACT (identical to merchant_ledger_integration)
 ─────────────────────────────────────────────────────────
-1. Best-effort. A ledger failure is LOGGED but NEVER re-raised — the
-   upstream payment/settlement transaction is the source of truth.
+1. Capture supports strict=True so failures propagate for webhook recovery.
+   Legacy best-effort helpers log errors; Route reports use gateway mirrors.
 2. Deterministic idempotency keys — replays are no-ops at the DB level.
 3. Pass `conn=` to participate in an outer transaction; otherwise opens
    its own.
@@ -18,6 +18,7 @@ from typing import Any, Optional
 
 from app.core.logging import get_logger
 from app.services.escrow_service import escrow_service
+from app.services.razorpay.fee_policy import is_cash_method
 
 logger = get_logger(__name__)
 
@@ -45,8 +46,11 @@ async def hold_payment_in_escrow(
     actor_id: Optional[str] = None,
     extra_metadata: Optional[dict[str, Any]] = None,
     conn=None,
+    strict: bool = False,
 ) -> None:
-    """CREDIT escrow_hold for a captured payment. Idempotent on payment_id."""
+    """Hold gateway funds only. Cash is already held by the restaurant."""
+    if is_cash_method(method):
+        return
     if not merchant_id or not payment_id:
         return
     amt = _to_decimal(amount)
@@ -74,6 +78,9 @@ async def hold_payment_in_escrow(
                 "error":       str(exc),
             },
         )
+        if strict:
+            raise
+
 
 
 # ════════════════════════════════════════════════════════════════════════

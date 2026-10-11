@@ -1,1 +1,1 @@
-"""financial.refunds — see docs/ARCHITECTURE_V2.md"""
+"""financial.refunds â€” see docs/ARCHITECTURE_V2.md"""

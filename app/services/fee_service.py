@@ -1,25 +1,23 @@
-"""
-Fee Engine v2 — service layer (Phase 10).
+"""Draft fee-plan simulations and their computation audit log.
 
-Pluggable fee plans replace the hardcoded 0.30% in `statement_service`.
-Existing settlement math is left untouched; this engine is opt-in for new
-code paths and exposes a deterministic `compute_fee` / `preview_fee` API.
-
-Conventions match Phase 7-9 services: thin wrappers around SQL fns, row
-mappers normalize JSONB columns, all timestamps to ISO strings.
+Route captures use the shared flat 5% policy. Active/default flags here select
+simulation rules only; they do not change live merchant allocations.
 """
 from __future__ import annotations
 
 import json
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Optional
 from uuid import UUID
 
 from app.core.database import get_connection
 from app.core.exceptions import (
-    NotFoundError, ValidationError, ConflictError,
+    ConflictError,
+    NotFoundError,
+    ValidationError,
 )
 from app.core.logging import get_logger
+from app.services.razorpay.fee_policy import quote_fee, rate_card
 
 logger = get_logger(__name__)
 
@@ -36,6 +34,8 @@ def _plan_row(r) -> dict:
     meta = r["metadata"]
     if isinstance(meta, str): meta = json.loads(meta)
     return {
+        "pricing_mode": "simulation",
+        "applies_to_route": False,
         "id":          int(r["id"]),
         "plan_uuid":   str(r["plan_uuid"]),
         "code":        r["code"],
@@ -57,6 +57,8 @@ def _rule_row(r) -> dict:
     meta = r["metadata"]
     if isinstance(meta, str): meta = json.loads(meta)
     return {
+        "pricing_mode": "simulation",
+        "applies_to_route": False,
         "id":             int(r["id"]),
         "rule_uuid":      str(r["rule_uuid"]),
         "plan_id":        int(r["plan_id"]),
@@ -79,6 +81,8 @@ def _override_row(r) -> dict:
     meta = r["metadata"]
     if isinstance(meta, str): meta = json.loads(meta)
     return {
+        "pricing_mode": "simulation",
+        "applies_to_route": False,
         "id":            int(r["id"]),
         "override_uuid": str(r["override_uuid"]),
         "merchant_id":   str(r["merchant_id"]),
@@ -97,6 +101,8 @@ def _comp_row(r) -> dict:
     bd = r["breakdown"]
     if isinstance(bd, str): bd = json.loads(bd)
     return {
+        "pricing_mode": "simulation",
+        "applies_to_route": False,
         "id":              int(r["id"]),
         "computation_uuid": str(r["computation_uuid"]),
         "merchant_id":     str(r["merchant_id"]),
@@ -487,7 +493,7 @@ class FeeService:
         payment_id: Optional[str] = None,
     ) -> dict:
         gd = Decimal(str(gross))
-        if gd < 0:
+        if not gd.is_finite() or gd < 0:
             raise ValidationError("gross must be >= 0")
         try:
             async with get_connection() as c:
@@ -514,7 +520,10 @@ class FeeService:
         # numbers as floats which loses precision (2.54 → 2.5400…035).
         if not isinstance(j, str):
             j = json.dumps(j)
-        return json.loads(j, parse_float=Decimal, parse_int=Decimal)
+        result=json.loads(j,parse_float=Decimal,parse_int=Decimal)
+        return {**result,'pricing_mode':'simulation','applies_to_route':False,
+                'effective_route_quote':quote_fee(gd,payment_method) if currency.upper()=='INR' else None,
+                'effective_route_policy':rate_card(payment_method)}
 
     async def preview_fee(
         self,

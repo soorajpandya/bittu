@@ -26,6 +26,8 @@ from app.core.database import get_connection, get_transaction
 from app.core.exceptions import NotFoundError, ValidationError, ConflictError
 from app.core.logging import get_logger
 from app.services.audit_service import audit_service
+from app.services.razorpay import ledgers
+from app.services.razorpay.fee_policy import rupees_to_paise
 
 logger = get_logger(__name__)
 
@@ -96,16 +98,15 @@ class RefundService:
             # validate payment ownership and refundable balance
             pay = await c.fetchrow(
                 "SELECT id, restaurant_id, order_id, amount, status, currency "
-                "FROM payments WHERE id = $1::uuid",
+                "FROM payments WHERE id = $1::uuid FOR UPDATE",
                 str(payment_id),
             )
             if pay is None:
                 raise NotFoundError("payment not found")
             if pay["restaurant_id"] is not None and str(pay["restaurant_id"]) != str(merchant_id):
                 raise NotFoundError("payment not found")
-            if pay["status"] not in ("paid", "captured", "succeeded", "completed"):
-                # be permissive — many callers may not have gateway statuses
-                logger.info("refund.payment_status_not_paid", payment_id=str(payment_id), status=pay["status"])
+            if pay["status"] not in ("paid", "captured", "succeeded", "completed", "settled"):
+                raise ValidationError("only captured/completed payments can be refunded")
 
             refundable = await c.fetchval(
                 "SELECT fn_refundable_amount($1::uuid, $2::uuid)",
@@ -219,6 +220,36 @@ class RefundService:
                     entry_json = json.loads(entry_json)
                 ledger_entry_id = entry_json.get("id") if entry_json else None
 
+                # Gateway payments: the gross debit above overstates the
+                # merchant's loss by Bittu's share. Credit back the fee + GST
+                # Bittu no longer earns on the refunded proportion so the net
+                # movement equals the merchant's proportional entitlement
+                # (same cumulative FLOOR rule as the Route reversal).
+                allocation = await ledgers.frozen_allocation_for_payment(c, row["payment_id"])
+                if allocation is not None:
+                    recovered = rupees_to_paise(row["amount"])
+                    cumulative = await c.fetchval(
+                        """
+                        SELECT COALESCE(SUM(ROUND(amount * 100)), 0)::bigint FROM refunds
+                        WHERE payment_id = $1::uuid AND merchant_id = $2::uuid
+                          AND (status = 'succeeded' OR id = $3)
+                        """,
+                        str(row["payment_id"]), str(row["merchant_id"]), int(row["id"]),
+                    )
+                    await ledgers.post_recovery_fee_reversal(
+                        conn=c,
+                        merchant_id=str(row["merchant_id"]),
+                        payment_id=str(row["payment_id"]),
+                        recovered_paise=recovered,
+                        cumulative_recovered_paise=int(cumulative),
+                        gross_paise=allocation["gross_paise"],
+                        merchant_paise=allocation["merchant_paise"],
+                        key_prefix=f"refund:{row['refund_uuid']}",
+                        source_type="refund",
+                        order_id=str(row["order_id"]) if row["order_id"] else None,
+                        created_by=str(actor_admin_id or actor_user_id) if (actor_admin_id or actor_user_id) else None,
+                    )
+
             updated = await c.fetchrow(
                 """
                 UPDATE refunds
@@ -330,9 +361,24 @@ class RefundService:
     # ────────────────────────────────────────────────────────────────
     # Gateway-aware orchestrator (Phase 4)
     # ────────────────────────────────────────────────────────────────
-    async def create_and_dispatch(
+    async def create_and_dispatch(self, *, request_key: str, **kwargs) -> dict:
+        """Deduplicate client retries, including concurrent refund requests."""
+        from app.services.razorpay.route_safety import payment_lock, guarded_mutation
+        if not request_key or len(request_key) > 200:
+            raise ValidationError("a refund request key of 1–200 characters is required")
+        merchant_id, payment_id = str(kwargs["merchant_id"]), str(kwargs["payment_id"])
+        key = f"refund_request:{merchant_id}:{request_key}"
+        body = json.loads(json.dumps(kwargs, default=str))
+        async with payment_lock(f"refund_request:{merchant_id}:{payment_id}") as conn:
+            return await guarded_mutation(
+                conn, key=key, resource_key=f"refund_request:{merchant_id}:{payment_id}",
+                body=body, send=lambda: self._create_and_dispatch_once(request_key=key, **kwargs),
+            )
+
+    async def _create_and_dispatch_once(
         self,
         *,
+        request_key: str,
         merchant_id: str | UUID,
         payment_id: str | UUID,
         amount: Decimal | str | float,
@@ -348,8 +394,8 @@ class RefundService:
         """
         Create a refund and (if the payment was online) dispatch it to Razorpay.
 
-        Idempotent on ``refund:{refund_uuid}`` — the gateway's idempotency
-        cache returns the same razorpay refund row on retry. The local row's
+        Client retries are serialized and deduplicated by create_and_dispatch.
+        Unknown gateway outcomes remain reserved for reconciliation. The local row's
         terminal state is governed by the gateway response, NOT the API call:
 
           * razorpay status='processed' → local 'succeeded' → ledger DEBIT
@@ -413,6 +459,7 @@ class RefundService:
                 notes={
                     "internal_refund_id": str(local["id"]),
                     "internal_refund_uuid": str(local["refund_uuid"]),
+                    "bittu_request_key": request_key,
                     "reason": reason or "",
                 },
                 idempotency_key=idem_key,
@@ -421,15 +468,16 @@ class RefundService:
         except Exception as exc:
             logger.exception("refund.gateway_call_failed",
                              refund_id=local["id"], payment_id=str(payment_id))
-            failed = await self.transition(
-                int(local["id"]),
-                merchant_id=merchant_id,
-                new_status="failed",
+            # A transport/server error does not prove the refund failed.
+            from app.services.razorpay.client import RazorpayAPIError
+            rejected = isinstance(exc, RazorpayAPIError) and 400 <= exc.status_code < 500 and exc.status_code not in {408,409,425,429}
+            await self.transition(
+                int(local["id"]), merchant_id=merchant_id,
+                new_status="failed" if rejected else "processing",
                 failure_reason=f"gateway_error: {str(exc)[:200]}",
-                actor_user_id=initiated_by_user_id,
-                actor_admin_id=initiated_by_admin_id,
+                actor_user_id=initiated_by_user_id, actor_admin_id=initiated_by_admin_id,
             )
-            return failed
+            raise
 
         # 5. Mirror the gateway response into rzp_refunds so the eventual
         #    webhook UPSERT is a true no-op.

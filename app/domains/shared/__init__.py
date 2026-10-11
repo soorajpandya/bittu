@@ -1,1 +1,1 @@
-"""shared domain — see docs/ARCHITECTURE_V2.md"""
+"""shared domain â€” see docs/ARCHITECTURE_V2.md"""

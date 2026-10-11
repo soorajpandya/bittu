@@ -1,1 +1,1 @@
-"""financial.events — see docs/ARCHITECTURE_V2.md"""
+"""financial.events â€” see docs/ARCHITECTURE_V2.md"""

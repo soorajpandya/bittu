@@ -129,15 +129,14 @@ async def create_intent_for_order(
         return existing
 
     # ── 0.5. settlement-readiness gate ──
-    # If the merchant has opted into Route, their linked account + product
+    # The merchant linked account + product
     # configuration MUST be activated before we accept new payments —
     # otherwise the captured funds would sit on the Bittu master account
-    # with no path to the merchant's bank. Legacy merchants (no Route row)
-    # pass through. Maps to HTTP 409 at the API boundary.
+    # with no path to the merchant's bank. Maps to HTTP 409 at the API boundary.
     from app.services.razorpay.route_service import rzp_route_service as _route_gate
     await _route_gate.assert_settlement_ready(merchant_id=merchant_id)
 
-    # ── 1. create Razorpay order (idempotent via X-Razorpay-Idempotency) ──
+    # ── 1. create Razorpay order (local response cache) ──
     # Razorpay limits each `notes` value to a string; cap field lengths so we
     # never get rejected at the gateway.
     def _s(v: Any, cap: int = 200) -> str:
@@ -165,59 +164,17 @@ async def create_intent_for_order(
 
     order_idem = f"rzp_order:{merchant_id}:{internal_order_id}"
 
-    # ── 1a. build Route transfers[] split if merchant is activated ──
-    # When the merchant's linked account + product are both activated, ask
-    # Razorpay to atomically split the captured payment into the merchant's
-    # linked account at capture time. Bittu withholds 0.415% (0.3517% + GST);
-    # merchant_share is floored to whole paise so the sum never exceeds
-    # the gross amount.
-    #
-    # If the merchant share would be below Razorpay's per-transfer minimum
-    # (₹1 = 100 paise) we skip the split — the payment still lands on the
-    # platform account and the merchant ledger projection will surface it
-    # as "pending" until an out-of-band reconciler creates a transfer.
-    transfers_payload: Optional[list[dict]] = None
-    linked_account_id = await _route_gate.get_active_linked_account_id(merchant_id)
-    if linked_account_id:
-        # Bittu withholds 0.415% (0.3517% fee + GST); merchant share is
-        # gross - bittu_fee - estimated_rzp_charge. The payment method is
-        # not yet known at order creation, so the estimate uses the default
-        # rate and is trued-up later at settlement.
-        from app.services.razorpay.fee_policy import provisional_merchant_transfer_paise
-        merchant_share_paise, _bittu_fee_paise, _est_rzp_paise = (
-            provisional_merchant_transfer_paise(amount_paise, None)
-        )
-        if merchant_share_paise >= 100:
-            transfers_payload = [{
-                "account":  linked_account_id,
-                "amount":   int(merchant_share_paise),
-                "currency": currency,
-                "notes": {
-                    "merchant_id":       merchant_id,
-                    "internal_order_id": internal_order_id,
-                    "razorpay_payment_id_for": "auto_route_at_capture",
-                    "bittu_fee_paise":   str(_bittu_fee_paise),
-                    "est_rzp_paise":     str(_est_rzp_paise),
-                },
-                "linked_account_notes": ["merchant_id", "internal_order_id"],
-                "on_hold": False,
-            }]
-            logger.info(
-                "rzp_intent_with_transfers",
-                merchant_id=merchant_id,
-                internal_order_id=internal_order_id,
-                linked_account_id=linked_account_id,
-                gross_paise=amount_paise,
-                merchant_share_paise=int(merchant_share_paise),
-                commission_paise=int(amount_paise - merchant_share_paise),
-            )
-        else:
-            logger.warning(
-                "rzp_intent_transfer_skipped_too_small",
-                merchant_id=merchant_id,
-                gross_paise=amount_paise,
-                merchant_share_paise=int(merchant_share_paise),
-            )
+    # One transfer owner: the captured-payment handler. This also covers QR
+    # captures, whose gateway payment may have no order_id.
+    from app.services.razorpay.fee_policy import merchant_transfer_paise
+    if currency != "INR" or merchant_transfer_paise(amount_paise) < 100:
+        raise ValueError("Route requires INR and a merchant transfer of at least 100 paise")
+    note_payload.update({
+        "merchant_id": merchant_id, "internal_order_id": internal_order_id,
+        "payment_id": payment_id, "route_split_owner": "capture",
+        "merchant_share_paise": str(merchant_transfer_paise(amount_paise)),
+    })
+    transfers_payload = None
 
     try:
         rzp_order = await rzp_orders_api.create_order(
